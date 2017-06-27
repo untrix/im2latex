@@ -155,8 +155,8 @@ class Params(Properties):
     may be created - i.e. the object is sealed (see class Properties). The
     property values can be modified however (unless you call freeze()).
     
-    @prototype Supplies list of ProtoDesc objects which serve as the list of
-        valid properties. Can be a sequence of ProtoDesc objects or another Params object.
+    @prototype Supplies list of ParamDesc objects which serve as the list of
+        valid properties. Can be a sequence of ParamDesc objects or another Params object.
         If it was a Params object, then descriptors would be derived
         from prototype.protoS.
         This object will also provide the property values if not specified in
@@ -265,13 +265,14 @@ Params class specialized for HyperParams. Adds the following semantic:
     absent from the dictionary. This is necessary to catch cases wherein one
     has forgotten to set a mandatory property. Mandatory properties must not have
     default values in their descriptor. A property that one is okay forgetting
-    to specify should have a non-None default value set in its descriptor in
-    order to avoid a KeyError.
-    However as with Params, it is still possible to set a property value to
+    to specify should have a None default value set in its descriptor which may
+    include 'None'.
+    However as with Params, it is still possible to initialize or set a property value to
     None eventhough None may not appear in the valid-list. We allow this in
     order to enable lazy initialization - i.e. a case where the
     code may wish to initialize a property to None, and set it to a valid value
-    later.
+    later. Setting a property value to None tantamounts to unsetting / deleting
+    the property.
 """        
 class HyperParams(Params):
 
