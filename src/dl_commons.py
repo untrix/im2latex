@@ -27,33 +27,34 @@ class AccessDeniedError(Exception):
     def __init__(self, msg):
         Exception.__init__(self, msg)
     
-"""
-A shorthand way to create a class with
-several properties without having to hand-code the getter and setter functions.
-getter/setter access is automatically provided saving you from having to write
-two decorated functions (getter and setter) per property.
-The properties can either be provided at init time or added on the fly simply
-by setting/assigning them.
-You can also view this as a javascript Object style dictionary because it allows
-both attribute getter/setter as well as dictionary accessor (square brackets) syntax.
-Additionally, you my call freeze() or seal() to freeze or seal
-the dictionary - just as in Javascript.
-The class inherits from dict therefore all standard python dictionary interfaces
-are available as well (such as iteritems etc.)
-
-x = Dictionary({'x':1, 2:'y'})
-assert d.x == d['x']
-d.x = 5
-assert d['x'] == 5
-d.seal()
-d[3] = 'z' # okay, new property created
-assert d.3 == 'z'
-d[2] = 'a' # raises AccessDeniedError
-d.freeze()
-d[4] = 'a' # raises AccessDeniedError
-d[2] = 'a' # raises AccessDeniedError
-"""
 class Properties(dict):
+    """
+    A shorthand way to create a class with
+    several properties without having to hand-code the getter and setter functions.
+    getter/setter access is automatically provided saving you from having to write
+    two decorated functions (getter and setter) per property.
+    The properties can either be provided at init time or added on the fly simply
+    by setting/assigning them.
+    You can also view this as a javascript Object style dictionary because it allows
+    both attribute getter/setter as well as dictionary accessor (square brackets) syntax.
+    Additionally, you my call freeze() or seal() to freeze or seal
+    the dictionary - just as in Javascript.
+    The class inherits from dict therefore all standard python dictionary interfaces
+    are available as well (such as iteritems etc.)
+
+    x = Dictionary({'x':1, 2:'y'})
+    assert d.x == d['x']
+    d.x = 5
+    assert d['x'] == 5
+    d.seal()
+    d[3] = 'z' # okay, new property created
+    assert d.3 == 'z'
+    d[2] = 'a' # raises AccessDeniedError
+    d.freeze()
+    d[4] = 'a' # raises AccessDeniedError
+    d[2] = 'a' # raises AccessDeniedError
+    """
+
     def __init__(self, d={}):
         dict.__init__(self, d)
         object.__setattr__(self, '_isFrozen', False)
@@ -120,68 +121,73 @@ class frange_incl(object):
     def __contains__(self, f):
         return f <= self._end and f >= self._begin
 
-"""
-A property descriptor.
-"""
 class ParamDesc(Properties):
-    """ 
-    @name = name of property,
-    @text = textual description, 
-    @validator = (optional) a validator object that implements the __contains__()
-        method so that membership may be inspected using the 'in' operator - 
-        as in 'if val in validator:'
-    @default = value (optional) stands for the default value. Set to None if
-        unspecified.
-    
-    The object gets immediately frozen after
-    initialization so that the property descriptor can be re-used repeatedly
-    without fear of modification.
+    """
+    A property descriptor.
     """
     def __init__(self, name, text, validator=None, default=None):
+        """ 
+        @name = name of property,
+        @text = textual description, 
+        @validator = (optional) a validator object that implements the __contains__()
+            method so that membership may be inspected using the 'in' operator - 
+            as in 'if val in validator:'
+        @default = value (optional) stands for the default value. Set to None if
+            unspecified.
+
+        The object gets immediately frozen after
+        initialization so that the property descriptor can be re-used repeatedly
+        without fear of modification.
+        """
+
         Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
         self.freeze()
-    
-"""
-Prototyped Properties class. The prototype is passed into the constructor and
-should be a list of ParamDesc objects denoting all the allowed properties.
-No new properties can be added in the future - i.e. the object is sealed.
-You may also freeze the object at any point if you want.
-This class is used to define and store descriptors of a model. It inherits
-from class Properties.
-"""
+
+## A shorter alias of ParamDesc
+PD = ParamDesc
+
 class Params(Properties):
     """
-    Takes property descriptors and their values. After initialization, no new params
-    may be created - i.e. the object is sealed (see class Properties). The
-    property values can be modified however (unless you call freeze()).
-    
-    @prototype Supplies list of ParamDesc objects which serve as the list of
-        valid properties. Can be a sequence of ParamDesc objects or another Params object.
-        If it was a Params object, then descriptors would be derived
-        from prototype.protoS.
-        This object will also provide the property values if not specified in
-        the vals argument (below). If this was a list of ParamDesc objects,
-        then the default property values would be used (ParamDesc.default). If
-        on the other hand, this was a Params object, then its property
-        value would be used (i.e. the return value of Params['prop_name']).
-        
-    @initVals Optional; provides initial values of the properties of this object.
-        May specify a subset of the object's properties, or none at all. Unspecified
-        property values will be initialized from the prototype object.
-        Should be either a dictionary of name:value pairs or unspecified (None).
-    
-    Examples:
-    o1 = Params(
-                [
-                 ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                 ParamDesc('layer_type', 'Type of layers to be created'),
-                 ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1)
-                ])
-    o2 = Params(o1) # copies prototype from o1, uses default values
-    o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
-        initializes with val from vals if available otherwise with default from o1.protoS
+    Prototyped Properties class. The prototype is passed into the constructor and
+    should be a list of ParamDesc objects denoting all the allowed properties.
+    No new properties can be added in the future - i.e. the object is sealed.
+    You may also freeze the object at any point if you want.
+    This class is used to define and store descriptors of a model. It inherits
+    from class Properties.
     """
+
     def __init__(self, prototype, initVals=None):
+        """
+        Takes property descriptors and their values. After initialization, no new params
+        may be created - i.e. the object is sealed (see class Properties). The
+        property values can be modified however (unless you call freeze()).
+
+        @param prototype (sequence of ParamDesc): Sequence of ParamDesc objects which serve as the list of
+            valid properties. Can be a sequence of ParamDesc objects or another Params object.
+            If it was a Params object, then descriptors would be derived
+            from prototype.protoS.
+            This object will also provide the property values if not specified in
+            the vals argument (below). If this was a list of ParamDesc objects,
+            then the default property values would be used (ParamDesc.default). If
+            on the other hand, this was a Params object, then its property
+            value would be used (i.e. the return value of Params['prop_name']).
+
+        @param initVals (dict): provides initial values of the properties of this object.
+            May specify a subset of the object's properties, or none at all. Unspecified
+            property values will be initialized from the prototype object.
+            Should be either a dictionary of name:value pairs or unspecified (None).
+
+        Examples:
+        o1 = Params(
+                    [
+                     ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
+                     ParamDesc('layer_type', 'Type of layers to be created'),
+                     ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1)
+                    ])
+        o2 = Params(o1) # copies prototype from o1, uses default values
+        o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
+            initializes with val from vals if available otherwise with default from o1.protoS
+        """
         Properties.__init__(self)
         descriptors = prototype
         props = Properties()
@@ -223,8 +229,8 @@ class Params(Properties):
         # Finally, seal the object so that no new properties may be added.
         self.seal()
                         
-    """ Polymorphic override of _set_val_. Be careful of recursion. """
     def _set_val_(self, name, val):
+        """ Polymorphic override of _set_val_. Be careful of recursion. """
         protoD = self.protoD
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
@@ -258,34 +264,34 @@ class Params(Properties):
         #return self._descr_dict
         return object.__getattribute__(self, '_descr_dict')
 
-"""
-Params class specialized for HyperParams. Adds the following semantic:
-    If a key has value None, then it is deemed absent from the dictionary. Calls
-    to __contains__ and _get_val_ will beget a KeyError - as if the property was
-    absent from the dictionary. This is necessary to catch cases wherein one
-    has forgotten to set a mandatory property. Mandatory properties must not have
-    default values in their descriptor. A property that one is okay forgetting
-    to specify should have a None default value set in its descriptor which may
-    include 'None'.
-    However as with Params, it is still possible to initialize or set a property value to
-    None eventhough None may not appear in the valid-list. We allow this in
-    order to enable lazy initialization - i.e. a case where the
-    code may wish to initialize a property to None, and set it to a valid value
-    later. Setting a property value to None tantamounts to unsetting / deleting
-    the property.
-"""        
 class HyperParams(Params):
+    """
+    Params class specialized for HyperParams. Adds the following semantic:
+        If a key has value None, then it is deemed absent from the dictionary. Calls
+        to __contains__ and _get_val_ will beget a KeyError - as if the property was
+        absent from the dictionary. This is necessary to catch cases wherein one
+        has forgotten to set a mandatory property. Mandatory properties must not have
+        default values in their descriptor. A property that one is okay forgetting
+        to specify should have a None default value set in its descriptor which may
+        include 'None'.
+        However as with Params, it is still possible to initialize or set a property value to
+        None eventhough None may not appear in the valid-list. We allow this in
+        order to enable lazy initialization - i.e. a case where the
+        code may wish to initialize a property to None, and set it to a valid value
+        later. Setting a property value to None tantamounts to unsetting / deleting
+        the property.
+    """        
 
-    """ Handles None values in a special way as stated above. """
     def __contains__(self, name):
+        """ Handles None values in a special way as stated above. """
         try:
             self._get_val_(name)
             return True
         except KeyError:
             return False
     
-    """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):
+        """ Polymorphic override of _get_val_. Be careful of recursion. """
         val = Params._get_val_(self, name)
         validator = self.protoD[name].validator
         if (val == None) and ((validator is None) or (None not in validator)):
