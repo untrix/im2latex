@@ -100,27 +100,6 @@ class Properties(dict):
         object.__setattr__(self, '_isSealed', True)
         return self
 
-# A validator that returns False for non-None values
-class _mandatoryValidator(object):
-    def __contains__(self, val):
-        return val is not None
-
-mandatory = _mandatoryValidator()
-
-class instanceof(object):
-    def __init__(self, cls):
-        self._cls = cls
-    def __contains__(self, obj):
-        return isinstance(obj, self._cls)
-
-# A float range validator class
-class frange_incl(object):
-    def __init__(self, begin, end):
-        self._begin = begin
-        self._end = end
-    def __contains__(self, f):
-        return f <= self._end and f >= self._begin
-
 class ParamDesc(Properties):
     """
     A property descriptor.
@@ -177,12 +156,33 @@ class Params(Properties):
             property values will be initialized from the prototype object.
             Should be either a dictionary of name:value pairs or unspecified (None).
 
+        If a value (even default value) is a callable (i.e. function-like) then it will
+        be called in order to get the actual value of the parameter. The callable function will
+        be passed in name of the property and a dictionary of all the properties
+        with their initVals or default vals as appropriate. Callables are called
+        in a second pass - after the initVals and default-values of all the properties
+        have been resolved (this happens in the first pass). However, at this point the callable
+        objects are not invoked and therefore (internally) show up as values of the property.
+        In the second pass, the callable objects are
+        are invoked in the order in which the properties were declared in the prototype.
+        The final value of a property will be set to the return value of the callable.
+        Hence the callable function should expect that properties that occur
+        later in the prototype sequence will still have their values set to
+        callable objects (if any). Both initVal and default values maybe
+        callables. Just don't get into loops. also, the dictionary passed into
+        the callable is a copy of the resolved values, and therefore changing
+        some other property's value will have no impact. This feature is used
+        to set one property's value based on others. See the example below.
+        
         Examples:
         o1 = Params(
                     [
                      ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
                      ParamDesc('layer_type', 'Type of layers to be created'),
-                     ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1)
+                     ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1),
+                     ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers', 
+                               xrange(1, 10000),
+                               lambda name, props: 10000 // props["num_layers"])
                     ])
         o2 = Params(o1) # copies prototype from o1, uses default values
         o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
@@ -221,10 +221,18 @@ class Params(Properties):
         object.__setattr__(self, '_descr_dict', props.freeze())
 
         # Now insert the property values one by one. Doing so will invoke
-        # self._set_val_ which will validate the initial values against self._descr_dict.
+        # self._set_val_ which will validate their values against self._descr_dict.
+        # First copy _vals so that we may safely pass the dictionary of values to
+        # callables if any
+        
+        _vals_copy = copy.copy(_vals)
+        for prop in descriptors:
+            _name = prop.name
+            _val = _vals[_name]
+            self[_name] = _vals_copy[_name] = _val if not callable(_val) else _val(_name, _vals_copy)
 
-        for _name, _val in _vals.iteritems():
-            self[_name] = _val        
+#        for _name, _val in _vals.iteritems():
+#            self[_name] = _val if not callable(_val) else _val(_vals_copy)
 
         # Finally, seal the object so that no new properties may be added.
         self.seal()
@@ -263,7 +271,7 @@ class Params(Properties):
         # self._descr_dict won't call __getattr__ because __getattribute__ returns successfully
         #return self._descr_dict
         return object.__getattribute__(self, '_descr_dict')
-
+    
 class HyperParams(Params):
     """
     Params class specialized for HyperParams. Adds the following semantic:
@@ -298,3 +306,50 @@ class HyperParams(Params):
             raise KeyError('property %s was not set'%(name,))
         else:
             return val
+        
+def equalto(name):
+    """
+    Returns a callable (lambda function) that can be used to set the value of
+    one property equal to the one passed in.
+    Example:
+        dlc.Params((
+            PD('A',
+               'Some property A',
+               None,
+               (120,1075,3)
+               ),
+            PD('B',
+               'Another property that should be equal in value to A',
+               instanceof(int),
+               sameas('A')
+               )
+           ))
+    """
+    return lambda _, props: props[name]
+
+
+# A validator that returns False for non-None values
+class _mandatoryValidator(object):
+    def __contains__(self, val):
+        return val is not None
+
+mandatory = _mandatoryValidator()
+
+class instanceof(object):
+    def __init__(self, cls):
+        self._cls = cls
+    def __contains__(self, obj):
+        return isinstance(obj, self._cls)
+
+boolean = instanceof(bool)
+integer = instanceof(int)
+decimal = instanceof(float)
+
+# A float range validator class
+class frange_incl(object):
+    def __init__(self, begin, end):
+        self._begin = begin
+        self._end = end
+    def __contains__(self, f):
+        return f <= self._end and f >= self._begin
+
