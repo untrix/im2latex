@@ -327,29 +327,53 @@ def equalto(name):
     """
     return lambda _, props: props[name]
 
-
+## Abstract parameter validator class.
+class _ParamValidator(object):
+    def __contains__(self, val):
+        raise Exception('Not Implemented. This is an abstract class.')
+        
 # A validator that returns False for non-None values
-class _mandatoryValidator(object):
+class _mandatoryValidator(_ParamValidator):
     def __contains__(self, val):
         return val is not None
 
-mandatory = _mandatoryValidator()
-
-class instanceof(object):
+class instanceof(_ParamValidator):
     def __init__(self, cls):
         self._cls = cls
     def __contains__(self, obj):
         return isinstance(obj, self._cls)
 
-boolean = instanceof(bool)
-integer = instanceof(int)
-decimal = instanceof(float)
-
-# A float range validator class
-class frange_incl(object):
-    def __init__(self, begin, end):
+# A inclusive range validator class
+class range_incl(_ParamValidator):
+    def __init__(self, begin=None, end=None):
         self._begin = begin
         self._end = end
-    def __contains__(self, f):
-        return f <= self._end and f >= self._begin
+    def __contains__(self, v):
+        return (self._end is None or v <= self._end) and (self._begin is None or v >= self._begin)
 
+class _type_range_incl(instanceof):
+    def __init__(self, cls, begin=0, end='inf'):
+        instanceof.__init__(self, cls)
+        self._range = range_incl(begin, end)
+    def __contains__(self, v):
+        return instanceof.__contains__(self, v) and self._range.__contains__(v)
+
+class integer(_type_range_incl):
+    def __init__(self, begin=None, end=None):
+        _type_range_incl.__init__(self, int, begin, end)
+
+class decimal(_type_range_incl):
+    def __init__(self, begin=None, end=None):
+        _type_range_incl.__init__(self, float, begin, end)
+
+class tensor(instanceof):
+    """Tensor shape validator to go with ParamDesc"""
+    def __init__(self, shape):
+        self._shape = shape
+        dlc._ParamValidator.__init__(self, tf.Tensor)
+    def __contains__(self, obj):
+        return instanceof.__contains__(self, obj) and  keras.backend.int_shape(obj) == self._shape
+
+# Helpful validator objects
+mandatory = _mandatoryValidator()
+boolean = instanceof(bool)
