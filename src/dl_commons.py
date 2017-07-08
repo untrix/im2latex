@@ -72,7 +72,12 @@ class Properties(dict):
             dict.__setitem__(self, key, val)
     
     def __copy__(self):
-        return dict.copy(self)
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self):
+        ## Shallow copy
+        return self.__class__(self)
     
     def __getattr__(self, key):
         return self._get_val_(key)
@@ -249,6 +254,14 @@ class Params(Properties):
             raise ValueError('%s is not a valid value of property %s'%(val, name))
         else:
             return Properties._set_val_(self, name, val)
+
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self):
+        ## Shallow copy
+        return self.__class__(self)
 
     """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):
