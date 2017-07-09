@@ -234,7 +234,7 @@ class Params(Properties):
         for prop in descriptors:
             _name = prop.name
             _val = _vals[_name]
-            self[_name] = _vals_copy[_name] = _val if not callable(_val) else _val(_name, _vals_copy)
+            self[_name] = _vals_copy[_name] = _val if not (callable(_val) and prop.validator != iscallable) else _val(_name, _vals_copy)
 
 #        for _name, _val in _vals.iteritems():
 #            self[_name] = _val if not callable(_val) else _val(_vals_copy)
@@ -379,14 +379,11 @@ class decimal(_type_range_incl):
     def __init__(self, begin=None, end=None):
         _type_range_incl.__init__(self, float, begin, end)
 
-class tensor(instanceof):
-    """Tensor shape validator to go with ParamDesc"""
-    def __init__(self, shape):
-        self._shape = shape
-        dlc._ParamValidator.__init__(self, tf.Tensor)
-    def __contains__(self, obj):
-        return instanceof.__contains__(self, obj) and  keras.backend.int_shape(obj) == self._shape
-
+class _iscallable(_ParamValidator):
+    def __contains__(self, v):
+        return callable(v)
+    
 # Helpful validator objects
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool)
+iscallable = _iscallable()

@@ -97,8 +97,8 @@ HYPER_PD = (
            'glorot_normal'),
     ### Embedding Layer ###
         PD('embeddings_initializer', 'Initializer for embedding weights', None, 'glorot_uniform'),
-        #PD('embeddings_initializer_tf', 'Initializer for embedding weights', None, 
-        #   tf.contrib.layers.xavier_initializer),
+        PD('embeddings_initializer_tf', 'Initializer for embedding weights', dlc.iscallable, 
+           tf.contrib.layers.xavier_initializer()),
     ### Decoder LSTM Params ###
         PD('n',
            '(integer): Number of hidden-units of the LSTM cell',
@@ -531,7 +531,7 @@ class Im2LatexModel(object):
             Ex_t = K.reshape(Ex_t, (B,m)) # (B,m)
             
         ################ Decoder Layer ################
-        with tf.variable_scope("Decoder_LSTM") as var_scope:
+        with tf.variable_scope("Decoder_LSTM"):
             (h_t, lstm_states_t) = self._decoder_lstm(K.concatenate((Ex_t, z_t)), lstm_states_t_1) # h_t.shape=(B,n)
             
         ################ Decoder Layer ################
