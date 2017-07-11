@@ -24,6 +24,7 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 import dl_commons as dlc
+import tf_commons as tfc
 import tensorflow as tf
 from keras.layers import Input, Embedding, Dense, Activation, Dropout, Concatenate, Permute
 from keras import backend as K
@@ -107,18 +108,20 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
             h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
             ## Concatenate a and h. Final shape = (B, L, D+n)
-            ah = tf.concat([a,h], -1); dim = D+n
-            for i in range(1, CONF.att_layers+1):
-                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
-                ah = Dense(n_units, activation=CONF.att_activation, batch_input_shape=(B,L,dim))(ah)
-                dim = n_units
+            ah = tf.concat([a,h], -1); # dim = D+n
+            ah = tfc.MLP(CONF.att_layers)(ah); dim = CONF.att_layers.num_units[-1]
+#            for i in range(1, CONF.att_layers+1):
+#                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
+#                ah = Dense(n_units, activation=CONF.att_activation, batch_input_shape=(B,L,dim))(ah)
+#                dim = n_units
+            assert K.int_shape(ah) == (B, L, dim)
                 
             ## Below is roughly how it is implemented in the code released by the authors of the paper
-#                 for i in range(1, CONF.att_a_layers+1):
-#                     a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
-#                 for i in range(1, CONF.att_h_layers+1):
-#                     h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)    
-#                ah = a + K.expand_dims(h, axis=1)
+            ##     for i in range(1, CONF.att_a_layers+1):
+            ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
+            ##     for i in range(1, CONF.att_h_layers+1):
+            ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)    
+            ##    ah = a + K.expand_dims(h, axis=1)
 
             ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
             ## One could've just summed/averaged them all here, but the paper uses yet
@@ -138,13 +141,14 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
 
             ## Concatenate a and h. Final shape will be (B, L*D+n)
-            ah = K.concatenate(K.batch_flatten(a), h)
-            dim = L*D+n
-            for i in range(1, CONF.att_layers+1):
-                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
-                ah = Dense(n_units, activation=CONF.att_actv, batch_input_shape=(B,dim))(ah)
-                dim = n_units
+            ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
+            ah = tfc.MLP(CONF.att_layers)(ah); dim = CONF.att_layers.num_units[-1]
+#            for i in range(1, CONF.att_layers+1):
+#                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
+#                ah = Dense(n_units, activation=CONF.att_actv, batch_input_shape=(B,dim))(ah)
+#                dim = n_units
             ## At this point, ah.shape = (B, dim)        
+            assert K.int_shape(ah) == (B, dim)
             assert dim >= L        
             ## NOTE: An extra dense layer is not needed if dim == L. Simply a softmax activation would
             ## suffice in that case.

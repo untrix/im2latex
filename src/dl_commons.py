@@ -22,6 +22,7 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 import copy
+import collections
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -161,7 +162,9 @@ class Params(Properties):
             property values will be initialized from the prototype object.
             Should be either a dictionary of name:value pairs or unspecified (None).
 
-        If a value (even default value) is a callable (i.e. function-like) then it will
+        If a value (even default value) is a callable (i.e. function-like) but is
+        expected to be a non-callable (i.e. validator does not derive from _iscallable)
+        then it will
         be called in order to get the actual value of the parameter. The callable function will
         be passed in name of the property and a dictionary of all the properties
         with their initVals or default vals as appropriate. Callables are called
@@ -187,7 +190,10 @@ class Params(Properties):
                      ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1),
                      ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers', 
                                xrange(1, 10000),
-                               lambda name, props: 10000 // props["num_layers"])
+                               lambda name, props: 10000 // props["num_layers"]), ## Lambda function will be invoked
+                     ParamDesc('activation_fn', 'tensorflow activation function',
+                               iscallable(tf.nn.relu, tf.nn.tanh, None),
+                               tf.nn.relu) ## Function will not be invoked because the param-type is callable.
                     ])
         o2 = Params(o1) # copies prototype from o1, uses default values
         o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
@@ -215,29 +221,43 @@ class Params(Properties):
 
         object.__setattr__(self, '_desc_list', tuple(descriptors) )
 
+        derivatives = []
         for prop in descriptors:
             name = prop.name
             if name not in props:
                 props[name] = prop
+#                if (name in vals1_):
+#                    _vals[name] = vals1_[name]
+#                elif (name in vals2_):
+#                    _vals[name] = vals2_[name]
+#                else:
+#                    _vals[name] = prop.default
+#                    if callable(_vals[name]) and (not isinstance(prop.validator, _iscallable)):
+#                        ## THis is a case where a proxy function has been provided
+#                        ## in place of a value.
+#                        derivatives.append(name)
                 _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
+                if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
+                    ## THis is a case where a proxy function has been provided
+                    ## in place of a value.
+                    derivatives.append(name)
             else:
                 raise ValueError('property %s has already been initialized'%(name,))
 
         object.__setattr__(self, '_descr_dict', props.freeze())
 
-        # Now insert the property values one by one. Doing so will invoke
-        # self._set_val_ which will validate their values against self._descr_dict.
+        # Derivatives: Run the derived param callables
         # First copy _vals so that we may safely pass the dictionary of values to
-        # callables if any
-        
+        # the callables
         _vals_copy = copy.copy(_vals)
+        for name in derivatives:
+            _vals[name] = _vals_copy[name] = _vals[name](name, _vals_copy)
+        
+        # Validation: Now insert the property values one by one. Doing so will invoke
+        # self._set_val_ which will validate their values against self._descr_dict.
         for prop in descriptors:
             _name = prop.name
-            _val = _vals[_name]
-            self[_name] = _vals_copy[_name] = _val if not (callable(_val) and prop.validator != iscallable) else _val(_name, _vals_copy)
-
-#        for _name, _val in _vals.iteritems():
-#            self[_name] = _val if not callable(_val) else _val(_vals_copy)
+            self[_name] = _vals[_name]
 
         # Finally, seal the object so that no new properties may be added.
         self.seal()
@@ -273,6 +293,24 @@ class Params(Properties):
     def isValidName(self, name):
         return name in self.protoD
     
+    def append(self, other):
+        assert isinstance(other, Params)
+        for param in other.protoS:
+            assert param.name not in self.protoD
+        
+        ## Update Descriptor first
+        protoD = self.protoD.copy()
+        for param in other.protoS:
+            protoD[param.name] = param
+            self.protoS.append(param)            
+        object.__setattr__(self, '_descr_dict', protoD.freeze())
+        
+        ## Update values
+        for param in other.protoS:
+            self[param.name] = other[param.name]
+            
+        return self
+            
     @property
     def protoS(self):
         # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
@@ -319,7 +357,19 @@ class HyperParams(Params):
             raise KeyError('property %s was not set'%(name,))
         else:
             return val
-        
+
+## Abstract parameter validator class.
+class _ParamValidator(object):
+    def __contains__(self, val):
+        raise Exception('Not Implemented. This is an abstract class.')
+
+class LinkedParam(_ParamValidator):
+    """ A validator class indicating that the param's value is derived by calling a function.
+    Its value cannot be directly set, instead a function should be provided that will
+    set its value.
+    """
+    pass
+
 def equalto(name):
     """
     Returns a callable (lambda function) that can be used to set the value of
@@ -340,10 +390,6 @@ def equalto(name):
     """
     return lambda _, props: props[name]
 
-## Abstract parameter validator class.
-class _ParamValidator(object):
-    def __contains__(self, val):
-        raise Exception('Not Implemented. This is an abstract class.')
         
 # A validator that returns False for non-None values
 class _mandatoryValidator(_ParamValidator):
@@ -351,10 +397,11 @@ class _mandatoryValidator(_ParamValidator):
         return val is not None
 
 class instanceof(_ParamValidator):
-    def __init__(self, cls):
+    def __init__(self, cls, noneokay=False):
         self._cls = cls
+        self._noneokay = noneokay
     def __contains__(self, obj):
-        return isinstance(obj, self._cls)
+        return (self._noneokay and obj is None) or isinstance(obj, self._cls)
 
 # A inclusive range validator class
 class range_incl(_ParamValidator):
@@ -365,25 +412,64 @@ class range_incl(_ParamValidator):
         return (self._end is None or v <= self._end) and (self._begin is None or v >= self._begin)
 
 class _type_range_incl(instanceof):
-    def __init__(self, cls, begin=0, end='inf'):
-        instanceof.__init__(self, cls)
+    def __init__(self, cls, begin=0, end=None, noneokay=False):
+        instanceof.__init__(self, cls, noneokay)
         self._range = range_incl(begin, end)
     def __contains__(self, v):
         return instanceof.__contains__(self, v) and self._range.__contains__(v)
 
 class integer(_type_range_incl):
+    def __init__(self, begin=None, end=None, noneokay=False):
+        _type_range_incl.__init__(self, int, begin, end, noneokay)
+
+class integerOrNone(integer):
     def __init__(self, begin=None, end=None):
-        _type_range_incl.__init__(self, int, begin, end)
+        integer.__init__(self, begin, end, True)
 
 class decimal(_type_range_incl):
-    def __init__(self, begin=None, end=None):
-        _type_range_incl.__init__(self, float, begin, end)
+    def __init__(self, begin=None, end=None, noneokay=False):
+        _type_range_incl.__init__(self, float, begin, end, noneokay)
 
-class _iscallable(_ParamValidator):
+class decimalOrNone(decimal):
+    def __init__(self, begin=None, end=None,):
+        decimal.__init__(self, begin, end, True)
+
+class iscallable(_ParamValidator):
+    def __init__(self, lst=None, noneokay=False):
+        assert lst is None or self.issequence(lst)
+        self._noneokay = noneokay
+        self._lst = lst
+        
+    @staticmethod
+    def issequence(v):
+        if isinstance(v, basestring):
+            return False
+        return isinstance(v, collections.Sequence)
+        
     def __contains__(self, v):
-        return callable(v)
+        if (self._noneokay and v is None):
+            return True
+        elif self._lst is None:
+            return callable(v)
+        else:
+            return callable(v) and v in self._lst
+
+class iscallableOrNone(iscallable):
+    def __init__(self, lst=None):
+        iscallable.__init__(self, lst, noneokay=True)
+
+class issequenceof(instanceof):
+    def __init__(self, cls, noneokay=False):
+        instanceof.__init__(self, cls, noneokay)
+    def __contains__(self, v):
+        if isinstance(v, basestring):
+            return False
+        return isinstance(v, collections.Sequence) and instanceof.__contains__(self, v[0])
+
+class _anyok(_ParamValidator):
+    def __contains__(self, v):
+        return True
     
 # Helpful validator objects
 mandatory = _mandatoryValidator()
-boolean = instanceof(bool)
-iscallable = _iscallable()
+boolean = instanceof(bool, False)
