@@ -94,14 +94,8 @@ class RNNParams(dlc.HyperParams):
         PD('embeddings_initializer_tf', 'Initializer for embedding weights', dlc.iscallable(), 
            tf.contrib.layers.xavier_initializer()),
     ### Decoder LSTM Params ###
-        PD('n',
-           '(integer): Number of hidden-units of the LSTM cell',
-           integer(100,10000),
-           1000),
-        PD('decoder_lstm_peephole',
-           '(boolean): whether to employ peephole connections in the decoder LSTM',
-           (True, False),
-           False),
+        PD('decoder_lstm', '',
+           instanceof(tfc.RNNParams)),
         PD('output_follow_paper',
            '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
            'Setting this value to True (default) will follow the paper"s logic. Otherwise'
@@ -270,7 +264,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 #                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
             if CONF.att_weighted_gather:
                 with tf.variable_scope('weighted_gather'):
-                    ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
+                    ah = tfc.FCLayer({'activation_fn':tfc.none, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
                     ah = K.squeeze(ah, axis=2) # output shape = (B, L)
             else:
                 ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
@@ -312,7 +306,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         assert K.int_shape(lstm_states_t_1[1]) == (B, n)
         
         ## TODO: Make this multi-layered
-        (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
+#        (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
+        (h_t, lstm_states_t) = tfc.RNNCell(self.C.decoder_lstm)(inputs_t, lstm_states_t_1)
         return (h_t, lstm_states_t)
 
     def _output_layer(self, Ex_t, h_t, z_t):
@@ -333,7 +328,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         if CONF.output_follow_paper: ## Follow the paper.
             ## Affine transformation of h_t and z_t from size n/D to bring it down to m
 #            o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
-            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
+            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':tfc.none, 'tb':CONF.tb}, 
                               batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
             ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
             o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
