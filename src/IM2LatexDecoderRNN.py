@@ -25,10 +25,147 @@ Tested on python 2.7
 """
 import dl_commons as dlc
 import tf_commons as tfc
+from dl_commons import PD, instanceof, integer, decimal, boolean, equalto
 import tensorflow as tf
 from keras.layers import Input, Embedding, Dense, Activation, Dropout, Concatenate, Permute
 from keras import backend as K
 import collections
+
+class RNNParams(dlc.HyperParams):
+    proto = (
+        PD('tb', "Tensorboard Params.",
+           instanceof(tfc.TensorboardParams),
+           tfc.TensorboardParams()),
+        PD('image_shape',
+           'Shape of input images. Should be a python sequence.',
+           None,
+           (120,1075,3)
+           ),
+        PD('Max_Seq_Len',
+           "Max sequence length including the end-of-sequence marker token. Is used to " 
+            "limit the number of decoding steps.",
+           integer(151,200),
+           151 #get_max_seq_len(data_folder)
+           ),
+        PD('B',
+           '(integer or None): Size of mini-batch for training, validation and testing.',
+           (None, 128),
+           128
+           ),
+        PD('K',
+           'Vocabulary size including zero',
+           xrange(500,1000),
+           556 #get_vocab_size(data_folder)
+           ),
+        PD('m',
+           '(integer): dimensionality of the embedded input vector (Ey / Ex)', 
+           xrange(50,250),
+           64
+           ),
+        PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None, 3),
+        PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None, 33),
+        PD('L',
+           '(integer): number of pixels in an image feature-map = HxW (see paper or model description)', 
+           integer(1),
+           lambda _, d: d['H'] * d['W']),
+        PD('D', 
+           '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
+           'See paper or model description.', 
+           integer(1),
+           512),
+        PD('keep_prob', '(decimal): Value between 0.1 and 1.0 indicating the keep_probability of dropout layers.'
+           'A value of 1 implies no dropout.',
+           decimal(0.1, 1), 
+           1.0),
+    ### Attention Model Params ###
+        PD('att_layers', 'MLP parameters', instanceof(tfc.MLPParams)),
+        PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
+           'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
+           boolean,
+           True),
+        PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
+           "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here." 
+           "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)." 
+           "Default value however, is True in conformance with the paper's implementation.",
+           (True, False),
+           True),
+    ### Embedding Layer ###
+        PD('embeddings_initializer', 'Initializer for embedding weights', None, 'glorot_uniform'),
+        PD('embeddings_initializer_tf', 'Initializer for embedding weights', dlc.iscallable(), 
+           tf.contrib.layers.xavier_initializer()),
+    ### Decoder LSTM Params ###
+        PD('n',
+           '(integer): Number of hidden-units of the LSTM cell',
+           integer(100,10000),
+           1000),
+        PD('decoder_lstm_peephole',
+           '(boolean): whether to employ peephole connections in the decoder LSTM',
+           (True, False),
+           False),
+        PD('output_follow_paper',
+           '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
+           'Setting this value to True (default) will follow the paper"s logic. Otherwise'
+           "a straight MLP will be used.", 
+           boolean, 
+           True),
+        PD('output_layers',
+           "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
+           "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
+           "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
+           instanceof(tfc.MLPParams)),
+#        PD('output_activation', 'Activtion function for deep output layer', None,
+#           'relu'),
+#        PD('output_1_n', 
+#           'Number of units in the first hidden layer of the output MLP. Used only if output_follow_paper == False'
+#           "Default's to 'm' - same as when output_follow_paper == True", None,
+#           equalto('m')),
+    ### Initializer MLP ###
+        PD('init_layers', 'Number of layers in the initializer MLP', xrange(1,10),
+           1),
+        PD('init_dropout_rate', '(decimal): Global dropout_rate variable for init_layer',
+           decimal(0.0, 0.9), 
+           0.2),
+        PD('init_h_activation', '', None, 'tanh'),
+        PD('init_h_dropout_rate', '', 
+           decimal(0.0, 0.9), 
+           equalto('init_dropout_rate')),
+        PD('init_c_activation', '', None, 'tanh'),
+        PD('init_c_dropout_rate', '', 
+           decimal(0.0, 0.9),
+           equalto('init_dropout_rate')),
+        PD('init_1_n', 'Number of units in hidden layer 1. The paper sets it to D',
+           integer(1, 10000), 
+           equalto('D')),
+        PD('init_1_dropout_rate', '(decimal): dropout rate for the layer', 
+           decimal(0.0, 0.9), 
+           0.),
+        PD('init_1_activation', 
+           'Activation function of the first layer. In the paper, the final' 
+           'layer has tanh and all penultinate layers have relu activation', 
+           None,
+           'tanh'),
+    ### Loss / Cost Layer ###
+        PD('sum_logloss',
+           'Whether to normalize log-loss per sample as in standard log perplexity ' 
+           'calculation or whether to just sum up log-losses as in the paper. Defaults' 
+           'to True in conformance with the paper.',
+           boolean,
+           True
+          ),
+        PD('MeanSumAlphaEquals1',
+          '(boolean): When calculating the alpha penalty, the paper uses the term: '
+           'square{1 - sum_over_t{alpha_t_i}}). This assumes that the mean sum_over_t should be 1. '
+           "However, that's not true, since the mean of sum_over_t term should be C/L. This "
+           "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
+           "The default value is True in conformance with the paper.",
+          boolean,
+          False),
+        PD('pLambda', 'Lambda value for alpha penalty',
+           decimal(0),
+           0.0001)   
+        )
+    def __init__(self, initVals=None):
+        dlc.HyperParams.__init__(self, self.proto, initVals)
 
 Im2LatexRNNStateTuple = collections.namedtuple("Im2LatexRNNStateTuple", ('lstm_state', 'alpha'))
 
@@ -49,9 +186,11 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         self._beamsearch_width = beamsearch_width
 
         self._a = context ## Image features from the Conv-Net
+        
         ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
         ## to the input batch.
-        self._a = K.tile(self._a, (beamsearch_width,1,1))
+        if self._beamsearch_width > 1:
+            self._a = K.tile(self._a, (beamsearch_width,1,1))
 
         #LSTM by Zaremba et. al 2014: http://arxiv.org/abs/1409.2329
         self._LSTM_cell = tf.contrib.rnn.LSTMBlockCell(self.C.n, 
@@ -108,8 +247,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
             h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
             ## Concatenate a and h. Final shape = (B, L, D+n)
-            ah = tf.concat([a,h], -1); # dim = D+n
-            ah = tfc.MLP(CONF.att_layers)(ah); dim = CONF.att_layers.num_units[-1]
+            ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
+            ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
 #            for i in range(1, CONF.att_layers+1):
 #                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
 #                ah = Dense(n_units, activation=CONF.att_activation, batch_input_shape=(B,L,dim))(ah)
@@ -126,13 +265,15 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
             ## One could've just summed/averaged them all here, but the paper uses yet
             ## another set of weights to accomplish this. So we'll keeep that as an option.
+#            if CONF.att_weighted_gather:
+#                ah = Dense(1, activation='linear')(ah) # output shape = (B, L, 1)
+#                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
             if CONF.att_weighted_gather:
-                ah = Dense(1, activation='linear')(ah) # output shape = (B, L, 1)
-                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
+                with tf.variable_scope('weighted_gather'):
+                    ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
+                    ah = K.squeeze(ah, axis=2) # output shape = (B, L)
             else:
-                ah = K.mean(ah, axis=2) # output shape = (B, L)
-                
-            alpha = tf.nn.softmax(ah) # output shape = (B, L)
+                ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
             
         else: # weights not shared across L
             ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
@@ -141,18 +282,20 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
 
             ## Concatenate a and h. Final shape will be (B, L*D+n)
-            ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
-            ah = tfc.MLP(CONF.att_layers)(ah); dim = CONF.att_layers.num_units[-1]
+            with tf.variable_scope('a_flatten_concat_h'):
+                ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
+            ah = tfc.MLPStack(CONF.att_layers)(ah);
 #            for i in range(1, CONF.att_layers+1):
 #                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
 #                ah = Dense(n_units, activation=CONF.att_actv, batch_input_shape=(B,dim))(ah)
 #                dim = n_units
-            ## At this point, ah.shape = (B, dim)        
-            assert K.int_shape(ah) == (B, dim)
-            assert dim >= L        
-            ## NOTE: An extra dense layer is not needed if dim == L. Simply a softmax activation would
-            ## suffice in that case.
-            alpha = self.Dense(L, activation='softmax', name='alpha')(ah) # output shape = (B, L)
+            ## At this point, ah.shape = (B, L)
+            dim = CONF.att_layers.layers_units[-1]
+            assert dim == L
+            assert K.int_shape(ah) == (B, L)
+        
+        alpha = tf.nn.softmax(ah) # output shape = (B, L)
+        alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
         
         assert K.int_shape(alpha) == (B, L)
         return alpha
@@ -172,7 +315,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
         return (h_t, lstm_states_t)
 
-    def _build_output_layer(self, Ex_t, h_t, z_t):
+    def _output_layer(self, Ex_t, h_t, z_t):
         
         ## Renaming HyperParams for convenience
         CONF = self.C
@@ -187,33 +330,42 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         assert K.int_shape(z_t) == (B, D)
         
         ## First layer of output MLP
-        if not CONF.output_follow_paper: ## Follow the paper.
+        if CONF.output_follow_paper: ## Follow the paper.
             ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-            o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+#            o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
+                              batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
             ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
             o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
             ## non-linearity for the first layer
-            o_t = Activation(CONF.output_activation)(o_t)
+            o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
             dim = m
-        else: ## Use a straight FC layer
+        else: ## Use a straight MLP Stack
             o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
-            o_t = Dense(CONF.output_1_n, activation=CONF.output_activation, batch_input_shape=(B,D+m+n))(o_t)
-            dim = CONF.output_1_n
+            dim = m+n+D
+#            o_t = Dense(CONF.output_1_n, activation=CONF.output_activation, batch_input_shape=(B,D+m+n))(o_t)
+
+        ## Regular MLP layers
+        assert CONF.output_layers.layers_units[-1] == Kv
+        logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
             
-        ## Subsequent MLP layers
-        if CONF.decoder_out_layers > 1:
-            for i in range(2, CONF.decoder_out_layers+1):
-                o_t = Dense(m, activation=CONF.output_activation, 
-                            batch_input_shape=(B,dim))(o_t)
+#        if CONF.decoder_out_layers > 1:
+#            for i in range(2, CONF.decoder_out_layers+1):
+#                o_t = Dense(m, activation=CONF.output_activation, 
+#                            batch_input_shape=(B,dim))(o_t)
                 
         ## Final logits layer
-        logits_t = Dense(Kv, activation=CONF.output_activation, batch_input_shape=(B,m))(o_t) # shape = (B,K)
+#        logits_t = Dense(Kv, activation=CONF.output_activation, batch_input_shape=(B,m))(o_t) # shape = (B,K)
         assert K.int_shape(logits_t) == (B, Kv)
         
         # return tf.nn.softmax(logits_t), logits_t
         return logits_t
 
     def call(self, inputs, state):
+        with tf.variable_scope('Im2LatexDecoderRNN'):
+            return self._call_body(inputs, state)
+        
+    def _call_body(self, inputs, state):
         """
         TODO: Incorporate Dropout
         Builds/threads tf graph for one RNN iteration.
@@ -225,7 +377,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         """
 
         Ex_t = inputs                          # shape = (B,m)
-        state = Im2LatexRNNStateTuple(state[0], state[1])
+        state = Im2LatexRNNStateTuple(*state)
         lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
         alpha_t_1 = state.alpha            # shape = (B, L)
         h_t_1 = lstm_states_t_1[1]
@@ -259,7 +411,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
         ################ Decoder Layer ################
         with tf.variable_scope('Output_Layer'):
-            yLogits_t = self._build_output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
+            yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 
         assert K.int_shape(h_t) == (B, n)
         assert K.int_shape(lstm_states_t.h) == (B, n)

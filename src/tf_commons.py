@@ -28,8 +28,8 @@ import time
 import dl_commons as dlc
 import tensorflow as tf
 import keras
-from dl_commons import ParamDesc as PD
-from dl_commons import mandatory, instanceof, equalto, boolean, HyperParams
+from keras import backend as K
+from dl_commons import mandatory, instanceof, equalto, boolean, HyperParams, PD, PDL
 
 
 class tensor(dlc.instanceof):
@@ -94,17 +94,9 @@ class DropoutParams(HyperParams):
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
 
-class MLPParams(HyperParams):
+class CommonParams(HyperParams):
     proto = (
-        PD('op_name',
-              'Name of the layer; will show up in tensorboard visualization'
-              ),
-        PD('num_units', 
-              "(sequence of integers): sequence of numbers denoting number of units for each layer." 
-              "As many layers will be created as the length of the sequence",
-              dlc.issequenceof(int)
-              ),
-        PD('activation_fn',   
+        PD('activation_fn',
               'The activation function to use. None signifies no activation function.', 
               dlc.iscallable((tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid, None)),
               tf.nn.tanh),
@@ -143,38 +135,85 @@ class MLPParams(HyperParams):
         PD('tb', "Tensorboard Params.",
            instanceof(TensorboardParams))
         )
+        
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
 
-class MLP(object):
-    def __init__(self, params):
+CommonParamsProto = CommonParams().protoD
+
+class MLPParams(HyperParams):
+    proto = CommonParams.proto + (
+            PD('op_name',
+               'Name of the layer; will show up in tensorboard visualization',
+               None,
+               'MLP'
+              ),
+            PD('layers_units',
+              "(sequence of integers): sequence of numbers denoting number of units for each layer." 
+              "As many layers will be created as the length of the sequence",
+              dlc.issequenceof(int)
+              ),
+        )
+    def __init__(self, initVals=None):
+        dlc.HyperParams.__init__(self, self.proto, initVals)
+        
+    def get_layer_params(self, i):
+        return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
+
+class MLPStack(object):
+    def __init__(self, params, batch_input_shape=None):
         self._params = MLPParams(params)
+        self._batch_input_shape = batch_input_shape
         
     def __call__(self, inp):
+        assert isinstance(inp, tf.Tensor)
+        if self._batch_input_shape is not None:
+            assert K.int_shape(inp) == self._batch_input_shape
+
         params = self._params
-        dropout = params.dropout is not None
+        dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
         
         a = inp
         with tf.variable_scope(params.op_name):
-            i = 1
-            for num_units in self._params.num_units:
-                a = self._make_fc_layer(num_units, params, a, i)
+            for i in xrange(len(self._params.layers_units)):
+                a = FCLayer(self._params.get_layer_params(i))(a, i)
                 if dropout:
-                    a = self._make_dropout_layer(self._params.dropout, a, i)
-                i += 1
+                    a = DropoutLayer(self._params.dropout)(a, i)
         return a
             
-    def _make_fc_layer(self, num_units, params, inp, i=1):
-        assert isinstance(inp, tf.Tensor)
+class FCLayerParams(HyperParams):
+    proto = CommonParams.proto + (
+        PD('num_units', 
+          "(integer): number of output units in the layer." ,
+          dlc.integer(1),
+          ),
+        )
+        
+    def __init__(self, initVals=None):
+        dlc.HyperParams.__init__(self, self.proto, initVals)
 
-        with tf.variable_scope('FC_%d'%i) as var_scope:
+class FCLayer(object):
+    def __init__(self, params, batch_input_shape=None):
+        self._params = FCLayerParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        ## Parameter Validation
+        assert isinstance(inp, tf.Tensor)
+        if self._batch_input_shape is not None:
+            assert K.int_shape(inp) == self._batch_input_shape
+
+        params = self._params    
+        prefix = 'FC' if params.activation_fn is not None else 'Affine'
+        scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+        with tf.variable_scope(scope_name) as var_scope:
             layer_name = var_scope.name
             coll_w = layer_name + '/' + params.tb.tb_weights
             coll_b = layer_name + '/' + params.tb.tb_biases
             
             h = tf.contrib.layers.fully_connected(
                     inputs=inp,
-                    num_outputs = num_units,
+                    num_outputs = params.num_units,
                     activation_fn = params.activation_fn,
                     normalizer_fn = params.normalizer_fn,
                     weights_initializer = params.weights_initializer,
@@ -185,19 +224,57 @@ class MLP(object):
                                              "biases":[coll_b]},
                     trainable = True
                     )
-
+    
             # Tensorboard Summaries
             if params.make_tb_metric:
                 summarize_layer(layer_name, tf.get_collection(coll_w), tf.get_collection(coll_b), h)
     
         return h
 
-    def _make_dropout_layer(self, params, inp, i=1):
+class DropoutLayer(object):
+    def __init__(self, params, batch_input_shape=None):
+        self._params = DropoutParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        ## Parameter Validation
         assert isinstance(inp, tf.Tensor)
+        if self._batch_input_shape is not None:
+            assert K.int_shape(inp) == self._batch_input_shape
         
-        with tf.variable_scope('DO_%d'%i):
-            h = tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
-    
+        params = self._params    
+        scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
+        with tf.variable_scope(scope_name):
+            return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
+
+class ActivationParams(HyperParams):
+    proto = (CommonParamsProto.activation_fn, 
+             CommonParamsProto.tb,
+             CommonParamsProto.make_tb_metric)
+    def __init__(self, initVals=None):
+        dlc.HyperParams.__init__(self, self.proto, initVals)
+
+class Activation(object):
+    def __init__(self, params, batch_input_shape=None):
+        self._params = ActivationParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        ## Parameter Validation
+        assert isinstance(inp, tf.Tensor)
+        if self._batch_input_shape is not None:
+            assert K.int_shape(inp) == self._batch_input_shape
+
+        params = self._params        
+        scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
+        with tf.variable_scope(scope_name):
+            coll_w = scope_name + '/' + params.tb.tb_weights
+            coll_b = scope_name + '/' + params.tb.tb_biases
+            h = params.activation_fn(inp)
+            # Tensorboard Summaries
+            if params.make_tb_metric:
+                summarize_layer(scope_name, tf.get_collection(coll_w), tf.get_collection(coll_b), h)
+
         return h
 
 def makeTBDir(params):

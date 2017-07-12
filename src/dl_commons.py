@@ -80,6 +80,14 @@ class Properties(dict):
         ## Shallow copy
         return self.__class__(self)
     
+    def updated(self, other):
+        """ chain-update
+        Same as dict.update except that it returns self and therefore 
+        supports call-chaining. E.g. Properties(other).cupdate(other2).cupdate(other2)
+        """
+        dict.update(self, other)
+        return self
+    
     def __getattr__(self, key):
         return self._get_val_(key)
     
@@ -127,9 +135,19 @@ class ParamDesc(Properties):
 
         Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
         self.freeze()
-
+    
 ## A shorter alias of ParamDesc
 PD = ParamDesc
+
+class PDTuple(tuple):
+    def __new__ (cls, pd_tuple):
+        return super(PDTuple, cls).__new__(cls, pd_tuple)
+    
+    def __getitem__(self, name):
+        return [pd for pd in self if pd.name == name][0]
+    
+## Shorter alias of ParamList
+PDL = PDTuple
 
 class Params(Properties):
     """
@@ -238,11 +256,11 @@ class Params(Properties):
 #                        derivatives.append(name)
                 _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
                 if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
-                    ## THis is a case where a proxy function has been provided
+                    ## This is a case where a proxy function has been provided
                     ## in place of a value.
                     derivatives.append(name)
             else:
-                raise ValueError('property %s has already been initialized'%(name,))
+                raise ValueError('property %s has already been initialized with value %s'%(name, _vals[name]))
 
         object.__setattr__(self, '_descr_dict', props.freeze())
 
@@ -310,7 +328,7 @@ class Params(Properties):
             self[param.name] = other[param.name]
             
         return self
-            
+    
     @property
     def protoS(self):
         # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
@@ -322,6 +340,7 @@ class Params(Properties):
         # self._descr_dict won't call __getattr__ because __getattribute__ returns successfully
         #return self._descr_dict
         return object.__getattribute__(self, '_descr_dict')
+    
     
 class HyperParams(Params):
     """
@@ -447,8 +466,13 @@ class iscallable(_ParamValidator):
         return isinstance(v, collections.Sequence)
         
     def __contains__(self, v):
-        if (self._noneokay and v is None):
-            return True
+        if v is None: ## special handling for None values
+            if self._noneokay:
+                return True
+            elif self._lst is not None:
+                return None in self._lst
+            else:
+                return False
         elif self._lst is None:
             return callable(v)
         else:
