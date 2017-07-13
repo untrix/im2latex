@@ -1,9 +1,25 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 12 14:50:29 2017
+    Copyright 2017 Sumeet S Singh
 
-@author: sumeet
+    This file is part of im2latex solution by Sumeet S Singh.
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the Affero GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    Affero GNU General Public License for more details.
+
+    You should have received a copy of the Affero GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+Created on Wed Jul 12 14:50:29 2017
+@author: Sumeet S Singh
 """
 import dl_commons as dlc
 import tf_commons as tfc
@@ -91,12 +107,6 @@ class Im2LatexDecoderRNNParams(dlc.HyperParams):
            "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
            "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
            instanceof(tfc.MLPParams)),
-#        PD('output_activation', 'Activtion function for deep output layer', None,
-#           'relu'),
-#        PD('output_1_n', 
-#           'Number of units in the first hidden layer of the output MLP. Used only if output_follow_paper == False'
-#           "Default's to 'm' - same as when output_follow_paper == True", None,
-#           equalto('m')),
     ### Initializer MLP ###
         PD('init_layers', 'Number of layers in the initializer MLP', xrange(1,10),
            1),

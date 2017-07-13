@@ -39,7 +39,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
     that includes one LSTM conditioned by image features and an attention model.
     """
 
-    def __init__(self, config, context, beamsearch_width, reuse=None):
+    def __init__(self, config, context, beamsearch_width=1, reuse=None):
         assert K.int_shape(context) == (config.B, config.L, config.D)
         
         with tf.variable_scope('Im2LatexDecoderRNN') as scope:
@@ -59,7 +59,9 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
                 self._a = K.tile(self._a, (beamsearch_width,1,1))
     
             with tf.variable_scope('Decoder_LSTM') as lstm_scope:
-                self._LSTM_cell = tfc.RNNWrapper(self.C.decoder_lstm, _scope=lstm_scope)
+                self._LSTM_cell = tfc.RNNWrapper(self.C.decoder_lstm, 
+                                                 _scope=lstm_scope,
+                                                 beamsearch_width=beamsearch_width)
                 self._lstm_scope = lstm_scope
 
 
@@ -114,10 +116,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## Concatenate a and h. Final shape = (B, L, D+n)
             ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
             ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
-#            for i in range(1, CONF.att_layers+1):
-#                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
-#                ah = Dense(n_units, activation=CONF.att_activation, batch_input_shape=(B,L,dim))(ah)
-#                dim = n_units
             assert K.int_shape(ah) == (B, L, dim)
                 
             ## Below is roughly how it is implemented in the code released by the authors of the paper
@@ -130,9 +128,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
             ## One could've just summed/averaged them all here, but the paper uses yet
             ## another set of weights to accomplish this. So we'll keeep that as an option.
-#            if CONF.att_weighted_gather:
-#                ah = Dense(1, activation='linear')(ah) # output shape = (B, L, 1)
-#                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
             if CONF.att_weighted_gather:
                 with tf.variable_scope('weighted_gather'):
                     ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
@@ -150,10 +145,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             with tf.variable_scope('a_flatten_concat_h'):
                 ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
             ah = tfc.MLPStack(CONF.att_layers)(ah);
-#            for i in range(1, CONF.att_layers+1):
-#                n_units = CONF['att_%d_n'%(i,)]; assert(n_units <= dim)
-#                ah = Dense(n_units, activation=CONF.att_actv, batch_input_shape=(B,dim))(ah)
-#                dim = n_units
             ## At this point, ah.shape = (B, L)
             dim = CONF.att_layers.layers_units[-1]
             assert dim == L
@@ -196,7 +187,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         ## First layer of output MLP
         if CONF.output_follow_paper: ## Follow the paper.
             ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-#            o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
             o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
                               batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
             ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
@@ -207,22 +197,14 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         else: ## Use a straight MLP Stack
             o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
             dim = m+n+D
-#            o_t = Dense(CONF.output_1_n, activation=CONF.output_activation, batch_input_shape=(B,D+m+n))(o_t)
 
         ## Regular MLP layers
         assert CONF.output_layers.layers_units[-1] == Kv
         logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
             
-#        if CONF.decoder_out_layers > 1:
-#            for i in range(2, CONF.decoder_out_layers+1):
-#                o_t = Dense(m, activation=CONF.output_activation, 
-#                            batch_input_shape=(B,dim))(o_t)
-                
-        ## Final logits layer
-#        logits_t = Dense(Kv, activation=CONF.output_activation, batch_input_shape=(B,m))(o_t) # shape = (B,K)
         assert K.int_shape(logits_t) == (B, Kv)
         
-        # return tf.nn.softmax(logits_t), logits_t
+        ## return tf.nn.softmax(logits_t), logits_t
         return logits_t
 
     def call(self, inputs, state):
@@ -268,7 +250,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope(self._lstm_scope):
             (h_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
 
-        ################ Decoder Layer ################
+        ################ Output Layer ################
         with tf.variable_scope('Output_Layer'):
             yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 

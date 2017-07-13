@@ -11,6 +11,7 @@ import dl_commons as dlc
 from Im2LatexDecoderRNNParams import D_RNN
 from Im2LatexDecoderRNN import Im2LatexDecoderRNN
 from Im2LatexModel import Im2LatexModel, HYPER
+from keras import backend as K
 
 def test_rnn():
     B = HYPER.B
@@ -65,4 +66,5 @@ def visualize_rnn():
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(D_RNN.tb), graph=graph)
             tf_sw.flush()
 
-visualize_rnn()
+test_rnn()
+##visualize_rnn()

@@ -363,7 +363,7 @@ class RNNParams(HyperParams):
 
 
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):
-    def __init__(self, params, reuse=None, _scope=None):
+    def __init__(self, params, reuse=None, _scope=None, beamsearch_width=1):
         self._params = params = RNNParams(params)
         with tf.variable_scope(_scope or self._params.op_name) as scope:
             super(RNNWrapper, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
@@ -374,7 +374,9 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                 self._cell = tf.nn.rnn_cell.MultiRNNCell(
                         [self._make_one_cell(n) for n in self._params.layers_units])
     
-            self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, self._params.B)
+            self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, 
+                                                                  self._params.B*beamsearch_width)
+            self._beamsearch_width = beamsearch_width
 
     @property
     def state_size(self):
@@ -389,11 +391,11 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
 
     @property
     def batch_input_shape(self):
-        return (self._params.B, self._params.i)
+        return (self._params.B*self._beamsearch_width, self._params.i)
         
     @property
     def batch_output_shape(self):
-        return (self._params.B, self._cell.output_size)
+        return (self._params.B*self._beamsearch_width, self._cell.output_size)
         
     @property
     def batch_state_shape(self):
@@ -449,7 +451,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         and the corresponding state-tensor should be (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         Similarly, if the input shape is m then the input-tensor should be of shape (B,m)
         """
-        return self.recursive_expand_shape(shape, self._params.B) == K.int_shape(tnsr)
+        return self.recursive_expand_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
     
     def call(self, inp, state):
         ## Parameter Validation
