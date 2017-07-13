@@ -41,22 +41,26 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
     def __init__(self, config, context, beamsearch_width, reuse=None):
         assert K.int_shape(context) == (config.B, config.L, config.D)
-        super(Im2LatexDecoderRNN, self).__init__(_reuse=reuse)
-        self.C = Im2LatexDecoderRNNParams(config)
-
-        ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
-        ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
-        ## phase.
-        self._beamsearch_width = beamsearch_width
-
-        self._a = context ## Image features from the Conv-Net
         
-        ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
-        ## to the input batch.
-        if self._beamsearch_width > 1:
-            self._a = K.tile(self._a, (beamsearch_width,1,1))
-
-        self._LSTM_cell = tfc.RNN(self.C.decoder_lstm)
+        with tf.variable_scope('Im2LatexDecoderRNN') as scope:
+            super(Im2LatexDecoderRNN, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+            self.C = Im2LatexDecoderRNNParams(config)
+    
+            ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
+            ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
+            ## phase.
+            self._beamsearch_width = beamsearch_width
+    
+            self._a = context ## Image features from the Conv-Net
+            
+            ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
+            ## to the input batch.
+            if self._beamsearch_width > 1:
+                self._a = K.tile(self._a, (beamsearch_width,1,1))
+    
+            with tf.variable_scope('Decoder_LSTM') as lstm_scope:
+                self._LSTM_cell = tfc.RNNWrapper(self.C.decoder_lstm, _scope=lstm_scope)
+                self._lstm_scope = lstm_scope
 
 
     @property
@@ -88,9 +92,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         L = CONF.L
         D = CONF.D
         h = h_prev
-        n = self._LSTM_cell.output_size
+        n = CONF.decoder_lstm.num_units
 
-#        self._LSTM_cell.assertOutputShape(h_prev)
         assert K.int_shape(h_prev) == (B, n)
         assert K.int_shape(a) == (B, L, D)
 
@@ -167,10 +170,11 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         m = self.C.m
         D = self.C.D
         B = self.C.B*self.BeamWidth
+        n = self.C.decoder_lstm.num_units
 
         inputs_t = K.concatenate((Ex_t, z_t))
         assert K.int_shape(inputs_t) == (B, m+D)
-        self._LSTM_cell.assertStateShape(lstm_states_t_1)
+        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
         
         (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
         return (h_t, lstm_states_t)
@@ -183,11 +187,10 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         D = self.C.D
         m = self.C.m
         Kv =self.C.K
-        n = self._LSTM_cell.output_size
+        n = self.C.decoder_lstm.num_units
         
         assert K.int_shape(Ex_t) == (B, m)
         assert K.int_shape(h_t) == (B, n)
-#        self._LSTM_cell.assertOutputShape(h_t)
         assert K.int_shape(z_t) == (B, D)
         
         ## First layer of output MLP
@@ -223,10 +226,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         return logits_t
 
     def call(self, inputs, state):
-        with tf.variable_scope('Im2LatexDecoderRNN'):
-            return self._call_body(inputs, state)
-        
-    def _call_body(self, inputs, state):
         """
         TODO: Incorporate Dropout
         Builds/threads tf graph for one RNN iteration.
@@ -249,12 +248,12 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         m = CONF.m
         L = CONF.L
         Kv =CONF.K
-        n = self._LSTM_cell.output_size
+        n = self.C.decoder_lstm.num_units
 
         print 'shape(Ex_t) = ', K.int_shape(Ex_t)
         assert K.int_shape(Ex_t) == (B,m)
         assert K.int_shape(alpha_t_1) == (B, L)
-        self._LSTM_cell.assertStateShape(lstm_states_t_1)
+        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
 
         ################ Attention Model ################
         with tf.variable_scope('Attention'):
@@ -266,7 +265,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
             z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
 
         ################ Decoder Layer ################
-        with tf.variable_scope("Decoder_LSTM"):
+        with tf.variable_scope(self._lstm_scope):
             (h_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
 
         ################ Decoder Layer ################

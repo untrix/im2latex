@@ -29,8 +29,9 @@ import dl_commons as dlc
 import tensorflow as tf
 import keras
 from keras import backend as K
-from dl_commons import mandatory, equalto, boolean, HyperParams, PD, PDL, iscallable, iscallableOrNone
-from dl_commons import issequenceof, integer, integerOrNone, decimal, instanceofOrNone, instanceof
+from dl_commons import (mandatory, equalto, boolean, HyperParams, PD, PDL, iscallable, iscallableOrNone,
+                        issequenceof, issequenceofOrNone, integer, integerOrNone, decimal, decimalOrNone,
+                        instanceofOrNone, instanceof)
 
 class tensor(instanceof):
     """Tensor shape validator to go with ParamDesc"""
@@ -279,10 +280,10 @@ class Activation(object):
         return h
 
 def make_lstm_optname(_, d):
-    opt_name = 'LSTMStack'
+    opt_name = 'LSTMWrapper'
     try:
         if ("dropout" in d and d['dropout'] is not None and d['dropout']['keep_prob'] < 1.):
-            opt_name = 'LSTMStack_w_Dropout'
+            opt_name = 'LSTMWrapper_w_Dropout'
     except:
         pass
     return opt_name
@@ -306,10 +307,16 @@ class RNNParams(HyperParams):
                None,
                make_lstm_optname
               ),
+            PD('num_units', 
+               "(integer): Either layers_units or num_units must be specified. Not both."
+               "Number of units in the single-layer RNN. If you want to instantiate a single-layer RNN "
+               "you may either specify num_units, or layers_units with a tuple of length one.",
+               integerOrNone(1)),
             PD('layers_units',
-              "(sequence of integers): sequence of numbers denoting number of units for each layer." 
+              "(sequence of integers): Either layers_units or num_units must be specified. Not both."
+              "Sequence of numbers denoting number of units for each layer." 
               "As many layers will be created as the length of the sequence",
-              issequenceof(int)
+              issequenceofOrNone(int)
               ),
             PD('activation_fn',
               'Output activation function to use.', 
@@ -337,23 +344,37 @@ class RNNParams(HyperParams):
             )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+        ## Additional parameter validation
+        b_num_units = self.num_units is not None
+        b_layers_units = self.layers_units is not None
+        if (b_num_units and b_layers_units):
+            assert len(self.layers_units) == 1
+            assert self.num_units == self.layers_units[0]
+        else:
+            assert (b_num_units or b_layers_units)
+        
+        ## If only one unit is specified, then make sure num_units and layers_units hold equivalent values
+        ## so that client-code may refer to either.
+        if b_num_units:
+            self.layers_units = (self.num_units,)
+        elif len(self.layers_units) == 1:
+            self.num_units = self.layers_units[0]
 
 
-class RNN(tf.nn.rnn_cell.RNNCell):
-    def __init__(self, params, reuse=None):
-        super(RNN, self).__init__(_reuse=reuse)
-        self._params = RNNParams(params)
-        with tf.variable_scope(self._params.op_name) as scope:
-            self._var_scope = scope
 
-        assert len(params.layers_units) >= 1        
-        if len(params.layers_units) == 1:
-            self._cell = self._make_one_cell(params.layers_units[0])
-        else: # len(params.layers_units) > 1
-            self._cell = tf.nn.rnn_cell.MultiRNNCell(
-                    [self._make_one_cell(n) for n in params.layers_units])
-
-        self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, params.B)
+class RNNWrapper(tf.nn.rnn_cell.RNNCell):
+    def __init__(self, params, reuse=None, _scope=None):
+        self._params = params = RNNParams(params)
+        with tf.variable_scope(_scope or self._params.op_name) as scope:
+            super(RNNWrapper, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+            
+            if len(self._params.layers_units) == 1:
+                self._cell = self._make_one_cell(self._params.layers_units[0])
+            else: # len(params.layers_units) > 1
+                self._cell = tf.nn.rnn_cell.MultiRNNCell(
+                        [self._make_one_cell(n) for n in self._params.layers_units])
+    
+            self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, self._params.B)
 
     @property
     def state_size(self):
@@ -384,7 +405,7 @@ class RNN(tf.nn.rnn_cell.RNNCell):
         if not dlc.issequence(shape):
             return (B, shape)
         else:
-            return tuple(RNN.recursive_expand_shape(s, B) for s in shape)
+            return tuple(RNNWrapper.recursive_expand_shape(s, B) for s in shape)
         
     @staticmethod
     def recursive_get_shape(obj):
@@ -392,7 +413,7 @@ class RNN(tf.nn.rnn_cell.RNNCell):
         if not dlc.issequence(obj):
             return K.int_shape(obj)
         else:
-            return tuple(RNN.recursive_get_shape(o) for o in obj)
+            return tuple(RNNWrapper.recursive_get_shape(o) for o in obj)
         
     def assertStateShape(self, state):
         """ 
@@ -437,13 +458,13 @@ class RNN(tf.nn.rnn_cell.RNNCell):
         self.assertStateShape(state)
 
         params = self._params
-        with tf.variable_scope(self._var_scope) as scope:
-            output, new_state = self._cell(inp, state)
-            # Tensorboard Summaries
-            if params.tb is not None:
-                summarize_layer(self._params.op_name, tf.get_collection('weights'), 
-                                tf.get_collection('biases'), output)
-                summarize_layer(self._params.op_name, None, None, new_state)
+#        with tf.variable_scope(self._var_scope) as scope:
+        output, new_state = self._cell(inp, state)
+        # Tensorboard Summaries
+        if params.tb is not None:
+            summarize_layer(self._params.op_name, tf.get_collection('weights'), 
+                            tf.get_collection('biases'), output)
+            summarize_layer(self._params.op_name, None, None, new_state)
 
         self.assertOutputShape(output)
         self.assertStateShape(new_state)
@@ -451,21 +472,21 @@ class RNN(tf.nn.rnn_cell.RNNCell):
             
     def _make_one_cell(self, num_units):
         params = self._params
-        with tf.variable_scope(self._var_scope):
-            #The implementation is based on: http://arxiv.org/abs/1409.2329.
-            cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
-                                               forget_bias=params.forget_bias, 
-                                               use_peephole=params.use_peephole
-                                               )
-            if params.dropout is not None and params.dropout.keep_prob < 1.:
-                cell = tf.nn.rnn_cell.DropoutWrapper(cell,
-                                              input_keep_prob=params.keep_prob,
-                                              state_keep_prob=params.keep_prob,
-                                              output_keep_prob=params.keep_prob,
-                                              variational_recurrent=True,
-                                              input_size=params.input_size
-                                              )
-            return cell
+#        with tf.variable_scope(self._var_scope):
+        #The implementation is based on: http://arxiv.org/abs/1409.2329.
+        cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
+                                           forget_bias=params.forget_bias, 
+                                           use_peephole=params.use_peephole
+                                           )
+        if params.dropout is not None and params.dropout.keep_prob < 1.:
+            cell = tf.nn.rnn_cell.DropoutWrapper(cell,
+                                          input_keep_prob=params.keep_prob,
+                                          state_keep_prob=params.keep_prob,
+                                          output_keep_prob=params.keep_prob,
+                                          variational_recurrent=True,
+                                          input_size=params.input_size
+                                          )
+        return cell
 
 def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')

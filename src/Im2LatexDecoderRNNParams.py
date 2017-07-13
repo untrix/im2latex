@@ -36,6 +36,11 @@ class Im2LatexDecoderRNNParams(dlc.HyperParams):
            xrange(500,1000),
            556 #get_vocab_size(data_folder)
            ),
+        PD('n',
+           "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
+           "The paper uses a value of 1000.",
+           integer(),
+           1000),
         PD('m',
            '(integer): dimensionality of the embedded input vector (Ey / Ex)', 
            xrange(50,250),
@@ -169,14 +174,11 @@ D_RNN.output_layers = tfc.MLPParams({
         'dropout': tfc.DropoutParams({
                 'keep_prob': 0.9
                 })
-        
         })
 D_RNN.decoder_lstm = tfc.RNNParams({
-        'op_name': 'LSTM',
         'B': D_RNN.B,
         'i': D_RNN.m+D_RNN.D, ## size of embedding vector + z_t
-        ## NOTE: Only one layer is supported in this model. Do not supply more than one value here.
-        'layers_units': (1000, ) ## paper uses a value of 1000
+        'num_units': D_RNN.n ## paper uses a value of 1000
         })
 
 print 'D_RNN = ', D_RNN

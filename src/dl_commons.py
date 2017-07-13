@@ -149,6 +149,9 @@ class PDTuple(tuple):
 ## Shorter alias of ParamList
 PDL = PDTuple
 
+class ParamsValueError(ValueError):
+    pass
+
 class Params(Properties):
     """
     Prototyped Properties class. The prototype is passed into the constructor and
@@ -243,24 +246,28 @@ class Params(Properties):
         for prop in descriptors:
             name = prop.name
             if name not in props:
-                props[name] = prop
-#                if (name in vals1_):
-#                    _vals[name] = vals1_[name]
-#                elif (name in vals2_):
-#                    _vals[name] = vals2_[name]
-#                else:
-#                    _vals[name] = prop.default
-#                    if callable(_vals[name]) and (not isinstance(prop.validator, _iscallable)):
-#                        ## THis is a case where a proxy function has been provided
-#                        ## in place of a value.
-#                        derivatives.append(name)
-                _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
-                if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
-                    ## This is a case where a proxy function has been provided
-                    ## in place of a value.
-                    derivatives.append(name)
+                try:
+                    props[name] = prop
+    #                if (name in vals1_):
+    #                    _vals[name] = vals1_[name]
+    #                elif (name in vals2_):
+    #                    _vals[name] = vals2_[name]
+    #                else:
+    #                    _vals[name] = prop.default
+    #                    if callable(_vals[name]) and (not isinstance(prop.validator, _iscallable)):
+    #                        ## THis is a case where a proxy function has been provided
+    #                        ## in place of a value.
+    #                        derivatives.append(name)
+                    _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
+                    if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
+                        ## This is a case where a proxy function has been provided
+                        ## in place of a value.
+                        derivatives.append(name)
+                except:
+                    print('##### Error while processing property: \n', prop, '\n')
+                    raise
             else:
-                raise ValueError('property %s has already been initialized with value %s'%(name, _vals[name]))
+                raise ParamsValueError('property %s has already been initialized with value %s'%(name, _vals[name]))
 
         object.__setattr__(self, '_descr_dict', props.freeze())
 
@@ -274,8 +281,14 @@ class Params(Properties):
         # Validation: Now insert the property values one by one. Doing so will invoke
         # self._set_val_ which will validate their values against self._descr_dict.
         for prop in descriptors:
-            _name = prop.name
-            self[_name] = _vals[_name]
+            try:
+                _name = prop.name
+                self[_name] = _vals[_name]
+            except ParamsValueError:
+                raise
+            except:
+                print('##### Error while processing property: \n', prop, '\n')
+                raise
 
         # Finally, seal the object so that no new properties may be added.
         self.seal()
@@ -289,7 +302,7 @@ class Params(Properties):
         # allowed value. This is so because the code may want to set the
         # property value in the future based on some dynamic decision.
         elif (val is not None) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
-            raise ValueError('%s is not a valid value of property %s'%(val, name))
+            raise ParamsValueError('%s is not a valid value of property %s'%(val, name))
         else:
             return Properties._set_val_(self, name, val)
 
@@ -439,7 +452,7 @@ class _type_range_incl(instanceof):
         instanceof.__init__(self, cls, noneokay)
         self._range = range_incl(begin, end)
     def __contains__(self, v):
-        return instanceof.__contains__(self, v) and self._range.__contains__(v)
+        return instanceof.__contains__(self, v) and (self._range.__contains__(v) or (self._noneokay and v is None))
 
 class integer(_type_range_incl):
     def __init__(self, begin=None, end=None, noneokay=False):
@@ -447,7 +460,7 @@ class integer(_type_range_incl):
 
 class integerOrNone(integer):
     def __init__(self, begin=None, end=None):
-        integer.__init__(self, begin, end, True)
+        integer.__init__(self, begin, end, noneokay=True)
 
 class decimal(_type_range_incl):
     def __init__(self, begin=None, end=None, noneokay=False):
@@ -455,7 +468,7 @@ class decimal(_type_range_incl):
 
 class decimalOrNone(decimal):
     def __init__(self, begin=None, end=None,):
-        decimal.__init__(self, begin, end, True)
+        decimal.__init__(self, begin, end, noneokay=True)
 
 def issequence(v):
     if isinstance(v, basestring):
@@ -488,9 +501,14 @@ class iscallableOrNone(iscallable):
 class issequenceof(instanceof):
     def __init__(self, cls, noneokay=False):
         instanceof.__init__(self, cls, noneokay)
+        self._noneokay = noneokay
     def __contains__(self, v):
-        return issequence(v) and instanceof.__contains__(self, v[0])
+        return (self._noneokay and v is None) or (issequence(v) and instanceof.__contains__(self, v[0]))
 
+class issequenceofOrNone(issequenceof):
+    def __init__(self, cls):
+        issequenceof.__init__(self, cls, noneokay=True)
+        
 class _anyok(_ParamValidator):
     def __contains__(self, v):
         return True
