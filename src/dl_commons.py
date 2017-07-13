@@ -422,6 +422,10 @@ class instanceof(_ParamValidator):
     def __contains__(self, obj):
         return (self._noneokay and obj is None) or isinstance(obj, self._cls)
 
+class instanceofOrNone(instanceof):
+    def __init__(self, cls):
+        super(instanceofOrNone, self).__init__(cls, True)
+        
 # A inclusive range validator class
 class range_incl(_ParamValidator):
     def __init__(self, begin=None, end=None):
@@ -453,17 +457,16 @@ class decimalOrNone(decimal):
     def __init__(self, begin=None, end=None,):
         decimal.__init__(self, begin, end, True)
 
+def issequence(v):
+    if isinstance(v, basestring):
+        return False
+    return isinstance(v, collections.Sequence)
+
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):
-        assert lst is None or self.issequence(lst)
+        assert lst is None or issequence(lst)
         self._noneokay = noneokay
         self._lst = lst
-        
-    @staticmethod
-    def issequence(v):
-        if isinstance(v, basestring):
-            return False
-        return isinstance(v, collections.Sequence)
         
     def __contains__(self, v):
         if v is None: ## special handling for None values
@@ -486,9 +489,7 @@ class issequenceof(instanceof):
     def __init__(self, cls, noneokay=False):
         instanceof.__init__(self, cls, noneokay)
     def __contains__(self, v):
-        if isinstance(v, basestring):
-            return False
-        return isinstance(v, collections.Sequence) and instanceof.__contains__(self, v[0])
+        return issequence(v) and instanceof.__contains__(self, v[0])
 
 class _anyok(_ParamValidator):
     def __contains__(self, v):

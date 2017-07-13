@@ -31,7 +31,7 @@ from keras.applications.vgg16 import VGG16
 from keras.layers import Input, Embedding, Dense, Activation, Dropout, Concatenate, Permute
 from keras import backend as K
 from dl_commons import PD, mandatory, boolean, integer, decimal, equalto, instanceof
-from Im2LatexDecoderRNN import Im2LatexDecoderRNN, RNNParams
+from Im2LatexDecoderRNN import Im2LatexDecoderRNN, Im2LatexDecoderRNNParams
 
 HYPER_PD = (
         PD('image_shape',
@@ -180,42 +180,7 @@ HYPER = dlc.HyperParams(HYPER_PD,
         })
 
 
-RNN = RNNParams(
-        ## Overrides of default values.
-        ## FYI: By convention, all boolean params' default value is True, such
-        ##      that the overrides would be easy to spot.
-        {
-            'att_weighted_gather': True,
-            'sum_logloss': True,
-            'MeanSumAlphaEquals1': True,
-            'output_follow_paper': True
-        })
-RNN.att_layers = tfc.MLPParams({
-        # Number of units in all layers of the attention model = D in the paper"s source-code.
-        'layers_units': (RNN.D,),
-        'activation_fn': tf.nn.tanh, # = tanh in the paper's source code
-        'tb': RNN.tb, # using the global tensorboard params
-        'dropout': tfc.DropoutParams({
-                'keep_prob': 0.9
-                })
-        })
-RNN.output_layers = tfc.MLPParams({
-        ## One layer with num_units = m is added if output_follow_paper == True
-        ## Last layer must have num_units = K because it outputs logits.
-        ## paper has all layers with num_units = m. I've noteiced that they build rectangular MLPs, i.e. not triangular.
-        'layers_units': (RNN.m, RNN.K),
-        'activation_fn': tf.nn.relu, # paper has it set to relu
-        'tb': RNN.tb,
-        'dropout': tfc.DropoutParams({
-                'keep_prob': 0.9
-                })
-        
-        })
-
-print 'RNN.att_layers.tb = ', RNN.att_layers.tb
-
 print HYPER
-print RNN
 
 class Im2LatexModel(object):
     """
@@ -474,7 +439,6 @@ class Im2LatexModel(object):
         
         ################ Decoder LSTM Cell ################
         with tf.variable_scope('Decoder_LSTM'):
-            #LSTM by Zaremba et. al 2014: http://arxiv.org/abs/1409.2329
             self._decoder_lstm = tf.contrib.rnn.LSTMBlockCell(n, forget_bias=1.0, 
                                                               use_peephole=HYPER.decoder_lstm_peephole)
             
@@ -615,7 +579,7 @@ class Im2LatexModel(object):
             
 
         ################ Build RNN ################
-        with tf.variable_scope('RNN'):
+        with tf.variable_scope('Decoder_RNN'):
             initial_accum = (0, init_h, init_lstm_states, a)
             ## Weights are created in first step and then reused in subsequent steps.
             ## Hence we need to separate them out.

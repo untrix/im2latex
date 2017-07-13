@@ -29,9 +29,8 @@ import dl_commons as dlc
 import tensorflow as tf
 import keras
 from keras import backend as K
-from dl_commons import mandatory, instanceof, equalto, boolean, HyperParams, PD, PDL, iscallable
-from dl_commons import issequenceof, integer, decimal
-
+from dl_commons import mandatory, equalto, boolean, HyperParams, PD, PDL, iscallable, iscallableOrNone
+from dl_commons import issequenceof, integer, integerOrNone, decimal, instanceofOrNone, instanceof
 
 class tensor(instanceof):
     """Tensor shape validator to go with ParamDesc"""
@@ -127,9 +126,9 @@ class CommonParams(HyperParams):
         PD('biases_regularizer',
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
               iscallable(noneokay=True), None),
-        PD('make_tb_metric',"(boolean): Create tensorboard metrics.",
-              boolean,
-              True),
+#        PD('make_tb_metric',"(boolean): Create tensorboard metrics.",
+#              boolean,
+#              True),
         PD('dropout', 'Dropout parameters if any.',
               instanceof(DropoutParams, True)),
         PD('weights_coll_name',
@@ -138,7 +137,7 @@ class CommonParams(HyperParams):
               'WEIGHTS'
               ),
         PD('tb', "Tensorboard Params.",
-           instanceof(TensorboardParams))
+           instanceofOrNone(TensorboardParams))
         )
         
     def __init__(self, initVals=None):
@@ -231,7 +230,7 @@ class FCLayer(object):
                     )
     
             # Tensorboard Summaries
-            if params.make_tb_metric:
+            if params.tb is not None:
                 summarize_layer(layer_name, tf.get_collection(coll_w), tf.get_collection(coll_b), h)
     
         return h
@@ -254,8 +253,7 @@ class DropoutLayer(object):
 
 class ActivationParams(HyperParams):
     proto = (CommonParamsProto.activation_fn, 
-             CommonParamsProto.tb,
-             CommonParamsProto.make_tb_metric)
+             CommonParamsProto.tb)
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
 
@@ -275,34 +273,56 @@ class Activation(object):
         with tf.variable_scope(scope_name):
             h = params.activation_fn(inp)
             # Tensorboard Summaries
-            if params.make_tb_metric:
+            if params.tb is not None:
                 summarize_layer(scope_name, None, None, h)
 
         return h
 
+def make_lstm_optname(_, d):
+    opt_name = 'LSTMStack'
+    try:
+        if ("dropout" in d and d['dropout'] is not None and d['dropout']['keep_prob'] < 1.):
+            opt_name = 'LSTMStack_w_Dropout'
+    except:
+        pass
+    return opt_name
+
 class RNNParams(HyperParams):
     proto = (
+            PD('B',
+               '(integer or None): Size of mini-batch for training, validation and testing.',
+               integerOrNone(1)
+               ),
+            PD('i',
+               '(integer): dimensionality of the input vector (Ey / Ex)', 
+               integer(1)
+               ),
             PD('type', 
                'Type of RNN cell to create. Only LSTM is supported at this time.',
                ('lstm',),
                'lstm'),
+            PD('op_name',
+               'Name of the layer; will show up in tensorboard visualization',
+               None,
+               make_lstm_optname
+              ),
             PD('layers_units',
               "(sequence of integers): sequence of numbers denoting number of units for each layer." 
               "As many layers will be created as the length of the sequence",
               issequenceof(int)
               ),
             PD('activation_fn',
-                  'Output activation function to use.', 
-                  iscallable((tf.nn.tanh, tf.nn.sigmoid)),
-                  tf.nn.tanh),
+              'Output activation function to use.', 
+              iscallable((tf.nn.tanh, tf.nn.sigmoid)),
+              tf.nn.tanh),
             PD('weights_initializer', 
-                  'Tensorflow weights initializer function', 
-                  iscallableOrNone(),
-                  None
-                  #tf.contrib.layers.xavier_initializer()
-                  # tf.contrib.layers.xavier_initializer_conv2d()
-                  # tf.contrib.layers.variance_scaling_initializer()
-                  ),
+              'Tensorflow weights initializer function', 
+              iscallableOrNone(),
+              None
+              #tf.contrib.layers.xavier_initializer()
+              # tf.contrib.layers.xavier_initializer_conv2d()
+              # tf.contrib.layers.variance_scaling_initializer()
+              ),
             PD('use_peephole',
                '(boolean): whether to employ peephole connections in the decoder LSTM',
                (True, False),
@@ -311,45 +331,141 @@ class RNNParams(HyperParams):
                decimal(),
                1.0),
             PD('dropout', 'Dropout parameters if any.',
-                  instanceof(DropoutParams, True)),
+               instanceofOrNone(DropoutParams)),
             PD('tb', '',
-               instanceof(TensorboardParams))
+               instanceofOrNone(TensorboardParams))
             )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
 
-class RNN(object):
-    def __init__(self, params, batch_input_shape=None):
+
+class RNN(tf.nn.rnn_cell.RNNCell):
+    def __init__(self, params, reuse=None):
+        super(RNN, self).__init__(_reuse=reuse)
         self._params = RNNParams(params)
-        self._batch_input_shape = batch_input_shape
-        
+        with tf.variable_scope(self._params.op_name) as scope:
+            self._var_scope = scope
+
+        assert len(params.layers_units) >= 1        
         if len(params.layers_units) == 1:
-            #The implementation is based on: http://arxiv.org/abs/1409.2329.
-            self._LSTM_cell = tf.contrib.rnn.LSTMBlockCell(params.layers_units[0], 
-                                                           forget_bias=params.forget_bias, 
-                                                           use_peephole=params.use_peephole,
-                                                           initializer=params.weights_initializer,
-                                                           activation=params.activation_fn)
-        if params.dropout is not None:
-            tf.nn.rnn_cell.DropoutWrapper(self._LSTM_cell,
-                                          input_keep_prob=params.keep_prob,
-                                          state_keep_prob=params.keep_prob,
-                                          output_keep_prob==params.keep_prob,
-                                          variational_recurrent=True,
-                                          input_size=batch_input_size[1:]
-                                          )
+            self._cell = self._make_one_cell(params.layers_units[0])
+        else: # len(params.layers_units) > 1
+            self._cell = tf.nn.rnn_cell.MultiRNNCell(
+                    [self._make_one_cell(n) for n in params.layers_units])
+
+        self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, params.B)
+
+    @property
+    def state_size(self):
+        return self._cell.state_size
+
+    @property
+    def output_size(self):
+        return self._cell.output_size
+
+    def zero_state(self, batch_size, dtype):
+        return self._cell.zero_state(batch_size, dtype)
+
+    @property
+    def batch_input_shape(self):
+        return (self._params.B, self._params.i)
         
+    @property
+    def batch_output_shape(self):
+        return (self._params.B, self._cell.output_size)
         
-    def __call__(self, inp, state):
+    @property
+    def batch_state_shape(self):
+        return self._batch_state_shape
+        
+    @staticmethod
+    def recursive_expand_shape(shape, B):
+        """ Convert every scalar in the nested sequence into a (B, s) sequence """
+        if not dlc.issequence(shape):
+            return (B, shape)
+        else:
+            return tuple(RNN.recursive_expand_shape(s, B) for s in shape)
+        
+    @staticmethod
+    def recursive_get_shape(obj):
+        """ Get shape of possibly nested sequence of tensors """
+        if not dlc.issequence(obj):
+            return K.int_shape(obj)
+        else:
+            return tuple(RNN.recursive_get_shape(o) for o in obj)
+        
+    def assertStateShape(self, state):
+        """ 
+        Asserts that the shape of the tensor is consistent with the RNN's state shape.
+        For e.g. the state-shape of a MultiRNNCell with L layers would be ((n1, n1), (n2, n2) ... (nL, nL))
+        and the corresponding state-tensor should be of shape :
+        (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
+        """
+        try:
+            assert self.batch_state_shape == self.recursive_get_shape(state)
+        except:
+            print 'state-shape assertion Failed for state type = ', type(state), ' and value = ', state
+            raise
+        
+    def assertOutputShape(self, output):
+        """ 
+        Asserts that the shape of the tensor is consistent with the RNN's output shape.
+        For e.g. the output shape is o then the input-tensor should be of shape (B,o)
+        """
+        assert self.batch_output_shape == K.int_shape(output)
+        
+    def assertInputShape(self, inp):
+        """ 
+        Asserts that the shape of the tensor is consistent with the RNN's input shape.
+        For e.g. if the input shape is m then the input-tensor should be of shape (B,m)
+        """
+        assert K.int_shape(inp) == self.batch_input_shape
+
+    def _assertBatchShape(self, shape, tnsr):
+        """ 
+        Asserts that the shape of the tensor is consistent with the RNN's shape.
+        For e.g. the state-shape of a MultiRNNCell with L layers would be ((n1, n1), (n2, n2) ... (nL, nL))
+        and the corresponding state-tensor should be (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
+        Similarly, if the input shape is m then the input-tensor should be of shape (B,m)
+        """
+        return self.recursive_expand_shape(shape, self._params.B) == K.int_shape(tnsr)
+    
+    def call(self, inp, state):
         ## Parameter Validation
         assert isinstance(inp, tf.Tensor)
-        if self._batch_input_shape is not None:
-            self.assertInputSize(inp)
-            self.assertStateSize(state)
+        self.assertInputShape(inp)
+        self.assertStateShape(state)
 
         params = self._params
-        with tf.variable_scope('LSTM'):
+        with tf.variable_scope(self._var_scope) as scope:
+            output, new_state = self._cell(inp, state)
+            # Tensorboard Summaries
+            if params.tb is not None:
+                summarize_layer(scope.name, tf.get_collection('weights', scope), 
+                                tf.get_collection('biases', scope), output)
+                summarize_layer(scope.name, None, None, new_state)
+
+        self.assertOutputShape(output)
+        self.assertStateShape(new_state)
+        return (output, new_state)
             
+    def _make_one_cell(self, num_units):
+        params = self._params
+        with tf.variable_scope(self._var_scope):
+            #The implementation is based on: http://arxiv.org/abs/1409.2329.
+            cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
+                                               forget_bias=params.forget_bias, 
+                                               use_peephole=params.use_peephole
+                                               )
+            if params.dropout is not None and params.dropout.keep_prob < 1.:
+                cell = tf.nn.rnn_cell.DropoutWrapper(cell,
+                                              input_keep_prob=params.keep_prob,
+                                              state_keep_prob=params.keep_prob,
+                                              output_keep_prob=params.keep_prob,
+                                              variational_recurrent=True,
+                                              input_size=params.input_size
+                                              )
+        return cell
 
 def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')
