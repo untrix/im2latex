@@ -441,9 +441,9 @@ class RNN(tf.nn.rnn_cell.RNNCell):
             output, new_state = self._cell(inp, state)
             # Tensorboard Summaries
             if params.tb is not None:
-                summarize_layer(scope.name, tf.get_collection('weights', scope), 
-                                tf.get_collection('biases', scope), output)
-                summarize_layer(scope.name, None, None, new_state)
+                summarize_layer(self._params.op_name, tf.get_collection('weights'), 
+                                tf.get_collection('biases'), output)
+                summarize_layer(self._params.op_name, None, None, new_state)
 
         self.assertOutputShape(output)
         self.assertStateShape(new_state)
@@ -465,7 +465,7 @@ class RNN(tf.nn.rnn_cell.RNNCell):
                                               variational_recurrent=True,
                                               input_size=params.input_size
                                               )
-        return cell
+            return cell
 
 def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')

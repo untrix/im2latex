@@ -172,6 +172,7 @@ D_RNN.output_layers = tfc.MLPParams({
         
         })
 D_RNN.decoder_lstm = tfc.RNNParams({
+        'op_name': 'LSTM',
         'B': D_RNN.B,
         'i': D_RNN.m+D_RNN.D, ## size of embedding vector + z_t
         ## NOTE: Only one layer is supported in this model. Do not supply more than one value here.
