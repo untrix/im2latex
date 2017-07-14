@@ -317,6 +317,43 @@ class Im2LatexModel(object):
         ## Final softmax layer
         self._output_softmax = Dense(Kv, activation='softmax', batch_input_shape=(B,m))
         
+    def _output_layer_new(self, Ex_t, h_t, z_t):
+        
+        ## Renaming HyperParams for convenience
+        CONF = self.C
+        B = self.C.B*self.BeamWidth
+        D = self.C.D
+        m = self.C.m
+        Kv =self.C.K
+        n = self.C.decoder_lstm.num_units
+        
+        assert K.int_shape(Ex_t) == (B, m)
+        assert K.int_shape(h_t) == (B, n)
+        assert K.int_shape(z_t) == (B, D)
+        
+        ## First layer of output MLP
+        if CONF.output_follow_paper: ## Follow the paper.
+            ## Affine transformation of h_t and z_t from size n/D to bring it down to m
+            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
+                              batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+            ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
+            o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
+            ## non-linearity for the first layer
+            o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
+            dim = m
+        else: ## Use a straight MLP Stack
+            o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
+            dim = m+n+D
+
+        ## Regular MLP layers
+        assert CONF.output_layers.layers_units[-1] == Kv
+        logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
+            
+        assert K.int_shape(logits_t) == (B, Kv)
+        
+        ## return tf.nn.softmax(logits_t), logits_t
+        return logits_t
+
     def _build_output_layer(self, Ex_t, h_t, z_t):
         ## Renaming HyperParams for convenience
         B = HYPER.B
@@ -696,20 +733,19 @@ class Im2LatexModel(object):
         Kv = HYPER.K
         L = HYPER.L
         
-        ## TODO: Introduce Beam Search
         ## TODO: Introduce Stochastic Learning
         
         rv = dlc.Properties()
         im = tf.placeholder(dtype=tf.float32, shape=(HYPER.B,) + HYPER.image_shape, name='image_batch')
         y_s = tf.placeholder(tf.int32, shape=(HYPER.B, None))
         #a = tf.placeholder(tf.float32, shape=(HYPER.B, HYPER.L, HYPER.D))
-        Ts = tf.placeholder(tf.int32, shape=(HYPER.B,))
+        sequence_lengths = tf.placeholder(tf.int32, shape=(HYPER.B,))
 
         a = self._build_image_context(im)
         init_c, init_h = self._build_init_layer(a)
         yProbs, yLogits, alpha = self._build_rnn_training(a, y_s, init_c, init_h)
         self._build_rnn_testing(a, y_s, init_c, init_h)
-        loss = self._build_loss(yLogits, y_s, alpha, Ts)
+        loss = self._build_loss(yLogits, y_s, alpha, sequence_lengths)
         
         assert K.int_shape(yProbs) == (B, None, Kv)
         assert K.int_shape(yLogits) == (B, None, Kv)
@@ -717,7 +753,7 @@ class Im2LatexModel(object):
         
         rv.im = im
         rv.y_s = y_s
-        rv.Ts = Ts
+        rv.Ts = sequence_lengths
         rv.yProbs = yProbs
         rv.yLogits = yLogits
         rv.alpha = alpha

@@ -28,9 +28,7 @@ import tensorflow as tf
 
 class Im2LatexDecoderRNNParams(dlc.HyperParams):
     proto = (
-        PD('tb', "Tensorboard Params.",
-           instanceof(tfc.TensorboardParams),
-           tfc.TensorboardParams()),
+        ## Global Properties, used at various places
         PD('image_shape',
            'Shape of input images. Should be a python sequence.',
            None,
@@ -73,10 +71,16 @@ class Im2LatexDecoderRNNParams(dlc.HyperParams):
            'See paper or model description.', 
            integer(1),
            512),
-        PD('keep_prob', '(decimal): Value between 0.1 and 1.0 indicating the keep_probability of dropout layers.'
-           'A value of 1 implies no dropout.',
-           decimal(0.1, 1), 
-           1.0),
+        PD('tb', "Tensorboard Params.",
+           instanceof(tfc.TensorboardParams),
+           tfc.TensorboardParams()),
+        PD('dropout', 
+           'Dropout parameters if any - global at the level of the RNN.',
+           instanceof(tfc.DropoutParams, True)),
+#        PD('keep_prob', '(decimal): Value between 0.1 and 1.0 indicating the keep_probability of dropout layers.'
+#           'A value of 1 implies no dropout.',
+#           decimal(0.1, 1), 
+#           1.0),
     ### Attention Model Params ###
         PD('att_layers', 'MLP parameters', instanceof(tfc.MLPParams)),
         PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
@@ -150,7 +154,7 @@ class Im2LatexDecoderRNNParams(dlc.HyperParams):
           False),
         PD('pLambda', 'Lambda value for alpha penalty',
            decimal(0),
-           0.0001)   
+           0.0001)  
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
@@ -170,9 +174,7 @@ D_RNN.att_layers = tfc.MLPParams({
         'layers_units': (D_RNN.D,),
         'activation_fn': tf.nn.tanh, # = tanh in the paper's source code
         'tb': D_RNN.tb, # using the global tensorboard params
-        'dropout': tfc.DropoutParams({
-                'keep_prob': 0.9
-                })
+        'dropout': tfc.DropoutParams({'keep_prob': 0.9})
         })
 D_RNN.output_layers = tfc.MLPParams({
         ## One layer with num_units = m is added if output_follow_paper == True
@@ -181,14 +183,14 @@ D_RNN.output_layers = tfc.MLPParams({
         'layers_units': (D_RNN.m, D_RNN.K),
         'activation_fn': tf.nn.relu, # paper has it set to relu
         'tb': D_RNN.tb,
-        'dropout': tfc.DropoutParams({
-                'keep_prob': 0.9
-                })
+        'dropout': tfc.DropoutParams({'keep_prob': 0.9})
         })
 D_RNN.decoder_lstm = tfc.RNNParams({
         'B': D_RNN.B,
         'i': D_RNN.m+D_RNN.D, ## size of embedding vector + z_t
-        'num_units': D_RNN.n ## paper uses a value of 1000
+         ##'num_units': D_RNN.n ## paper uses a value of 1000
+        'layers_units': (1000, 512),
+        'dropout': tfc.DropoutParams({'keep_prob': 0.9})
         })
 
 print 'D_RNN = ', D_RNN

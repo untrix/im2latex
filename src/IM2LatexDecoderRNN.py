@@ -31,7 +31,7 @@ import collections
 from Im2LatexDecoderRNNParams import Im2LatexDecoderRNNParams
 
 
-Im2LatexRNNStateTuple = collections.namedtuple("Im2LatexRNNStateTuple", ('lstm_state', 'alpha'))
+Im2LatexRNNStateTuple = collections.namedtuple("Im2LatexRNNStateTuple", ('h', 'lstm_state', 'alpha'))
 
 class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
     """
@@ -80,8 +80,9 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
     def zero_state(self, batch_size, dtype):
         with tf.name_scope(type(self).__name__ + "ZeroState", values=[batch_size]):
-            return (tuple(self._LSTM_cell.zero_state(batch_size, dtype)), 
-                    tf.zeros((batch_size, self.C.L), dtype=dtype))
+            return (tf.zeros(tfc.expand_shape(self._LSTM_cell.output_size, batch_size), dtype=dtype, name='h'),
+                    tuple(self._LSTM_cell.zero_state(batch_size, dtype)),
+                    tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'))
 
     @property
     def output_size(self):
@@ -96,7 +97,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         h = h_prev
         n = CONF.decoder_lstm.num_units
 
-        assert K.int_shape(h_prev) == (B, n)
+        self._LSTM_cell.assertOutputShape(h_prev)
+#        assert K.int_shape(h_prev) == (B, n)
         assert K.int_shape(a) == (B, L, D)
 
         ## For #layers > 1 this will endup being different than the paper's implementation
@@ -165,7 +167,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
         inputs_t = K.concatenate((Ex_t, z_t))
         assert K.int_shape(inputs_t) == (B, m+D)
-        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
+        self._LSTM_cell.assertStateShape(lstm_states_t_1) == ((B,n), (B,n))
         
         (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
         return (h_t, lstm_states_t)
@@ -178,10 +180,10 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         D = self.C.D
         m = self.C.m
         Kv =self.C.K
-        n = self.C.decoder_lstm.num_units
+        n = self._LSTM_cell.output_size
         
         assert K.int_shape(Ex_t) == (B, m)
-        assert K.int_shape(h_t) == (B, n)
+        self._LSTM_cell.assertOutputShape(h_t)
         assert K.int_shape(z_t) == (B, D)
         
         ## First layer of output MLP
@@ -222,7 +224,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         state = Im2LatexRNNStateTuple(*state)
         lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
         alpha_t_1 = state.alpha            # shape = (B, L)
-        h_t_1 = lstm_states_t_1[1]
+        h_t_1 = state.h
         a = self._a
 
         CONF = self.C
@@ -230,12 +232,12 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         m = CONF.m
         L = CONF.L
         Kv =CONF.K
-        n = self.C.decoder_lstm.num_units
 
         print 'shape(Ex_t) = ', K.int_shape(Ex_t)
         assert K.int_shape(Ex_t) == (B,m)
         assert K.int_shape(alpha_t_1) == (B, L)
-        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
+#        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
+        self._LSTM_cell.assertStateShape(lstm_states_t_1)
 
         ################ Attention Model ################
         with tf.variable_scope('Attention'):
@@ -245,6 +247,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         ## (B, L) batch_dot (B,L,D) -> (B, D)
         with tf.variable_scope('Phi'):
             z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
+            z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
 
         ################ Decoder Layer ################
         with tf.variable_scope(self._lstm_scope):
@@ -254,11 +257,10 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope('Output_Layer'):
             yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 
-        assert K.int_shape(h_t) == (B, n)
-        assert K.int_shape(lstm_states_t.h) == (B, n)
-        assert K.int_shape(lstm_states_t.c) == (B, n)
-        #assert K.int_shape(yProbs_t) == (B, Kv)
+        self._LSTM_cell.assertOutputShape(h_t)
+        self._LSTM_cell.assertStateShape(lstm_states_t)
+        ## assert K.int_shape(yProbs_t) == (B, Kv)
         assert K.int_shape(yLogits_t) == (B, Kv)
         assert K.int_shape(alpha_t) == (B, L)
 
-        return yLogits_t, (tuple(lstm_states_t), alpha_t)
+        return yLogits_t, (h_t, tuple(lstm_states_t), alpha_t)

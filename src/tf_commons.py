@@ -302,6 +302,10 @@ class RNNParams(HyperParams):
                'Type of RNN cell to create. Only LSTM is supported at this time.',
                ('lstm',),
                'lstm'),
+            PD('dtype',
+               "dtype of data",
+               (tf.float32,),
+               tf.float32),
             PD('op_name',
                'Name of the layer; will show up in tensorboard visualization',
                None,
@@ -361,6 +365,14 @@ class RNNParams(HyperParams):
             self.num_units = self.layers_units[0]
 
 
+def expand_shape(shape, B):
+    """ Convert every scalar in the nested sequence into a (B, s) sequence """
+    if not dlc.issequence(shape):
+        return (B, shape)
+    else:
+        return tuple(expand_shape(s, B) for s in shape)
+    
+
 
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def __init__(self, params, reuse=None, _scope=None, beamsearch_width=1):
@@ -374,7 +386,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                 self._cell = tf.nn.rnn_cell.MultiRNNCell(
                         [self._make_one_cell(n) for n in self._params.layers_units])
     
-            self._batch_state_shape = self.recursive_expand_shape(self._cell.state_size, 
+            self._batch_state_shape = expand_shape(self._cell.state_size, 
                                                                   self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
 
@@ -400,14 +412,6 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     @property
     def batch_state_shape(self):
         return self._batch_state_shape
-        
-    @staticmethod
-    def recursive_expand_shape(shape, B):
-        """ Convert every scalar in the nested sequence into a (B, s) sequence """
-        if not dlc.issequence(shape):
-            return (B, shape)
-        else:
-            return tuple(RNNWrapper.recursive_expand_shape(s, B) for s in shape)
         
     @staticmethod
     def recursive_get_shape(obj):
@@ -451,7 +455,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         and the corresponding state-tensor should be (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         Similarly, if the input shape is m then the input-tensor should be of shape (B,m)
         """
-        return self.recursive_expand_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
+        return expand_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
     
     def call(self, inp, state):
         ## Parameter Validation
@@ -474,20 +478,20 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
             
     def _make_one_cell(self, num_units):
         params = self._params
-#        with tf.variable_scope(self._var_scope):
         #The implementation is based on: http://arxiv.org/abs/1409.2329.
         cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
                                            forget_bias=params.forget_bias, 
                                            use_peephole=params.use_peephole
                                            )
         if params.dropout is not None and params.dropout.keep_prob < 1.:
-            cell = tf.nn.rnn_cell.DropoutWrapper(cell,
-                                          input_keep_prob=params.keep_prob,
-                                          state_keep_prob=params.keep_prob,
-                                          output_keep_prob=params.keep_prob,
-                                          variational_recurrent=True,
-                                          input_size=params.input_size
-                                          )
+            with tf.variable_scope('DropoutWrapper'):
+                cell = tf.nn.rnn_cell.DropoutWrapper(cell,
+                                              input_keep_prob=1.,
+                                              state_keep_prob=params.dropout.keep_prob,
+                                              output_keep_prob=params.dropout.keep_prob,
+                                              variational_recurrent=True,
+                                              dtype=params.dtype
+                                              )
         return cell
 
 def makeTBDir(params):
