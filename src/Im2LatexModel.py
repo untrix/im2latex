@@ -24,6 +24,7 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 
+import collections
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
@@ -527,7 +528,9 @@ class Im2LatexModel(object):
         Builds tf graph for the subsequent iterations of the RNN - testing mode.
         """
         return self._build_rnn_step(out_t_1, x_t, isStep1=False, testing=True)
-        
+    
+    Im2LatexState = collections.namedtuple('Im2LatexState', ('step', 'h', 'lstm_states', 'a', 'yProbs', 
+                                                             'yLogits', 'alpha'))
     def _build_rnn_step(self, out_t_1, x_t, isStep1=False, testing=False):
         """
         TODO: Incorporate Dropout

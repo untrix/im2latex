@@ -220,11 +220,13 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         whereas at prediction time (via. beam-search for e.g.) the actual output is used.
         """
 
+        ## Input
         Ex_t = inputs                          # shape = (B,m)
+        ## State
         state = Im2LatexRNNStateTuple(*state)
+        h_t_1 = state.h
         lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
         alpha_t_1 = state.alpha            # shape = (B, L)
-        h_t_1 = state.h
         a = self._a
 
         CONF = self.C
@@ -253,7 +255,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope(self._lstm_scope):
             (h_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
 
-        ################ Output Layer ################
+#        ################ Output Layer ################
 #        with tf.variable_scope('Output_Layer'):
 #            yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 

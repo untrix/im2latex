@@ -67,4 +67,4 @@ def visualize_rnn():
             tf_sw.flush()
 
 test_rnn()
-##visualize_rnn()
+visualize_rnn()
