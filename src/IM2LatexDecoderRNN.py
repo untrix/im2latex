@@ -44,8 +44,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         
         with tf.variable_scope('Im2LatexDecoderRNN') as scope:
             super(Im2LatexDecoderRNN, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+            self.my_scope = scope
             self.C = Im2LatexDecoderRNNParams(config)
-    
             ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
             ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
             ## phase.
@@ -66,29 +66,29 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
 
     @property
-    def BeamWidth(self):
-        return self._beamsearch_width
-    
-    @property
-    def state_size(self):
-        n = self.C.n
-        L = self.C.L
-    
-        # lstm_states_t, alpha_t
-        #return Im2LatexRNNStateTuple(tf.nn.rnn_cell.LSTMStateTuple(n, n), L)
-        return ((n,n), L)
-
-    def zero_state(self, batch_size, dtype):
-        with tf.name_scope(type(self).__name__ + "ZeroState", values=[batch_size]):
-            return (tf.zeros(tfc.expand_shape(self._LSTM_cell.output_size, batch_size), dtype=dtype, name='h'),
-                    tuple(self._LSTM_cell.zero_state(batch_size, dtype)),
-                    tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'))
-
-    @property
     def output_size(self):
         # yLogits
         return self.C.K
        
+    @property
+    def state_size(self):
+        L = self.C.L # sizeof alpha
+    
+        # must match Im2LatexRNNStateTuple
+        return (self._LSTM_cell.output_size, tuple(self._LSTM_cell.state_size), L)
+
+    def zero_state(self, batch_size, dtype):
+        with tf.variable_scope(self.my_scope):
+            with tf.variable_scope("/ZeroState", values=[batch_size]):
+                return (tf.zeros(tfc.expand_shape(self._LSTM_cell.output_size, batch_size), 
+                                 dtype=dtype, name='h'),
+                        tuple(self._LSTM_cell.zero_state(batch_size, dtype)),
+                        tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'))
+
+    @property
+    def BeamWidth(self):
+        return self._beamsearch_width
+    
     def _attention_model(self, a, h_prev):
         CONF = self.C
         B = CONF.B*self.BeamWidth
@@ -98,7 +98,6 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         n = CONF.decoder_lstm.num_units
 
         self._LSTM_cell.assertOutputShape(h_prev)
-#        assert K.int_shape(h_prev) == (B, n)
         assert K.int_shape(a) == (B, L, D)
 
         ## For #layers > 1 this will endup being different than the paper's implementation
@@ -219,12 +218,14 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         Note that input(t) = Ey(t-1). Input(t=0) = Null. When training, the target output is used for Ey
         whereas at prediction time (via. beam-search for e.g.) the actual output is used.
         """
-
+        
+        ## Input
         Ex_t = inputs                          # shape = (B,m)
+        ## State
         state = Im2LatexRNNStateTuple(*state)
+        h_t_1 = state.h
         lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
         alpha_t_1 = state.alpha            # shape = (B, L)
-        h_t_1 = state.h
         a = self._a
 
         CONF = self.C

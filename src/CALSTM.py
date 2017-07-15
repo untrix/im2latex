@@ -1,6 +1,8 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 """
+    Conditioned Attentive LSTM
+    
     Copyright 2017 Sumeet S Singh
 
     This file is part of im2latex solution by Sumeet S Singh.
@@ -23,29 +25,30 @@ Tested on python 2.7
 
 @author: Sumeet S Singh
 """
+import itertools
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
 from keras import backend as K
 import collections
-from Im2LatexRNNParams import Im2LatexDecoderRNNParams
+from CALSTMParams import CALSTMParams
 
 
-Im2LatexRNNStateTuple = collections.namedtuple("Im2LatexRNNStateTuple", ('h', 'lstm_state', 'alpha'))
+CALSTMState = collections.namedtuple("CALSTMState", ('lstm_state', 'alpha', 'ztop'))
 
-class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
+class CALSTM(tf.nn.rnn_cell.RNNCell):
     """
-    One timestep of the decoder model. The entire function is a complex RNN-cell
-    that includes one LSTM conditioned by image features and an attention model.
+    One timestep of the ConditionedAttentiveLSTM. The entire function is a complex RNN-cell
+    that includes one LSTM-Stack conditioned by image features and an attention model.
     """
 
     def __init__(self, config, context, beamsearch_width=1, reuse=None):
         assert K.int_shape(context) == (config.B, config.L, config.D)
         
-        with tf.variable_scope('Im2LatexDecoderRNN') as scope:
-            super(Im2LatexDecoderRNN, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+        with tf.variable_scope('CALSTM') as scope:
+            super(CALSTM, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
             self.my_scope = scope
-            self.C = Im2LatexDecoderRNNParams(config)
+            self.C = CALSTMParams(config)
             ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
             ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
             ## phase.
@@ -59,7 +62,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
                 self._a = K.tile(self._a, (beamsearch_width,1,1))
     
             with tf.variable_scope('Decoder_LSTM') as lstm_scope:
-                self._LSTM_cell = tfc.RNNWrapper(self.C.decoder_lstm, 
+                self._LSTM_stack = tfc.RNNWrapper(self.C.decoder_lstm, 
                                                  _scope=lstm_scope,
                                                  beamsearch_width=beamsearch_width)
                 self._lstm_scope = lstm_scope
@@ -68,23 +71,67 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
     @property
     def output_size(self):
         # h_t
-        return self._LSTM_cell.output_size
+        return self._LSTM_stack.output_size
        
     @property
     def state_size(self):
-        L = self.C.L
+        L = self.C.L # sizeof alpha
+        D = self.C.D # size of z
     
-        # lstm_states_t, alpha_t
-        #return Im2LatexRNNStateTuple(tf.nn.rnn_cell.LSTMStateTuple(n, n), L)
-        return (self.output_size, tuple(self._LSTM_cell.state_size), L)
-
+        # must match CALSTMState
+#        return CALSTMState(self._LSTM_stack.output_size, self._LSTM_stack.state_size, L, D)
+        return CALSTMState(self._LSTM_stack.state_size, L, D)
+    
     def zero_state(self, batch_size, dtype):
         with tf.variable_scope(self.my_scope):
-            with tf.variable_scope("/ZeroState", values=[batch_size]):
-                return (tf.zeros(tfc.expand_shape(self._LSTM_cell.output_size, batch_size), 
-                                 dtype=dtype, name='h'),
-                        tuple(self._LSTM_cell.zero_state(batch_size, dtype)),
-                        tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'))
+            with tf.variable_scope("ZeroState", values=[batch_size]):
+                return CALSTMState(
+                        self._LSTM_stack.zero_state(batch_size, dtype),
+                        tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'),
+                        tf.zeros((batch_size, self.C.D), dtype=dtype, name='z'))
+
+    ## collections.namedtuple("CALSTMState", (lstm_state', 'alpha', 'ztop'))
+    @staticmethod
+    def init_state_model(zero_state, counter, params, inp):
+        """ 
+        Creates FC layers for lstm_states (init_c and init_h) which will sit atop the init-state MLP.
+        This static method is part of the init-state model and not part of the Decoder RNN. Therefore it
+        belongs within the Im2LatexModel class but is being kept here due to dependency on the
+        CALSTMState class.
+        """
+        if counter is None:
+            counter = itertools.count(1)
+            
+        assert dlc.issequence(zero_state)
+        
+        s = zero_state
+        if hasattr(s, 'h'):
+            num_units = K.int_shape(s.h)[1]
+            layer_params = tfc.FCLayerParams(params).updated({'num_units':num_units})
+            s = s._replace(h = tfc.FCLayer(layer_params)(inp, counter.next()))
+        if hasattr(s, 'c'):
+            num_units = K.int_shape(s.c)[1]
+            layer_params = tfc.FCLayerParams(params).updated({'num_units':num_units})
+            s = s._replace(c=tfc.FCLayer(layer_params)(inp, counter.next()))
+
+        ## Create a mutable list from the immutable tuple            
+        lst = []
+        for i in xrange(len(s)):
+            if dlc.issequence(s[i]):
+                lst.append(CALSTM.init_state_model(s[i], counter, params, inp))
+            else:
+                lst.append(s[i])
+        
+        ## Create the tuple back from the list
+        if hasattr(s, '_make'):
+            s = s._make(lst)
+        else:
+            s = tuple(lst)
+
+        ## Set htop to the topmost 'h' of the LSTM stack
+        if hasattr(s, 'htop') and isinstance(s, CALSTMState):
+            ## s.lstm_state can be a single LSTMStateTuple or a tuple of LSTMStateTuples
+            s.htop = s.lstm_state.h if hasattr(s.lstm_state, 'h') else s.lstm_state[-1].h
 
     @property
     def BeamWidth(self):
@@ -96,9 +143,8 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         L = CONF.L
         D = CONF.D
         h = h_prev
-        n = CONF.decoder_lstm.num_units
 
-        self._LSTM_cell.assertOutputShape(h_prev)
+        self._LSTM_stack.assertOutputShape(h_prev)
         assert K.int_shape(a) == (B, L, D)
 
         ## For #layers > 1 this will endup being different than the paper's implementation
@@ -163,14 +209,13 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         m = self.C.m
         D = self.C.D
         B = self.C.B*self.BeamWidth
-        n = self.C.decoder_lstm.num_units
 
         inputs_t = K.concatenate((Ex_t, z_t))
         assert K.int_shape(inputs_t) == (B, m+D)
-        self._LSTM_cell.assertStateShape(lstm_states_t_1) == ((B,n), (B,n))
+        self._LSTM_stack.assertStateShape(lstm_states_t_1)
         
-        (h_t, lstm_states_t) = self._LSTM_cell(inputs_t, lstm_states_t_1)
-        return (h_t, lstm_states_t)
+        (htop_t, lstm_states_t) = self._LSTM_stack(inputs_t, lstm_states_t_1)
+        return (htop_t, lstm_states_t)
 
 #    def _output_layer(self, Ex_t, h_t, z_t):
 #        
@@ -180,10 +225,10 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 #        D = self.C.D
 #        m = self.C.m
 #        Kv =self.C.K
-#        n = self._LSTM_cell.output_size
+#        n = self._LSTM_stack.output_size
 #        
 #        assert K.int_shape(Ex_t) == (B, m)
-#        self._LSTM_cell.assertOutputShape(h_t)
+#        self._LSTM_stack.assertOutputShape(h_t)
 #        assert K.int_shape(z_t) == (B, D)
 #        
 #        ## First layer of output MLP
@@ -223,8 +268,7 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         ## Input
         Ex_t = inputs                          # shape = (B,m)
         ## State
-        state = Im2LatexRNNStateTuple(*state)
-        h_t_1 = state.h
+        htop_1 = state.lstm_state.h if self._LSTM_stack.num_layers == 1 else state.lstm_state[-1].h
         lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
         alpha_t_1 = state.alpha            # shape = (B, L)
         a = self._a
@@ -233,17 +277,15 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
         B = CONF.B*self.BeamWidth
         m = CONF.m
         L = CONF.L
-        Kv =CONF.K
+#        Kv =CONF.K
 
-        print 'shape(Ex_t) = ', K.int_shape(Ex_t)
         assert K.int_shape(Ex_t) == (B,m)
         assert K.int_shape(alpha_t_1) == (B, L)
-#        assert tfc.RNNWrapper.recursive_get_shape(lstm_states_t_1) == ((B,n), (B,n))
-        self._LSTM_cell.assertStateShape(lstm_states_t_1)
+        self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
         ################ Attention Model ################
         with tf.variable_scope('Attention'):
-            alpha_t = self._attention_model(a, h_t_1) # alpha.shape = (B, L)
+            alpha_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
 
         ################ Soft deterministic attention: z = alpha-weighted mean of a ################
         ## (B, L) batch_dot (B,L,D) -> (B, D)
@@ -253,16 +295,16 @@ class Im2LatexDecoderRNN(tf.nn.rnn_cell.RNNCell):
 
         ################ Decoder Layer ################
         with tf.variable_scope(self._lstm_scope):
-            (h_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
+            (htop_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
 
 #        ################ Output Layer ################
 #        with tf.variable_scope('Output_Layer'):
 #            yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 
-        self._LSTM_cell.assertOutputShape(h_t)
-        self._LSTM_cell.assertStateShape(lstm_states_t)
+        self._LSTM_stack.assertOutputShape(htop_t)
+        self._LSTM_stack.assertStateShape(lstm_states_t)
         ## assert K.int_shape(yProbs_t) == (B, Kv)
         ## assert K.int_shape(yLogits_t) == (B, Kv)
         assert K.int_shape(alpha_t) == (B, L)
 
-        return h_t, (h_t, tuple(lstm_states_t), alpha_t)
+        return htop_t, CALSTMState(tuple(lstm_states_t), alpha_t, z_t)

@@ -26,7 +26,7 @@ import tf_commons as tfc
 from dl_commons import PD, instanceof, integer, decimal, boolean, equalto
 import tensorflow as tf
 
-class Im2LatexDecoderRNNParams(dlc.HyperParams):
+class CALSTMParams(dlc.HyperParams):
     proto = (
         ## Global Properties, used at various places
         PD('image_shape',
@@ -159,7 +159,7 @@ class Im2LatexDecoderRNNParams(dlc.HyperParams):
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
         
-D_RNN = Im2LatexDecoderRNNParams(
+D_RNN = CALSTMParams(
         ## Overrides of default values.
         ## FYI: By convention, all boolean params' default value is True, such
         ##      that the overrides would be easy to spot.

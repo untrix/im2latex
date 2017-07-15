@@ -24,7 +24,6 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 
-import collections
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
@@ -32,7 +31,7 @@ from keras.applications.vgg16 import VGG16
 from keras.layers import Input, Embedding, Dense, Activation, Dropout, Concatenate, Permute
 from keras import backend as K
 from dl_commons import PD, mandatory, boolean, integer, decimal, equalto, instanceof
-from Im2LatexRNN import Im2LatexDecoderRNN, Im2LatexDecoderRNNParams
+from Im2LatexDecoderRNN import Im2LatexDecoderRNN, Im2LatexDecoderRNNParams
 
 HYPER_PD = (
         ## Global Properties, used at various places
@@ -342,39 +341,39 @@ class Im2LatexModel(object):
         ## Final softmax layer
         self._output_softmax = Dense(Kv, activation='softmax', batch_input_shape=(B,m))
         
-#    def _build_output_layer(self, Ex_t, h_t, z_t):
-#        ## Renaming HyperParams for convenience
-#        B = HYPER.B
-#        n = HYPER.n
-#        D = HYPER.D
-#        m = HYPER.m
-#        Kv =HYPER.K
-#        
-#        assert K.int_shape(Ex_t) == (B, m)
-#        assert K.int_shape(h_t) == (B, n)
-#        assert K.int_shape(z_t) == (B, D)
-#        
-#        ## First layer of output MLP
-#        ## Affine transformation of h_t and z_t from size n/D to size m followed by a summation
-#        o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # output size = (B, m)
-#        o_t = o_t + Ex_t
-#        
-#        ## non-linearity for the first layer
-#        o_t = Activation(HYPER.output_activation)(o_t)
-#
-#        ## Subsequent MLP layers
-#        if HYPER.decoder_out_layers > 1:
-#            for i in range(1, HYPER.decoder_out_layers):
-#                o_t = Dense(m, 
-#                            activation=HYPER['output_%d_activation'%i], 
-#                            batch_input_shape=(B,m))(o_t)
-#                
-#        ## Final logits
-#        logits_t = Dense(Kv, activation=HYPER.output_activation, batch_input_shape=(B,m))(o_t) # shape = (B,K)
-#        assert K.int_shape(logits_t) == (B, Kv)
-#        
-#        # softmax
-#        return tf.nn.softmax(logits_t), logits_t
+    def _build_output_layer(self, Ex_t, h_t, z_t):
+        ## Renaming HyperParams for convenience
+        B = HYPER.B
+        n = HYPER.n
+        D = HYPER.D
+        m = HYPER.m
+        Kv =HYPER.K
+        
+        assert K.int_shape(Ex_t) == (B, m)
+        assert K.int_shape(h_t) == (B, n)
+        assert K.int_shape(z_t) == (B, D)
+        
+        ## First layer of output MLP
+        ## Affine transformation of h_t and z_t from size n/D to size m followed by a summation
+        o_t = Dense(m, activation='linear', batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # output size = (B, m)
+        o_t = o_t + Ex_t
+        
+        ## non-linearity for the first layer
+        o_t = Activation(HYPER.output_activation)(o_t)
+
+        ## Subsequent MLP layers
+        if HYPER.decoder_out_layers > 1:
+            for i in range(1, HYPER.decoder_out_layers):
+                o_t = Dense(m, 
+                            activation=HYPER['output_%d_activation'%i], 
+                            batch_input_shape=(B,m))(o_t)
+                
+        ## Final logits
+        logits_t = Dense(Kv, activation=HYPER.output_activation, batch_input_shape=(B,m))(o_t) # shape = (B,K)
+        assert K.int_shape(logits_t) == (B, Kv)
+        
+        # softmax
+        return tf.nn.softmax(logits_t), logits_t
 
     def _output_layer(self, Ex_t, h_t, z_t):
         
@@ -410,7 +409,8 @@ class Im2LatexModel(object):
             
         assert K.int_shape(logits_t) == (B, Kv)
         
-        return tf.nn.softmax(logits_t), logits_t
+        ## return tf.nn.softmax(logits_t), logits_t
+        return logits_t
 
     def _define_init_params(self):
         ## As per the paper, this is a two-headed MLP. It has a stack of common layers at the bottom
@@ -528,20 +528,19 @@ class Im2LatexModel(object):
         Builds tf graph for the subsequent iterations of the RNN - testing mode.
         """
         return self._build_rnn_step(out_t_1, x_t, isStep1=False, testing=True)
-    
-    Im2LatexState = collections.namedtuple('Im2LatexState', ('step', 'h', 'lstm_states', 'a', 'yProbs', 
-                                                             'yLogits', 'alpha'))
+        
     def _build_rnn_step(self, out_t_1, x_t, isStep1=False, testing=False):
         """
         TODO: Incorporate Dropout
         Builds/threads tf graph for one RNN iteration.
         Conforms to loop function fn required by tf.scan. Takes in previous lstm states (h and c), 
-        the current input and the image annotations (a) as input. Returns the new states and outputs.
-        Note that input(t) = Ex(t) = Ey(t-1). Input(t=0) = Null. When training, the target output is used for Ey
+        the current input and the image annotations (a) as input and outputs the states and outputs for the
+        current timestep.
+        Note that input(t) = Ey(t-1). Input(t=0) = Null. When training, the target output is used for Ey
         whereas at prediction time (via. beam-search for e.g.) the actual output is used.
         Args:
-            out_t_1 (tuple of tensors): Output returned by this function at previous time-step.
             x_t (tensor): is a input for one time-step. Should be a tensor of shape (batch-size, 1).
+            out_t_1 (tuple of tensors): Output returned by this function at previous time-step.
         Returns:
             out_t (tuple of tensors): The output y_t shape= (B,K) - the probability of words/tokens. Also returns
                 states needed in the next iteration of the RNN - i.e. (h_t, lstm_states_t and a). lstm_states_t = 
@@ -595,10 +594,9 @@ class Im2LatexModel(object):
         with tf.variable_scope("Decoder_LSTM"):
             (h_t, lstm_states_t) = self._decoder_lstm(K.concatenate((Ex_t, z_t)), lstm_states_t_1) # h_t.shape=(B,n)
             
-        ################ Output Layer ################
+        ################ Decoder Layer ################
         with tf.variable_scope('Output_Layer'):
-#            yProbs_t, yLogits_t = self._build_output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
-            yProbs_t, yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
+            yProbs_t, yLogits_t = self._build_output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
         
         assert K.int_shape(h_t) == (B, n)
         assert K.int_shape(a) == (B, L, D)

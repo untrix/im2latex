@@ -131,7 +131,7 @@ class CommonParams(HyperParams):
 #              boolean,
 #              True),
         PD('dropout', 'Dropout parameters if any.',
-              instanceof(DropoutParams, True)),
+              instanceofOrNone(DropoutParams)),
         PD('weights_coll_name',
               'Name of trainable weights collection. There is no need to change the default = WEIGHTS',
               ('WEIGHTS',),
@@ -176,14 +176,14 @@ class MLPStack(object):
             assert K.int_shape(inp) == self._batch_input_shape
 
         params = self._params
-        dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
+#        dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
         
         a = inp
         with tf.variable_scope(params.op_name):
             for i in xrange(len(self._params.layers_units)):
                 a = FCLayer(self._params.get_layer_params(i))(a, i)
-                if dropout:
-                    a = DropoutLayer(self._params.dropout)(a, i)
+#                if dropout:
+#                    a = DropoutLayer(self._params.dropout)(a, i)
         return a
             
 class FCLayerParams(HyperParams):
@@ -216,7 +216,7 @@ class FCLayer(object):
             coll_w = layer_name + '/' + params.tb.tb_weights
             coll_b = layer_name + '/' + params.tb.tb_biases
             
-            h = tf.contrib.layers.fully_connected(
+            a = tf.contrib.layers.fully_connected(
                     inputs=inp,
                     num_outputs = params.num_units,
                     activation_fn = params.activation_fn,
@@ -229,12 +229,16 @@ class FCLayer(object):
                                              "biases":[coll_b]},
                     trainable = True
                     )
-    
+
+            dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
+            if dropout:
+                a = DropoutLayer(self._params.dropout)(a)
+
             # Tensorboard Summaries
             if params.tb is not None:
-                summarize_layer(layer_name, tf.get_collection(coll_w), tf.get_collection(coll_b), h)
+                summarize_layer(layer_name, tf.get_collection(coll_w), tf.get_collection(coll_b), a)
     
-        return h
+        return a
 
 class DropoutLayer(object):
     def __init__(self, params, batch_input_shape=None):
@@ -365,12 +369,19 @@ class RNNParams(HyperParams):
             self.num_units = self.layers_units[0]
 
 
-def expand_shape(shape, B):
+def expand_nested_shape(shape, B):
     """ Convert every scalar in the nested sequence into a (B, s) sequence """
     if not dlc.issequence(shape):
         return (B, shape)
     else:
-        return tuple(expand_shape(s, B) for s in shape)
+        return tuple(expand_nested_shape(s, B) for s in shape)
+
+def get_nested_shape(obj):
+    """ Get shape of possibly nested sequence of tensors """
+    if not dlc.issequence(obj):
+        return K.int_shape(obj)
+    else:
+        return tuple(get_nested_shape(o) for o in obj)
     
 
 
@@ -382,11 +393,16 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
             
             if len(self._params.layers_units) == 1:
                 self._cell = self._make_one_cell(self._params.layers_units[0])
+                self._num_layers = 1
             else: # len(params.layers_units) > 1
+                ## Note: though we're creating multiple LSTM cells in the same scope, no variables
+                ## are being created here. They will be created when the individual cells are called
+                ## as part of MultiRNNCell.call(), wherein each is given a unique scope.
                 self._cell = tf.nn.rnn_cell.MultiRNNCell(
                         [self._make_one_cell(n) for n in self._params.layers_units])
+                self._num_layers = len(self._params.layers_units)
     
-            self._batch_state_shape = expand_shape(self._cell.state_size, 
+            self._batch_state_shape = expand_nested_shape(self._cell.state_size, 
                                                                   self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
 
@@ -413,14 +429,6 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def batch_state_shape(self):
         return self._batch_state_shape
         
-    @staticmethod
-    def recursive_get_shape(obj):
-        """ Get shape of possibly nested sequence of tensors """
-        if not dlc.issequence(obj):
-            return K.int_shape(obj)
-        else:
-            return tuple(RNNWrapper.recursive_get_shape(o) for o in obj)
-        
     def assertStateShape(self, state):
         """ 
         Asserts that the shape of the tensor is consistent with the RNN's state shape.
@@ -429,7 +437,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         """
         try:
-            assert self.batch_state_shape == self.recursive_get_shape(state)
+            assert self.batch_state_shape == get_nested_shape(state)
         except:
             print 'state-shape assertion Failed for state type = ', type(state), ' and value = ', state
             raise
@@ -455,7 +463,11 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         and the corresponding state-tensor should be (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         Similarly, if the input shape is m then the input-tensor should be of shape (B,m)
         """
-        return expand_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
+        return expand_nested_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
+    
+    @property
+    def num_layers(self):
+        return self._num_layers
     
     def call(self, inp, state):
         ## Parameter Validation
@@ -474,7 +486,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
 
         self.assertOutputShape(output)
         self.assertStateShape(new_state)
-        return (output, new_state)
+        return output, new_state
             
     def _make_one_cell(self, num_units):
         params = self._params
