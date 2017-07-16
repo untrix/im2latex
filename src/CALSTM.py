@@ -88,14 +88,16 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 return CALSTMState(
                         self._LSTM_stack.zero_state(batch_size, dtype),
                         tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'),
-                        tf.zeros((batch_size, self.C.D), dtype=dtype, name='z'))
+                        tf.zeros((batch_size, self.C.D), dtype=dtype, name='ztop')
+                        )
 
     ## collections.namedtuple("CALSTMState", (lstm_state', 'alpha', 'ztop'))
     @staticmethod
-    def init_state_model(zero_state, counter, params, inp):
+    def zero_to_init_state(zero_state, counter, params, inp):
         """ 
         Creates FC layers for lstm_states (init_c and init_h) which will sit atop the init-state MLP.
-        This static method is part of the init-state model and not part of the Decoder RNN. Therefore it
+        It does this by replacing each instance of 'h' or 'c' with a FC layer using the given params.
+        This static method is part of the init-state model not the CALSTM. Therefore it
         belongs within the Im2LatexModel class but is being kept here due to dependency on the
         CALSTMState class.
         """
@@ -118,7 +120,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         lst = []
         for i in xrange(len(s)):
             if dlc.issequence(s[i]):
-                lst.append(CALSTM.init_state_model(s[i], counter, params, inp))
+                lst.append(CALSTM.zero_to_init_state(s[i], counter, params, inp))
             else:
                 lst.append(s[i])
         

@@ -30,13 +30,11 @@ import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
 from keras.applications.vgg16 import VGG16
-#from keras.layers import Input, Embedding, Dense, Activation, Dropout, Concatenate, Permute
 from keras import backend as K
-from dl_commons import PD, mandatory, boolean, integer, decimal, equalto, instanceof
-from CALSTM import CALSTM, CALSTMParams
+from CALSTM import CALSTM, CALSTMState
 from Im2LatexModelParams_2 import Im2LatexModelParams, HYPER
 
-Im2LatexState = collections.namedtuple('Im2LatexState', ('rnn_state', 'yProbs'))
+Im2LatexState = collections.namedtuple('Im2LatexState', ('calstm_state', 'yProbs'))
 class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     """
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
@@ -54,7 +52,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 Will cause the batch_size in internal assert statements to get multiplied by beamwidth.
             reuse: Passed into the _reuse Tells the underlying RNNs whether or not to reuse the scope.
         """
-#        self._numSteps = 0
         self._params = self.C = Im2LatexModelParams(params)
         assert K.int_shape(context_op) == (self.C.B, self.C.L, self.C.D)
         self.outer_scope = tf.get_variable_scope()
@@ -69,10 +66,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             self._a = context_op ## Image features from the Conv-Net
             if len(self.C.D_RNN) == 1:
                 self._CALSTM_stack = CALSTM(self.C.D_RNN[0], context_op, beamsearch_width, reuse)
+                self._num_calstm_layers = 1
             else:
                 self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(
                         [CALSTM(rnn_params, context_op, beamsearch_width, reuse) 
                         for rnn_params in self.C.D_RNN])
+                self._num_calstm_layers = len(self.C.D_RNN)
             self._define_params()
 
     @property
@@ -297,7 +296,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 #        if HYPER['init_c_dropout_rate'] > 0.0:
 #            self._init_c_dropout = Dropout(HYPER['init_c_dropout_rate'])
 #
-    def init_state_model(self):
+
+    def zero_state(self, batch_size, dtype):
+        return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
+                             tf.zeros((batch_size, self.C.K), dtype=dtype, name='yProbs'))
+    
+    def init_state(self):
         
         ################ Initializer MLP ################
         with tf.variable_scope(self.outer_scope):
@@ -311,35 +315,29 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 a = tfc.MLPStack(HYPER.init_model)(a)
 
                 counter = itertools.count(1)
-                def zero_to_init_state(s, counter):
-                    assert dlc.issequence(s)
-                    if hasattr(s, 'h'):
-                        num_units = K.int_shape(s.h)[1]
-                        layer_params = tfc.FCLayerParams(HYPER.init_model).updated({'num_units':num_units})
-                        s = s._replace(h = tfc.FCLayer(layer_params)(a, counter.next()))
-                    if hasattr(s, 'c'):
-                        num_units = K.int_shape(s.c)[1]
-                        layer_params = tfc.FCLayerParams(HYPER.init_model).updated({'num_units':num_units})
-                        s = s._replace(c=tfc.FCLayer(layer_params)(a, counter.next()))
-                        
-                    lst = []
-
-                    for i in xrange(len(s)):
-                        if dlc.issequence(s[i]):
-                            lst.append(zero_to_init_state(s[i], counter))
-                        else:
-                            lst.append(s[i])
-                    
-                    if hasattr(s, '_make'):
-                        return s._make(lst)
+                def zero_to_init_state(zs, counter):
+                    assert isinstance(zs, Im2LatexState)
+                    cs = zs.calstm_state
+                    if self._num_calstm_layers == 1:
+                        assert isinstance(cs, CALSTMState)
+                        cs = CALSTM.init_state(cs, counter, HYPER.init_model, a)
                     else:
-                        return tuple(lst)
+                        ## tuple(CALSTMState1, CALSTMState2 ...)
+                        assert dlc.isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
+                        lst = []
+                        for i in xrange(len(cs)):
+                            assert isinstance(cs[i], CALSTMState)
+                            lst.append(CALSTM.init_state(cs[i], counter, HYPER.init_model, a))
+                        
+                        cs = tuple(lst)
+                        
+                    return zs._replace(calstm_state=cs)
                             
                 with tf.variable_scope('Output_Layers'):
-                    lstm_init_state = self._CALSTM_stack.zero_state(self.C.B*self.BeamWidth, dtype=self.C.dtype)
-                    lstm_init_state = zero_to_init_state(lstm_init_state, counter)
+                    init_state = self.zero_state(self.C.B*self.BeamWidth, dtype=self.C.dtype)
+                    init_state = zero_to_init_state(init_state, counter)
 
-        return Im2LatexState(lstm_init_state, None)
+        return init_state
             
     def _embedding_lookup(self, ids):
         m = HYPER.m
@@ -415,12 +413,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         Layers a deep-output layer on top of CALSTM
         """
         ## State
-        rnn_state_t_1 = state.rnn_state
+        calstm_state_t_1 = state.calstm_state
         
-        htop_t, rnn_state_t = self._CALSTM_stack(Ex_t, rnn_state_t_1)
-        yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, rnn_state_t.ztop)
+        htop_t, calstm_state_t = self._CALSTM_stack(Ex_t, calstm_state_t_1)
+        yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_state_t.ztop)
         
-        return yLogits_t, Im2LatexState(rnn_state_t, yProbs_t)
+        return yLogits_t, Im2LatexState(calstm_state_t, yProbs_t)
         
     def _scan_step_training(self, out_t_1, x_t):
         """
@@ -439,12 +437,24 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope('Ey'):
             Ex_t = self._embedding_lookup(x_t)
 
-        yLogits_t, state_t = self(Ex_t, out_t_1.state)
+        yLogits_t, state_t = self(Ex_t, out_t_1[1])
         
         return yLogits_t, state_t
     
-    def train(self, x):
+    def train(self, y_s):
+        ## y_s is the batch of target word sequences
+        assert K.int_shape(y_s)[0] == self.C.B*self.BeamWidth # (B, T)
+        assert len(K.int_shape(y_s)) == 2
+        
+        ## tf.scan requires time-dimension to be the first dimension
+        y_s = K.permute_dimensions(y_s, (1, 0)) # (T, B)
+        
+        ## x_s = y_s delayed by 1 time-step. x[0] = begin-sequence token
+        ## y_s ends with end-sequence token = 0
+        
         """ Build the training graph of the model """
+        accum = (None, self.init_state().calstm_state)
+        out_s = tf.scan(self._scan_step_training, x_s, initializer=accum)
         pass
     
     def beamsearch(self, x_0):
