@@ -14,6 +14,7 @@ from Im2LatexDecoderRNN_2 import Im2LatexDecoderRNN
 from Im2LatexModel_2 import Im2LatexModel
 from keras import backend as K
 
+
 def test_rnn():
     B = HYPER.B
     Kv = HYPER.K
