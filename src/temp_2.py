@@ -70,5 +70,6 @@ def visualize_rnn():
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(D_RNN.tb), graph=graph)
             tf_sw.flush()
 
-test_rnn()
+
+##test_rnn()
 ##visualize_rnn()
