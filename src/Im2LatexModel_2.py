@@ -238,7 +238,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             """ Build the training graph of the model """
             accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
                                  self.init_state())
-            out_s = tf.scan(self._scan_step_training, x_s, initializer=accum, swap_memory=True)
+            out_s = tf.scan(self._scan_step_training, x_s, 
+                            initializer=accum, swap_memory=True)
             ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
             ## WARNING: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
             yLogits_s = out_s.yLogits
@@ -396,7 +397,7 @@ def train(batch_iterator):
             tf.initialize_all_variables().run()
         
             for b in batch_iterator:
-                if b.step >= 10:
+                if b.step >= 3:
                     break
                 feed = {train_ops.y_s: b.y_s, train_ops.seq_lens: b.seq_len, train_ops.im: b.im}
                 session.run(train_ops.train, feed_dict=feed)

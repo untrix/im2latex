@@ -96,10 +96,10 @@ class ShuffleIterator(object):
                 print 'ShuffleIterator finished epoch %d'%self._epoch
                 self._epoch += 1
             next_pos = self._next_pos
-            step = self._step
             epoch= self._epoch
             self._next_pos += 1
             self._step += 1
+            step = self._step
         
         batch = self._batch_list[next_pos]
         print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
