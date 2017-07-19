@@ -5,15 +5,19 @@ Created on Thu Jul 13 11:37:52 2017
 
 @author: sumeet
 """
+import os
 import tensorflow as tf
 import tf_commons as tfc
 import dl_commons as dlc
 from Im2LatexDecoderRNNParams_2 import D_RNN
 from Im2LatexModelParams_2 import HYPER
 from Im2LatexDecoderRNN_2 import Im2LatexDecoderRNN
-from Im2LatexModel_2 import Im2LatexModel
+from Im2LatexModel_2 import Im2LatexModel, train
+from data_reader import BatchIterator
 from keras import backend as K
-
+data_folder = '../data/generated2'
+image_folder = os.path.join(data_folder,'formula_images')
+raw_data_folder = os.path.join(data_folder, 'training')
 
 def test_rnn():
     B = HYPER.B
@@ -71,5 +75,10 @@ def visualize_rnn():
             tf_sw.flush()
 
 
+def test3():
+    b_it = BatchIterator(raw_data_folder, image_folder)
+    train(b_it)
+    
+test3()
 ##test_rnn()
 ##visualize_rnn()

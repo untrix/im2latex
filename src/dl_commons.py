@@ -72,13 +72,13 @@ class Properties(dict):
         else:
             dict.__setitem__(self, key, val)
     
-    def __copy__(self):
-        ## Shallow copy
-        return self.__class__(self)
-    
-    def copy(self):
-        ## Shallow copy
-        return self.__class__(self)
+#    def __copy__(self):
+#        ## Shallow copy
+#        return self.__class__(self)
+#    
+#    def copy(self, override_vals):
+#        ## Shallow copy
+#        return self.__class__(self)
     
     def updated(self, other):
         """ chain-update
@@ -306,13 +306,13 @@ class Params(Properties):
         else:
             return Properties._set_val_(self, name, val)
 
-    def __copy__(self):
-        ## Shallow copy
-        return self.__class__(self)
-    
-    def copy(self):
-        ## Shallow copy
-        return self.__class__(self)
+#    def __copy__(self):
+#        ## Shallow copy
+#        return self.__class__(self)
+#    
+#    def copy(self, override_vals=None):
+#        ## Shallow copy
+#        return self.__class__(self, initVals=override_vals)
 
     """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):

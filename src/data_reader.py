@@ -76,12 +76,12 @@ class ShuffleIterator(object):
         self._batch_list = make_batch_list(self._df, batch_size_)
         self._next_pos = 0
         self._num_items = (df_.shape[0] // batch_size_)
-        self._iter = 0
+        self._step = 0
         self._epoch = 1
         self.lock = threading.Lock()
         
-    ##def __iter__(self):
-    ##    return self
+    def __iter__(self):
+        return self
     
     def next(self):
         ## This is an infinite iterator
@@ -93,19 +93,25 @@ class ShuffleIterator(object):
                 np.random.shuffle(self._batch_list)
                 ## self._batch_list = make_batch_list(self._df, batch_size_)
                 self._next_pos = 0
-                self._iter = 0
                 print 'ShuffleIterator finished epoch %d'%self._epoch
                 self._epoch += 1
             next_pos = self._next_pos
+            step = self._step
+            epoch= self._epoch
             self._next_pos += 1
-            self._iter += 1
+            self._step += 1
         
         batch = self._batch_list[next_pos]
-        print 'ShuffleIterator epoch %d, iter %d, bin-batch id %s'%(self._epoch, self._iter, batch)
+        print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
         df_bin = self._df[self._df.bin_len == batch[0]]
         assert df_bin.bin_len.iloc[batch[1]*self._batch_size] == batch[0]
         assert df_bin.bin_len.iloc[(batch[1]+1)*self._batch_size-1] == batch[0]
-        return df_bin.iloc[batch[1]*self._batch_size : (batch[1]+1)*self._batch_size]
+        return dlc.Properties({
+                'df_batch': df_bin.iloc[batch[1]*self._batch_size : (batch[1]+1)*self._batch_size],
+                'epoch': epoch,
+                'step': step,
+                'batch_idx': batch
+                })
 
 class BatchIterator(ShuffleIterator):
     def __init__(self, raw_data_dir_, image_dir_):
@@ -117,7 +123,8 @@ class BatchIterator(ShuffleIterator):
         ShuffleIterator.__init__(self, df, batch_size)
 
     def next(self):
-        df_batch = ShuffleIterator.next(self)[['image', 'height', 'width', 'bin_len']]
+        nxt = ShuffleIterator.next(self)
+        df_batch = nxt.df_batch[['image', 'height', 'width', 'bin_len', 'seq_len']]
         im_batch = [
             get_image_matrix(os.path.join(self._image_dir, row[0]), row[1], row[2], self._padded_im_dim)
             for row in df_batch.itertuples(index=False)
@@ -125,9 +132,13 @@ class BatchIterator(ShuffleIterator):
         im_batch = np.asarray(im_batch)
         
         bin_len = df_batch.bin_len.iloc[0]
-        seq_batch = self._seq_data[bin_len].loc[df_batch.index].values
+        y_s = self._seq_data[bin_len].loc[df_batch.index].values
         return dlc.Properties({'im':im_batch, 
-                               'seq':seq_batch})
+                               'y_s':y_s,
+                               'seq_len': df_batch.seq_len.values,
+                               'epoch': nxt.epoch,
+                               'step': nxt.step
+                               })
 
 #data_folder = '../data/generated2'
 #image_folder = os.path.join(data_folder,'formula_images')

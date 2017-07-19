@@ -82,6 +82,13 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 #        return CALSTMState(self._LSTM_stack.output_size, self._LSTM_stack.state_size, L, D)
         return CALSTMState(self._LSTM_stack.state_size, L, D)
     
+    def assertOutputShape(self, output):
+        """ 
+        Asserts that the shape of the tensor is consistent with the stack's output shape.
+        For e.g. the output shape is o then the input-tensor should be of shape (B,o)
+        """
+        assert (self.ActualBatchSize, self._LSTM_stack.output_size) == K.int_shape(output)
+        
     def zero_state(self, batch_size, dtype):
         with tf.variable_scope(self.my_scope):
             with tf.variable_scope("ZeroState", values=[batch_size]):
@@ -131,13 +138,19 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
             s = tuple(lst)
 
         ## Set htop to the topmost 'h' of the LSTM stack
-        if hasattr(s, 'htop') and isinstance(s, CALSTMState):
-            ## s.lstm_state can be a single LSTMStateTuple or a tuple of LSTMStateTuples
-            s.htop = s.lstm_state.h if hasattr(s.lstm_state, 'h') else s.lstm_state[-1].h
+#        if hasattr(s, 'htop') and isinstance(s, CALSTMState):
+#            ## s.lstm_state can be a single LSTMStateTuple or a tuple of LSTMStateTuples
+#            s.htop = s.lstm_state.h if hasattr(s.lstm_state, 'h') else s.lstm_state[-1].h
+            
+        return s
 
     @property
     def BeamWidth(self):
         return self._beamsearch_width
+    
+    @property
+    def ActualBatchSize(self):
+        return self.C.B*self.BeamWidth
     
     def _attention_model(self, a, h_prev):
         CONF = self.C
@@ -219,43 +232,6 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         (htop_t, lstm_states_t) = self._LSTM_stack(inputs_t, lstm_states_t_1)
         return (htop_t, lstm_states_t)
 
-#    def _output_layer(self, Ex_t, h_t, z_t):
-#        
-#        ## Renaming HyperParams for convenience
-#        CONF = self.C
-#        B = self.C.B*self.BeamWidth
-#        D = self.C.D
-#        m = self.C.m
-#        Kv =self.C.K
-#        n = self._LSTM_stack.output_size
-#        
-#        assert K.int_shape(Ex_t) == (B, m)
-#        self._LSTM_stack.assertOutputShape(h_t)
-#        assert K.int_shape(z_t) == (B, D)
-#        
-#        ## First layer of output MLP
-#        if CONF.output_follow_paper: ## Follow the paper.
-#            ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-#            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
-#                              batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
-#            ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
-#            o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
-#            ## non-linearity for the first layer
-#            o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
-#            dim = m
-#        else: ## Use a straight MLP Stack
-#            o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
-#            dim = m+n+D
-#
-#        ## Regular MLP layers
-#        assert CONF.output_layers.layers_units[-1] == Kv
-#        logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
-#            
-#        assert K.int_shape(logits_t) == (B, Kv)
-#        
-#        ## return tf.nn.softmax(logits_t), logits_t
-#        return logits_t
-#
     def call(self, inputs, state):
         """
         TODO: Incorporate Dropout
@@ -309,4 +285,4 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         ## assert K.int_shape(yLogits_t) == (B, Kv)
         assert K.int_shape(alpha_t) == (B, L)
 
-        return htop_t, CALSTMState(tuple(lstm_states_t), alpha_t, z_t)
+        return htop_t, CALSTMState(lstm_states_t, alpha_t, z_t)

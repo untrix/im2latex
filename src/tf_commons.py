@@ -80,6 +80,13 @@ class TensorboardParams(HyperParams):
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 class DropoutParams(HyperParams):
     """ Dropout Layer descriptor """
@@ -97,6 +104,13 @@ class DropoutParams(HyperParams):
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 class CommonParams(HyperParams):
     proto = (
@@ -143,6 +157,13 @@ class CommonParams(HyperParams):
         
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 CommonParamsProto = CommonParams().protoD
 
@@ -164,6 +185,13 @@ class MLPParams(HyperParams):
         
     def get_layer_params(self, i):
         return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 class MLPStack(object):
     def __init__(self, params, batch_input_shape=None):
@@ -196,6 +224,13 @@ class FCLayerParams(HyperParams):
         
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 class FCLayer(object):
     def __init__(self, params, batch_input_shape=None):
@@ -261,6 +296,13 @@ class ActivationParams(HyperParams):
              CommonParamsProto.tb)
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 class Activation(object):
     def __init__(self, params, batch_input_shape=None):
@@ -367,6 +409,13 @@ class RNNParams(HyperParams):
             self.layers_units = (self.num_units,)
         elif len(self.layers_units) == 1:
             self.num_units = self.layers_units[0]
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
 
 
 def expand_nested_shape(shape, B):

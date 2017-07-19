@@ -27,7 +27,7 @@ import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import PD, instanceof, integer, decimal, boolean, equalto, issequenceof
 import tensorflow as tf
-from Im2LatexDecoderRNNParams_2 import Im2LatexDecoderRNNParams, D_RNN
+from CALSTMParams import CALSTMParams, CALSTM_1
 
 
 class Im2LatexModelParams(dlc.HyperParams):
@@ -52,11 +52,15 @@ class Im2LatexModelParams(dlc.HyperParams):
         PD('K',
            'Vocabulary size including zero',
            xrange(500,1000),
-           556 #get_vocab_size(data_folder)
+           557 #get_vocab_size(data_folder)
            ),
         PD('m',
-           '(integer): dimensionality of the embedded input vector (Ey / Ex)', 
-           xrange(50,250),
+           '(integer): dimensionality of the embedded input vector (Ey / Ex)'
+           "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
+           "threfore thir input dimensionality will not be equal to the embedding dimensionality, rather "
+           "it will be equal to output_size of the previous CALSTM. That's why this value needs to be "
+           "appropriately adjusted for upper CALSTM layers.", 
+           integer(1),
            64
            ),
         PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None, 3),
@@ -84,27 +88,11 @@ class Im2LatexModelParams(dlc.HyperParams):
            'dtype for the entire model.',
            (tf.float32,),
            tf.float32),
-    ### Attention Model Params ###
-#        PD('att_layers', 'Number of layers in the attention_a model', xrange(1,10), 1),
-#        PD('att_1_n', 'Number of units in first layer of the attention model. Defaults to D as it is in the paper"s source-code.', 
-#           xrange(1,10000),
-#           equalto('D')),
-#        PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
-#           'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
-#           boolean,
-#           True),
-#        PD('att_activation', 
-#           'Activation to use for the attention MLP model. Defaults to tanh as in the paper source.',
-#           None,
-#           'tanh'),
-#        PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-#           "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here." 
-#           "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)." 
-#           "Default value however, is True in conformance with the paper's implementation.",
-#           (True, False),
-#           True),
-#        PD('att_weights_initializer', 'weights initializer to use for the attention model', None,
-#           'glorot_normal'),
+        PD('use_ctc_loss', 
+           "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
+           "ctc_loss will be logged.",
+           boolean,
+           False),
     ### Embedding Layer ###
         PD('embeddings_initializer', 'Initializer for embedding weights', None, 'glorot_uniform'),
         PD('embeddings_initializer_tf', 'Initializer for embedding weights', dlc.iscallable(), 
@@ -118,12 +106,8 @@ class Im2LatexModelParams(dlc.HyperParams):
            'sequence of Im2LatexDecoderRNNParams, one for each AttentionLSTM layer in the stack. The paper '
            "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
            "that the published results are based on one layer alone.",
-           issequenceof(Im2LatexDecoderRNNParams)),
-#        PD('decoder_lstm_peephole',
-#           '(boolean): whether to employ peephole connections in the decoder LSTM',
-#           (True, False),
-#           False),
-
+           issequenceof(CALSTMParams)),
+    ### Output MLP
         PD('output_follow_paper',
            '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
            'Setting this value to True (default) will follow the paper"s logic. Otherwise'
@@ -136,15 +120,6 @@ class Im2LatexModelParams(dlc.HyperParams):
            "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
            instanceof(tfc.MLPParams)),
 
-#        PD('decoder_out_layers',
-#           'Number of layers in the decoder output MLP. defaults to 1 as in the papers source',
-#           xrange(1,10), 1),
-#        PD('output_activation', 'Activtion function for deep output layer', None,
-#           'tanh'),
-#        PD('output_1_n', 
-#           'Number of units in the first hidden layer of the output MLP. Used only if output_follow_paper == False'
-#           "Default's to 'm' - same as when output_follow_paper == True", None,
-#           equalto('m')),
     ### Initializer MLP ###
         PD('init_model', 
            'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
@@ -154,28 +129,6 @@ class Im2LatexModelParams(dlc.HyperParams):
            ),
         PD('init_layers', 'Number of layers in the initializer MLP', xrange(1,10),
            1),
-#        PD('init_dropout_rate', '(decimal): Global dropout_rate variable for init_layer',
-#           decimal(0.0, 0.9), 
-#           0.2),
-#        PD('init_h_activation', '', None, 'tanh'),
-#        PD('init_h_dropout_rate', '', 
-#           decimal(0.0, 0.9), 
-#           equalto('init_dropout_rate')),
-#        PD('init_c_activation', '', None, 'tanh'),
-#        PD('init_c_dropout_rate', '', 
-#           decimal(0.0, 0.9),
-#           equalto('init_dropout_rate')),
-#        PD('init_1_n', 'Number of units in hidden layer 1. The paper sets it to D',
-#           integer(1, 10000), 
-#           equalto('D')),
-#        PD('init_1_dropout_rate', '(decimal): dropout rate for the layer', 
-#           decimal(0.0, 0.9), 
-#           0.),
-#        PD('init_1_activation', 
-#           'Activation function of the first layer. In the paper, the final' 
-#           'layer has tanh and all penultinate layers have relu activation', 
-#           None,
-#           'tanh'),
     ### Loss / Cost Layer ###
         PD('sum_logloss',
            'Whether to normalize log-loss per sample as in standard log perplexity ' 
@@ -198,7 +151,14 @@ class Im2LatexModelParams(dlc.HyperParams):
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
-        
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
+
 HYPER = Im2LatexModelParams(
         ## Overrides of default values.
         ## FYI: By convention, all boolean params' default value is True
@@ -207,7 +167,8 @@ HYPER = Im2LatexModelParams(
             'sum_logloss': True,
             'MeanSumAlphaEquals1': True,
             'output_follow_paper': True,
-            'D_RNN': (D_RNN, D_RNN)
+#            'D_RNN': (CALSTM_1, CALSTM_2)
+            'D_RNN': (CALSTM_1,)
         })
 HYPER.output_layers = tfc.MLPParams({
         ## One layer with num_units = m is added if output_follow_paper == True
