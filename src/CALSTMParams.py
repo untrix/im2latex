@@ -41,9 +41,8 @@ class CALSTMParams(dlc.HyperParams):
            151 #get_max_seq_len(data_folder)
            ),
         PD('B',
-           '(integer or None): Size of mini-batch for training, validation and testing.',
-           (None, 128),
-           128
+           '(integer): Size of mini-batch for training, validation and testing.',
+           integer(1)
            ),
         PD('K',
            'Vocabulary size including zero',
@@ -130,6 +129,7 @@ CALSTM_1 = CALSTMParams(
         ## FYI: By convention, all boolean params' default value is True, such
         ##      that the overrides would be easy to spot.
         {
+            'B': 64,
             'att_weighted_gather': True,
             'sum_logloss': True,
             'MeanSumAlphaEquals1': True,

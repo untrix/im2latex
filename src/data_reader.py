@@ -114,12 +114,12 @@ class ShuffleIterator(object):
                 })
 
 class BatchIterator(ShuffleIterator):
-    def __init__(self, raw_data_dir_, image_dir_):
+    def __init__(self, raw_data_dir_, image_dir_, batch_size):
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
         self._image_dir = image_dir_
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-        batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
+        #batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
         ShuffleIterator.__init__(self, df, batch_size)
 
     def next(self):
