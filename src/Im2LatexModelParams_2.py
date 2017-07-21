@@ -46,8 +46,7 @@ class Im2LatexModelParams(dlc.HyperParams):
            ),
         PD('B',
            '(integer or None): Size of mini-batch for training, validation and testing.',
-           (None, 128),
-           128
+           integer(1)
            ),
         PD('K',
            'Vocabulary size including zero',
@@ -163,13 +162,15 @@ HYPER = Im2LatexModelParams(
         ## Overrides of default values.
         ## FYI: By convention, all boolean params' default value is True
         {
+            'B':64,
             'att_weighted_gather': True,
             'sum_logloss': True,
             'MeanSumAlphaEquals1': True,
-            'output_follow_paper': True,
-#            'D_RNN': (CALSTM_1, CALSTM_2)
-            'D_RNN': (CALSTM_1,)
+            'output_follow_paper': True
         })
+#            'D_RNN': (CALSTM_1, CALSTM_2)
+HYPER.D_RNN = (CALSTM_1,)
+
 HYPER.output_layers = tfc.MLPParams({
         ## One layer with num_units = m is added if output_follow_paper == True
         ## Last layer must have num_units = K because it outputs logits.
