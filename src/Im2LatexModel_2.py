@@ -70,7 +70,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         self.outer_scope = tf.get_variable_scope()
         with tf.variable_scope('Im2LatexRNN') as scope:
             super(Im2LatexModel, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
-            self.rnn_scope = scope
+            self.rnn_scope = tf.get_variable_scope()
 
             ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
             ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
@@ -390,14 +390,19 @@ def train(batch_iterator):
         model = Im2LatexModel(HYPER)
         train_ops = model.build_train_graph()
         
-        with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as session:
+        config=tf.ConfigProto(log_device_placement=True)
+        config.gpu_options.allow_growth = True
+        with tf.Session(config) as session:
             print 'Flushing graph to disk'
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
             tf_sw.flush()
             tf.initialize_all_variables().run()
         
+            if batch_iterator is None:
+                return
+            
             for b in batch_iterator:
-                if b.step >= 3:
+                if b.step >=2:
                     break
                 feed = {train_ops.y_s: b.y_s, train_ops.seq_lens: b.seq_len, train_ops.im: b.im}
                 session.run(train_ops.train, feed_dict=feed)
