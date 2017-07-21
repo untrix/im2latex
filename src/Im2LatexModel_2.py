@@ -389,8 +389,11 @@ def train(batch_iterator):
     with graph.as_default():
         model = Im2LatexModel(HYPER)
         train_ops = model.build_train_graph()
-        
-        with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as session:
+
+        config=tf.ConfigProto(log_device_placement=True)
+        config.gpu_options.allow_growth = True
+
+        with tf.Session(config=config) as session:
             print 'Flushing graph to disk'
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
             tf_sw.flush()
