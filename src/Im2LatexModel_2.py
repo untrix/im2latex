@@ -26,6 +26,7 @@ Tested on python 2.7
 
 import collections
 import itertools
+import time
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
@@ -39,17 +40,16 @@ def build_image_context(params, image_batch):
     assert K.int_shape(image_batch) == (params.B,) + params.image_shape
     ################ Build VGG Net ################
     with tf.variable_scope('VGGNet'):
-        with tf.device('/cpu:0'):
-            # K.set_image_data_format('channels_last')
-            convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
-            convnet.trainable = False
-            print 'convnet output_shape = ', convnet.output_shape
-            a = convnet(image_batch)
-            assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
-    
-            ## Combine HxW into a single dimension L
-            a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
-            assert K.int_shape(a) == (params.B, params.L, params.D)
+        # K.set_image_data_format('channels_last')
+        convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
+        convnet.trainable = False
+        print 'convnet output_shape = ', convnet.output_shape
+        a = convnet(image_batch)
+        assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
+
+        ## Combine HxW into a single dimension L
+        a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
+        assert K.int_shape(a) == (params.B, params.L, params.D)
     
     return a
         
@@ -80,7 +80,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
             ## Image features from the Conv-Net
             self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-            self._a = build_image_context(params, self._im)
+            with tf.device('/cpu:0'):
+                self._a = build_image_context(params, self._im)
             ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
 
             ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
@@ -354,7 +355,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """ Build the prediction graph of the model using beamsearch """
         pass
         
-def train(batch_iterator):
+def train(batch_iterator, num_steps=0):
     graph = tf.Graph()
     with graph.as_default():
         model = Im2LatexModel(HYPER)
@@ -367,15 +368,15 @@ def train(batch_iterator):
             print 'Flushing graph to disk'
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
             tf_sw.flush()
-#            tf.initialize_all_variables().run()
             tf.global_variables_initializer().run()
         
             if batch_iterator is None:
                 return
-            
+
+            start_time = time.clock()
             for b in batch_iterator:
-                if b.step >=2:
-                    break
                 feed = {train_ops.y_s: b.y_s, train_ops.seq_lens: b.seq_len, train_ops.im: b.im}
                 session.run(train_ops.train, feed_dict=feed)
-            
+                if (num_steps != 0) and (b.step >= num_steps):
+                    break
+            print 'Elapsed time for %d steps = %f'%(num_steps, time.clock()-start_time)

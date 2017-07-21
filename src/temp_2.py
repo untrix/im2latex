@@ -76,7 +76,7 @@ def visualize_rnn():
 
 def test3():
     b_it = BatchIterator(raw_data_folder, image_folder, HYPER.B)
-    train(b_it)
+    train(b_it, 40)
     
 test3()
 ##test_rnn()

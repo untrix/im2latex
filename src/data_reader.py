@@ -63,7 +63,7 @@ def make_batch_list(df_, batch_size_):
         ## Just making sure bin size is integral multiple of batch_size.
         ## This is not a requirement for this function to operate, rather
         ## is a way of possibly catching data-corrupting bugs
-        assert (bin_counts[i] % batch_size_) == 0
+        ##assert (bin_counts[i] % batch_size_) == 0
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
     np.random.shuffle(batch_list)
