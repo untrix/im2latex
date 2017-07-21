@@ -39,16 +39,17 @@ def build_image_context(params, image_batch):
     assert K.int_shape(image_batch) == (params.B,) + params.image_shape
     ################ Build VGG Net ################
     with tf.variable_scope('VGGNet'):
-        # K.set_image_data_format('channels_last')
-        convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
-        convnet.trainable = False
-        print 'convnet output_shape = ', convnet.output_shape
-        a = convnet(image_batch)
-        assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
-
-        ## Combine HxW into a single dimension L
-        a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
-        assert K.int_shape(a) == (params.B, params.L, params.D)
+        with tf.device('/cpu:0'):
+            # K.set_image_data_format('channels_last')
+            convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
+            convnet.trainable = False
+            print 'convnet output_shape = ', convnet.output_shape
+            a = convnet(image_batch)
+            assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
+    
+            ## Combine HxW into a single dimension L
+            a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
+            assert K.int_shape(a) == (params.B, params.L, params.D)
     
     return a
         
