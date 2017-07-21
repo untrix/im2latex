@@ -9,10 +9,11 @@ import os
 import tensorflow as tf
 import tf_commons as tfc
 import dl_commons as dlc
-from Im2LatexModelParams_2 import HYPER
+from hyper_params import HYPER
 from Im2LatexModel_2 import Im2LatexModel, train
 from data_reader import BatchIterator
 from keras import backend as K
+from keras.applications.vgg16 import preprocess_input
 data_folder = '../data/generated2'
 image_folder = os.path.join(data_folder,'formula_images')
 raw_data_folder = os.path.join(data_folder, 'training')

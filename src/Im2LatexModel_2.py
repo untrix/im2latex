@@ -32,7 +32,7 @@ import tensorflow as tf
 from keras.applications.vgg16 import VGG16
 from keras import backend as K
 from CALSTM import CALSTM, CALSTMState
-from Im2LatexModelParams_2 import Im2LatexModelParams, HYPER
+from hyper_params import Im2LatexModelParams, HYPER
 
 def build_image_context(params, image_batch):
     ## Conv-net
@@ -174,7 +174,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     lst = []
                     for i in xrange(len(cs)):
                         assert isinstance(cs[i], CALSTMState)
-                        lst.append(CALSTM.zero_to_init_state(cs[i], counter, self.C.init_model, a))
+                        lst.append(CALSTM.zero_to_init_state(cs[i], counter, 
+                                                             self.C.init_model_final_layers, a))
                     
                     cs = tuple(lst)
                         
@@ -351,50 +352,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def beamsearch(self, x_0):
         """ Build the prediction graph of the model using beamsearch """
         pass
-    
-#    def build(self):
-#        B = self.C.B
-#        Kv = self.C.K
-#        L = self.C.L
-#        
-#        ## TODO: Introduce Stochastic Learning
-#        
-#        rv = dlc.Properties()
-#        im = tf.placeholder(dtype=tf.float32, shape=(self.C.B,) + self.C.image_shape, name='image_batch')
-#        y_s = tf.placeholder(tf.int32, shape=(self.C.B, None))
-#        #a = tf.placeholder(tf.float32, shape=(self.C.B, self.C.L, self.C.D))
-#        sequence_lengths = tf.placeholder(tf.int32, shape=(self.C.B,))
-#
-#        a = self._build_image_context(im)
-#        init_c, init_h = self._build_init_layer(a)
-#        yProbs, yLogits, alpha = self._build_rnn_training(a, y_s, init_c, init_h)
-#        self._build_rnn_testing(a, y_s, init_c, init_h)
-#        loss = self._build_loss(yLogits, y_s, alpha, sequence_lengths)
-#        
-#        assert K.int_shape(yProbs) == (B, None, Kv)
-#        assert K.int_shape(yLogits) == (B, None, Kv)
-#        assert K.int_shape(alpha) == (B, None, L)
-#        
-#        rv.im = im
-#        rv.y_s = y_s
-#        rv.Ts = sequence_lengths
-#        rv.yProbs = yProbs
-#        rv.yLogits = yLogits
-#        rv.alpha = alpha
-#        
-#        return rv.freeze()
         
 def train(batch_iterator):
     graph = tf.Graph()
     with graph.as_default():
         model = Im2LatexModel(HYPER)
         train_ops = model.build_train_graph()
-
         
-        config=tf.ConfigProto(log_device_placement=True)
-        config.gpu_options.allow_growth = True
-        with tf.Session(config) as session:
-
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True
 
@@ -402,7 +366,8 @@ def train(batch_iterator):
             print 'Flushing graph to disk'
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
             tf_sw.flush()
-            tf.initialize_all_variables().run()
+#            tf.initialize_all_variables().run()
+            tf.global_variables_initializer().run()
         
             if batch_iterator is None:
                 return

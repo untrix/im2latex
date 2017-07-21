@@ -31,7 +31,7 @@ import tf_commons as tfc
 import tensorflow as tf
 from keras import backend as K
 import collections
-from CALSTMParams import CALSTMParams
+from hyper_params import CALSTMParams
 
 
 CALSTMState = collections.namedtuple("CALSTMState", ('lstm_state', 'alpha', 'ztop'))
