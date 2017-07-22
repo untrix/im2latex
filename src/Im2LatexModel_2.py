@@ -42,7 +42,7 @@ def build_image_context(params, image_batch):
     with tf.variable_scope('VGGNet'):
         # K.set_image_data_format('channels_last')
         convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
-        convnet.trainable = False
+        ## convnet.trainable = False
         print 'convnet output_shape = ', convnet.output_shape
         a = convnet(image_batch)
         assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
@@ -80,8 +80,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
             ## Image features from the Conv-Net
             self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-            with tf.device('/cpu:0'):
-                self._a = build_image_context(params, self._im)
+            self._a = build_image_context(params, self._im)
             ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
 
             ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
@@ -379,4 +378,6 @@ def train(batch_iterator, num_steps=0):
                 session.run(train_ops.train, feed_dict=feed)
                 if (num_steps != 0) and (b.step >= num_steps):
                     break
-            print 'Elapsed time for %d steps = %f'%(num_steps, time.clock()-start_time)
+                if b.step % 10 == 0:
+                    print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
+            print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
