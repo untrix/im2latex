@@ -42,7 +42,6 @@ def build_image_context(params, image_batch):
     with tf.variable_scope('VGGNet'):
         # K.set_image_data_format('channels_last')
         convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
-        convnet.trainable = False
         print 'convnet output_shape = ', convnet.output_shape
         a = convnet(image_batch)
         assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
@@ -361,6 +360,10 @@ def train(batch_iterator, num_steps=0):
         model = Im2LatexModel(HYPER)
         train_ops = model.build_train_graph()
         
+        print 'Trainable Variables'
+        for var in tf.trainable_variables():
+            print var.name
+            
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True
 
