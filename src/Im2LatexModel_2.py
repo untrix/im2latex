@@ -42,7 +42,9 @@ def build_image_context(params, image_batch):
     with tf.variable_scope('VGGNet'):
         # K.set_image_data_format('channels_last')
         convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
-        ## convnet.trainable = False
+        convnet.trainable = False
+        for layer in convnet.layers:
+            layer.trainable = False
 
         print 'convnet output_shape = ', convnet.output_shape
         a = convnet(image_batch)
@@ -99,7 +101,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             self._num_calstm_layers = len(self.C.D_RNN)
 
             with tf.variable_scope('Ey'):
-                self._embedding_matrix = tf.get_variable('Embedding_Matrix', (self.C.K, self.C.m))
+                self._embedding_matrix = tf.get_variable('Embedding_Matrix', 
+                                                         (self.C.K, self.C.m),
+                                                         initializer=self.C.embeddings_initializer,
+                                                         trainable=True)
 
 
     @property
@@ -163,7 +168,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 a = K.mean(self._a, axis=1) # final shape = (B, D)
                 a = tfc.MLPStack(self.C.init_model)(a)
 
-                counter = itertools.count(1)
+                counter = itertools.count(0)
                 def zero_to_init_state(zs, counter):
                     assert isinstance(zs, Im2LatexState)
                     cs = zs.calstm_state
@@ -363,7 +368,8 @@ def train(batch_iterator, num_steps=0):
         
         print 'Trainable Variables'
         for var in tf.trainable_variables():
-            print var.name
+            print var.name, K.int_shape(var)
+            print var.initializer
             
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True

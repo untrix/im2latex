@@ -29,7 +29,8 @@ Tested on python 2.7
 import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
-from dl_commons import PD, instanceof, integer, decimal, boolean, equalto, issequenceof
+from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
+                        iscallable, iscallableOrNone)
 
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
@@ -91,7 +92,25 @@ class GlobalParams(dlc.HyperParams):
         PD('dtype',
            'dtype for the entire model.',
            (tf.float32,),
-           tf.float32)
+           tf.float32),
+        PD('weights_initializer', 
+              'Tensorflow weights initializer function', 
+              iscallableOrNone(),
+              tf.contrib.layers.xavier_initializer()
+              # tf.contrib.layers.xavier_initializer_conv2d()
+              # tf.contrib.layers.variance_scaling_initializer()
+              ),
+        PD('biases_initializer', 
+              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+              iscallableOrNone(),
+              None
+              ),
+        PD('weights_regularizer',
+              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
+              iscallable(noneokay=True), None),
+        PD('biases_regularizer',
+              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
+              iscallable(noneokay=True), None),
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
@@ -163,8 +182,7 @@ class Im2LatexModelParams(dlc.HyperParams):
            boolean,
            False),
     ### Embedding Layer ###
-        PD('embeddings_initializer', 'Initializer for embedding weights', None, 'glorot_uniform'),
-        PD('embeddings_initializer_tf', 'Initializer for embedding weights', dlc.iscallable(), 
+        PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(), 
            tf.contrib.layers.xavier_initializer()),
     ### Decoder LSTM Params ###
         PD('D_RNN',

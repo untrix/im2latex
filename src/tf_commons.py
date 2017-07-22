@@ -437,7 +437,8 @@ def get_nested_shape(obj):
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def __init__(self, params, reuse=None, _scope=None, beamsearch_width=1):
         self._params = params = RNNParams(params)
-        with tf.variable_scope(_scope or self._params.op_name) as scope:
+        with tf.variable_scope(_scope or self._params.op_name, 
+                               initializer=self._params.weights_initializer) as scope:
             super(RNNWrapper, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
             
             if len(self._params.layers_units) == 1:
@@ -452,7 +453,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                 self._num_layers = len(self._params.layers_units)
     
             self._batch_state_shape = expand_nested_shape(self._cell.state_size, 
-                                                                  self._params.B*beamsearch_width)
+                                                          self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
 
     @property
@@ -540,6 +541,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def _make_one_cell(self, num_units):
         params = self._params
         #The implementation is based on: http://arxiv.org/abs/1409.2329.
+        ## LSTMBlockFusedCell is replacement for LSTMBlockCell
         cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
                                            forget_bias=params.forget_bias, 
                                            use_peephole=params.use_peephole
