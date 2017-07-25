@@ -547,3 +547,12 @@ def makeTBDir(params):
 def sizeofVar(var):
     shape = K.int_shape(var)
     return np.prod(shape)
+
+def printVars(name, coll):
+    print name
+    total_n = 0
+    for var in tf.trainable_variables():
+        n = sizeofVar(var)
+        total_n += n
+        print var.name, K.int_shape(var), 'num_params = ', n
+    print '\nTotal number of variables = ', total_n

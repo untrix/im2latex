@@ -23,6 +23,7 @@ Created on Mon Jul 24 12:28:55 2017
 """
 
 import os
+import time
 from six.moves import cPickle as pickle
 import tensorflow as tf
 from keras import backend as K
@@ -48,31 +49,39 @@ with graph.as_default():
     ## config=tf.ConfigProto(log_device_placement=True)
     ## config.gpu_options.allow_growth = True
     tf_session = tf.Session(config=None)
-    K.set_session(tf_session)
-    
-    tf_im = tf.placeholder(dtype=HYPER.dtype, shape=((HYPER.B,)+HYPER.image_shape), name='image')
-    tf_a_batch = build_image_context(HYPER, tf_im)
-    tf_a_list = tf.unstack(tf_a_batch, axis=0)
-
-    print 'Trainable Variables'
-    total_n = 0
-    for var in tf.trainable_variables():
-        n = tfc.sizeofVar(var)
-        total_n += n
-        print var.name, K.int_shape(var), 'num_params = ', n
-    print '\nTotal number of trainable params = ', total_n
-
     with tf_session.as_default():
+        K.set_session(tf_session)
+        
+        tf_im = tf.placeholder(dtype=HYPER.dtype, shape=((HYPER.B,)+HYPER.image_shape), name='image')
+        tf_a_batch = build_image_context(HYPER, tf_im)
+        tf_a_list = tf.unstack(tf_a_batch, axis=0)
+    
+        tfc.printVars('Trainable Variables', tf.trainable_variables())
+        tfc.printVars('Global Variables', tf.global_variables())
+        tfc.printVars('Local Variables', tf.local_variables())
+    
+        print '\nUninitialized params'
+        print tf_session.run(tf.report_uninitialized_variables())
+        
         print 'Flushing graph to disk'
         tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
         tf_sw.flush()
 
-        for b in b_it:
+        print '\n'
+        start_time = time.clock()
+        for step, b in enumerate(b_it, start=1):
+            if b.epoch > 1:
+                break
             feed_dict = {tf_im:b.im, K.learning_phase(): 0}
             a_list = tf_session.run(tf_a_list, feed_dict = feed_dict)
             assert len(a_list) == len(b.image_name)
             for i, a in enumerate(a_list):
-                print 'Writing %s, shape=%s'%(b.image_name[i], a.shape)
-                with open(os.path.join(image_features_folder, os.path.splitext(b.image_name[i])[0] + '.pkl'), 'wb') as f:
+                ## print 'Writing %s, shape=%s'%(b.image_name[i], a.shape)
+                with open(os.path.join(image_features_folder, os.path.splitext(b.image_name[i])[0] + '.pkl'),
+                          'wb') as f:
                   pickle.dump(a, f, pickle.HIGHEST_PROTOCOL)
+            if step % 10 == 0:
+                print('Elapsed time for %d steps = %d seconds'%(step, time.clock()-start_time))
+        print('Elapsed time for %d steps = %d seconds'%(step-1, time.clock()-start_time))
+        print 'done'
               
