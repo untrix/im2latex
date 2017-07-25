@@ -40,15 +40,18 @@ def build_image_context(params, image_batch):
     assert K.int_shape(image_batch) == (params.B,) + params.image_shape
     ################ Build VGG Net ################
     with tf.variable_scope('VGGNet'):
-        # K.set_image_data_format('channels_last')
-        convnet = VGG16(include_top=False, weights='imagenet', pooling=None, input_shape=params.image_shape)
+        K.set_image_data_format('channels_last')
+        convnet = VGG16(include_top=False, weights='imagenet', pooling=None, 
+                        input_shape=params.image_shape,
+                        input_tensor = image_batch)
         convnet.trainable = False
         for layer in convnet.layers:
             layer.trainable = False
 
         print 'convnet output_shape = ', convnet.output_shape
-        a = convnet(image_batch)
-        assert K.int_shape(a) == (params.B, params.H, params.W, params.D)
+        ## a = convnet(image_batch)
+        a = convnet.output
+        assert K.int_shape(a)[1:] == (params.H, params.W, params.D)
 
         ## Combine HxW into a single dimension L
         a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
@@ -72,6 +75,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """
         self._params = self.C = Im2LatexModelParams(params)
         self.outer_scope = tf.get_variable_scope()
+        
+        ## Image features/context from the Conv-Net
+        self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+        self._a = build_image_context(params, self._im)
+        ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+
+        ## RNN portion of the model
         with tf.variable_scope('Im2LatexRNN') as scope:
             super(Im2LatexModel, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
             self.rnn_scope = tf.get_variable_scope()
@@ -81,18 +91,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             ## phase.
             self._beamsearch_width = beamsearch_width
 
-            ## Image features from the Conv-Net
-            self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-            self._a = build_image_context(params, self._im)
-            ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
 
             ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
             self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=tf.int32, name='go')
 
-#            if len(self.C.D_RNN) == 1:
-#                self._CALSTM_stack = CALSTM(self.C.D_RNN[0], self._a, beamsearch_width, reuse)
-#                self._num_calstm_layers = 1
-#            else:
             cells = []
             for i, rnn_params in enumerate(self.C.D_RNN, start=1):
                 with tf.variable_scope('%d'%i):
@@ -117,39 +119,40 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     
     def _output_layer(self, Ex_t, h_t, z_t):
         
-        ## Renaming HyperParams for convenience
-        CONF = self.C
-        B = self.C.B*self.BeamWidth
-        D = self.C.D
-        m = self.C.m
-        Kv =self.C.K
-        n = self._CALSTM_stack.output_size
-        
-        assert K.int_shape(Ex_t) == (B, m)
-        assert K.int_shape(h_t) == (B, self._CALSTM_stack.output_size)
-        assert K.int_shape(z_t) == (B, D)
-        
-        ## First layer of output MLP
-        if CONF.output_follow_paper: ## Follow the paper.
-            ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-            o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
-                              batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
-            ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
-            o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
-            ## non-linearity for the first layer
-            o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
-            dim = m
-        else: ## Use a straight MLP Stack
-            o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
-            dim = m+n+D
-
-        ## Regular MLP layers
-        assert CONF.output_layers.layers_units[-1] == Kv
-        logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
+        with tf.variable_scope('Output_Layer'):
+            ## Renaming HyperParams for convenience
+            CONF = self.C
+            B = self.C.B*self.BeamWidth
+            D = self.C.D
+            m = self.C.m
+            Kv =self.C.K
+            n = self._CALSTM_stack.output_size
             
-        assert K.int_shape(logits_t) == (B, Kv)
-        
-        return tf.nn.softmax(logits_t), logits_t
+            assert K.int_shape(Ex_t) == (B, m)
+            assert K.int_shape(h_t) == (B, self._CALSTM_stack.output_size)
+            assert K.int_shape(z_t) == (B, D)
+            
+            ## First layer of output MLP
+            if CONF.output_follow_paper: ## Follow the paper.
+                ## Affine transformation of h_t and z_t from size n/D to bring it down to m
+                o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb}, 
+                                  batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+                ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
+                o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
+                ## non-linearity for the first layer
+                o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
+                dim = m
+            else: ## Use a straight MLP Stack
+                o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
+                dim = m+n+D
+    
+            ## Regular MLP layers
+            assert CONF.output_layers.layers_units[-1] == Kv
+            logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
+                
+            assert K.int_shape(logits_t) == (B, Kv)
+            
+            return tf.nn.softmax(logits_t), logits_t
 
     def zero_state(self, batch_size, dtype):
         return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
@@ -172,11 +175,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 def zero_to_init_state(zs, counter):
                     assert isinstance(zs, Im2LatexState)
                     cs = zs.calstm_state
-#                    if self._num_calstm_layers == 1:
-#                        assert isinstance(cs, CALSTMState)
-#                        cs = CALSTM.zero_to_init_state(cs, counter, self.C.init_model, a)
-#                    else:
-                    ## tuple(CALSTMState1, ...)
                     assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
                     lst = []
                     for i in xrange(len(cs)):
@@ -366,10 +364,39 @@ def train(batch_iterator, num_steps=0):
         model = Im2LatexModel(HYPER)
         train_ops = model.build_train_graph()
         
+        total_n = 0
+        total_vggnet = 0
+        total_init = 0
+        total_calstm = 0
+        total_output = 0
+        total_embedding = 0
+        
         print 'Trainable Variables'
         for var in tf.trainable_variables():
-            print var.name, K.int_shape(var)
-            print var.initializer
+            n = tfc.sizeofVar(var)
+            total_n += n
+            if var.name.startswith('VGGNet/'):
+                total_vggnet += n
+            elif 'CALSTM' in var.name:
+                total_calstm += n
+            elif var.name.startswith('Im2LatexRNN/Output_Layer/'):
+                total_output += n
+            elif var.name.startswith('Initializer_MLP/'):
+                total_init += n
+            elif var.name.startswith('Im2LatexRNN/Ey/Embedding_Matrix'):
+                total_embedding += n
+            else:
+                assert False
+            print var.name, K.int_shape(var), 'num_params = ', n
+        print '\nTotal number of trainable params = ', total_n
+        print 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n)
+        print 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n)
+        print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
+        print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
+        print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
+        print '\nTrainable Variables Initializers'
+        for var in tf.trainable_variables():
+            print var.initial_value
             
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True

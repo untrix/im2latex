@@ -29,30 +29,60 @@ import dl_commons as dlc
 import threading
 import numpy as np
 from scipy import ndimage
+from keras.applications.vgg16 import preprocess_input
+from hyper_params import GLOBAL
 
-def get_image_matrix(image_file_, height_, width_, padded_dim_):
-    padded_height = padded_dim_['height']
-    padded_width = padded_dim_['width']
-    MAX_PIXEL = 255.0 # Make sure this is a float literal
-    ## Load image and convert to a 3-channel array
-    im_ar = ndimage.imread(os.path.join(image_file_), mode='RGB')
-    ## normalize values to lie between -1.0 and 1.0.
-    ## This is done in place of data whitening - i.e. normalizing to mean=0 and std-dev=0.5
-    ## Is is a very rough technique but legit for images
-    im_ar = (im_ar - MAX_PIXEL/2.0) / MAX_PIXEL
-    height, width, channels = im_ar.shape
-    assert height == height_
-    assert width == width_
-    assert channels == 3
-    if (height < padded_height) or (width < padded_width):
-        ar = np.full((padded_height, padded_width, channels), 0.5, dtype=np.float32)
-        h = (padded_height - height)//2
-        ar[h:h+height, 0:width] = im_ar
-        im_ar = ar
 
-    return im_ar
+class ImageProcessor(object):
+    @staticmethod
+    def get_array(image_file_, height_, width_, padded_dim_):
+        padded_height = padded_dim_['height']
+        padded_width = padded_dim_['width']
+        ## Load image and convert to a 3-channel array
+        im_ar = ndimage.imread(os.path.join(image_file_), mode='RGB')
+        height, width, channels = im_ar.shape
+        assert height == height_
+        assert width == width_
+        assert channels == 3
+        if (height < padded_height) or (width < padded_width):
+            ar = np.full((padded_height, padded_width, channels), 255.0, dtype=GLOBAL.dtype_np)
+            h = (padded_height - height)//2
+            ar[h:h+height, 0:width] = im_ar
+            im_ar = ar
+    
+        return im_ar
 
-def make_batch_list(df_, batch_size_):
+    @staticmethod
+    def whiten(image_ar):
+        """
+        normalize values to lie between -1.0 and 1.0.
+        This is done in place of data whitening - i.e. normalizing to mean=0 and std-dev=0.5
+        Is is a very rough technique but legit for images. We assume that the mean is 255/2
+        and therefore substract 127.5 from all values. Then we divid everything by 255 to ensure
+        that all values lie between -0.5 and 0.5
+        Arguments:
+            image_batch: (ndarray) Batch of images or a single image. Shape doesn't matter.
+        """
+        MAX_PIXEL = 255.0
+        return (image_ar - 127.5) / 255.0
+    
+
+class ImagenetProcessor(ImageProcessor):
+    @staticmethod
+    def whiten(image_ar):
+        """
+        Run Imagenet preprocessing - 
+        1) flip RGB to BGR
+        2) Adjust mean per Imagenet stats
+        3) No std-dev adjustment
+        Arguments:
+            image_batch: (ndarray) Batch of images of shape (B, H, W, D) - i.e. 'channels-last' format.
+            Also, must have 3 channels in order 'RGB' (i.e. mode='RGB')
+        """
+        return preprocess_input(image_ar, data_format='channels_last')
+
+    
+def make_batch_list(df_, batch_size_, assert_divisible_batchsize=True):
     ## Make a list of batches
     bin_lens = sorted(df_.bin_len.unique())
     bin_counts = [df_[df_.bin_len==l].shape[0] for l in bin_lens]
@@ -63,7 +93,8 @@ def make_batch_list(df_, batch_size_):
         ## Just making sure bin size is integral multiple of batch_size.
         ## This is not a requirement for this function to operate, rather
         ## is a way of possibly catching data-corrupting bugs
-        ##assert (bin_counts[i] % batch_size_) == 0
+        if assert_divisible_batchsize:
+            assert (bin_counts[i] % batch_size_) == 0
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
     np.random.shuffle(batch_list)
@@ -114,28 +145,34 @@ class ShuffleIterator(object):
                 })
 
 class BatchIterator(ShuffleIterator):
-    def __init__(self, raw_data_dir_, image_dir_, batch_size):
+    def __init__(self, raw_data_dir_, image_dir_, 
+                 batch_size=None, 
+                 image_processor=ImageProcessor()):
+        
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
         self._image_dir = image_dir_
+        self._image_processor = image_processor
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-        #batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
+        if batch_size is None:
+            batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
         ShuffleIterator.__init__(self, df, batch_size)
 
     def next(self):
         nxt = ShuffleIterator.next(self)
         df_batch = nxt.df_batch[['image', 'height', 'width', 'bin_len', 'seq_len']]
         im_batch = [
-            get_image_matrix(os.path.join(self._image_dir, row[0]), row[1], row[2], self._padded_im_dim)
+            self._image_processor.get_array(os.path.join(self._image_dir, row[0]), row[1], row[2], self._padded_im_dim)
             for row in df_batch.itertuples(index=False)
-        ]   
-        im_batch = np.asarray(im_batch)
+        ]
+        im_batch = self._image_processor.whiten(np.asarray(im_batch))
         
         bin_len = df_batch.bin_len.iloc[0]
         y_s = self._seq_data[bin_len].loc[df_batch.index].values
         return dlc.Properties({'im':im_batch, 
                                'y_s':y_s,
                                'seq_len': df_batch.seq_len.values,
+                               'image_name': df_batch.image.values,
                                'epoch': nxt.epoch,
                                'step': nxt.step
                                })

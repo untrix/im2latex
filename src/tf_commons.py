@@ -25,6 +25,7 @@ Tested on python 2.7
 """
 import os
 import time
+import numpy as np
 import dl_commons as dlc
 import tensorflow as tf
 import keras
@@ -350,18 +351,13 @@ class RNNParams(HyperParams):
                'lstm'),
             PD('dtype',
                "dtype of data",
-               (tf.float32,),
+               (tf.float32, tf.float64),
                tf.float32),
             PD('op_name',
                'Name of the layer; will show up in tensorboard visualization',
                None,
                make_lstm_optname
               ),
-            PD('num_units', 
-               "(integer): Either layers_units or num_units must be specified. Not both."
-               "Number of units in the single-layer RNN. If you want to instantiate a single-layer RNN "
-               "you may either specify num_units, or layers_units with a tuple of length one.",
-               integerOrNone(1)),
             PD('layers_units',
               "(sequence of integers): Either layers_units or num_units must be specified. Not both."
               "Sequence of numbers denoting number of units for each layer." 
@@ -394,21 +390,7 @@ class RNNParams(HyperParams):
             )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        ## Additional parameter validation
-        b_num_units = self.num_units is not None
-        b_layers_units = self.layers_units is not None
-        if (b_num_units and b_layers_units):
-            assert len(self.layers_units) == 1
-            assert self.num_units == self.layers_units[0]
-        else:
-            assert (b_num_units or b_layers_units)
-        
-        ## If only one unit is specified, then make sure num_units and layers_units hold equivalent values
-        ## so that client-code may refer to either.
-        if b_num_units:
-            self.layers_units = (self.num_units,)
-        elif len(self.layers_units) == 1:
-            self.num_units = self.layers_units[0]
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -561,3 +543,7 @@ def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')
     os.makedirs(dir)
     return dir
+
+def sizeofVar(var):
+    shape = K.int_shape(var)
+    return np.prod(shape)

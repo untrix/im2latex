@@ -26,11 +26,12 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 
+import numpy as np
 import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
-                        iscallable, iscallableOrNone)
+                        iscallable, iscallableOrNone, LambdaVal)
 
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
@@ -77,7 +78,8 @@ class GlobalParams(dlc.HyperParams):
         PD('L',
            '(integer): number of pixels in an image feature-map = HxW (see paper or model description)', 
            integer(1),
-           lambda _, d: d['H'] * d['W']),
+           LambdaVal(lambda _, d: d['H'] * d['W'])
+           ),
         PD('D', 
            '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
            'See paper or model description.', 
@@ -91,12 +93,18 @@ class GlobalParams(dlc.HyperParams):
            instanceof(tfc.DropoutParams, True)),
         PD('dtype',
            'dtype for the entire model.',
-           (tf.float32,),
-           tf.float32),
+           (tf.float32, tf.float64),
+           tf.float32
+           ),
+        PD('dtype_np',
+           'dtype for the entire model.',
+           (np.float32, np.float64),
+           np.float32
+           ),
         PD('weights_initializer', 
               'Tensorflow weights initializer function', 
               iscallableOrNone(),
-              tf.contrib.layers.xavier_initializer()
+              tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32) ## = glorot_uniform
               # tf.contrib.layers.xavier_initializer_conv2d()
               # tf.contrib.layers.variance_scaling_initializer()
               ),
@@ -107,10 +115,12 @@ class GlobalParams(dlc.HyperParams):
               ),
         PD('weights_regularizer',
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallable(noneokay=True), None),
+              iscallableOrNone(), 
+              None),
         PD('biases_regularizer',
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallable(noneokay=True), None),
+              iscallableOrNone(), 
+              None),
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
@@ -121,19 +131,18 @@ class GlobalParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-GLOBAL = GlobalParams()
+GLOBAL = GlobalParams().freeze()
             
 class CALSTMParams(dlc.HyperParams):
     proto = GlobalParams.proto + (
     ### Attention Model Params ###
         PD('att_layers', 'MLP parameters', instanceof(tfc.MLPParams),
-           tfc.MLPParams({
+           tfc.MLPParams(GLOBAL).updated({
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
                 'layers_units': (GLOBAL.D,),
-                'activation_fn': tf.nn.tanh, # = tanh in the paper's source code
-                'tb': GLOBAL.tb,
-                'dropout': GLOBAL.dropout
-                   })),
+                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+                   }).freeze()
+            ),
         PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
            'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
            boolean,
@@ -147,15 +156,13 @@ class CALSTMParams(dlc.HyperParams):
     ### Decoder LSTM Params ###
         PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
            instanceof(tfc.RNNParams),
-           tfc.RNNParams({
+           tfc.RNNParams(GLOBAL).updated({
                 'B': GLOBAL.B,
                 'i': None, ## size of input vector + z_t. Set dynamically.
                  ## paper uses a value of n=1000
-                'layers_units': (GLOBAL.n,),
-                'dropout': GLOBAL.dropout,
-                'tb': GLOBAL.tb
-                })),
-
+                'layers_units': (GLOBAL.n,)
+                })
+            )
         )
     def __init__(self, initVals):
        ## "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
@@ -202,15 +209,13 @@ class Im2LatexModelParams(dlc.HyperParams):
            "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
            "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
            instanceof(tfc.MLPParams),
-               tfc.MLPParams({
+               tfc.MLPParams(GLOBAL).updated({
                     ## One layer with num_units = m is added if output_follow_paper == True
                     ## Last layer must have num_units = K because it outputs logits.
                     ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
                     'layers_units': (GLOBAL.m, GLOBAL.K),
-                    'activation_fn': tf.nn.relu, # paper has it set to relu
-                    'tb': GLOBAL.tb,
-                    'dropout': GLOBAL.dropout
-                    })
+                    'activation_fn': tf.nn.relu # paper has it set to relu
+                    }).freeze()
             ),
     ### Initializer MLP ###
         PD('init_model', 
@@ -218,23 +223,19 @@ class Im2LatexModelParams(dlc.HyperParams):
            "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
            "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
            instanceof(tfc.MLPParams),
-               tfc.MLPParams({
+               tfc.MLPParams(GLOBAL).updated({
                    'layers_units': (GLOBAL.D,), ## The paper's source sets all hidden units to D
-                   'dropout': GLOBAL.dropout,
-                   'tb': GLOBAL.tb,
                    ## paper sets hidden activations=relu and final=tanh
                    'activation_fn': tf.nn.relu
-                   })
+                   }).freeze()
            ),
         PD('init_model_final_layers', '',
            instanceof(tfc.FCLayerParams),
-               tfc.FCLayerParams({
+               tfc.FCLayerParams(GLOBAL).updated({
                    ## num_units to be set dynamically
-                   'dropout': GLOBAL.dropout,
-                   'tb': GLOBAL.tb,
                    ## paper sets hidden activations=relu and final=tanh
                    'activation_fn': tf.nn.tanh                       
-                   })
+                   }).freeze()
            ),
 #        PD('init_layers', 'Number of layers in the initializer MLP', xrange(1,10),1),
     ### Loss / Cost Layer ###
@@ -270,7 +271,8 @@ class Im2LatexModelParams(dlc.HyperParams):
         return self.__class__(self).updated(override_vals)
 
 
-CALSTM_1 = CALSTMParams({'m':GLOBAL.m})
+CALSTM_1 = CALSTMParams({'m':GLOBAL.m}).freeze()
 ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
 HYPER = Im2LatexModelParams()
 HYPER.D_RNN = (CALSTM_1,)
+HYPER.freeze()

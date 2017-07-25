@@ -248,18 +248,9 @@ class Params(Properties):
             if name not in props:
                 try:
                     props[name] = prop
-    #                if (name in vals1_):
-    #                    _vals[name] = vals1_[name]
-    #                elif (name in vals2_):
-    #                    _vals[name] = vals2_[name]
-    #                else:
-    #                    _vals[name] = prop.default
-    #                    if callable(_vals[name]) and (not isinstance(prop.validator, _iscallable)):
-    #                        ## THis is a case where a proxy function has been provided
-    #                        ## in place of a value.
-    #                        derivatives.append(name)
                     _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
-                    if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
+#                    if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
+                    if isinstance(_vals[name], LambdaVal):
                         ## This is a case where a proxy function has been provided
                         ## in place of a value.
                         derivatives.append(name)
@@ -306,13 +297,6 @@ class Params(Properties):
         else:
             return Properties._set_val_(self, name, val)
 
-#    def __copy__(self):
-#        ## Shallow copy
-#        return self.__class__(self)
-#    
-#    def copy(self, override_vals=None):
-#        ## Shallow copy
-#        return self.__class__(self, initVals=override_vals)
 
     """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):
@@ -393,8 +377,15 @@ class HyperParams(Params):
 ## Abstract parameter validator class.
 class _ParamValidator(object):
     def __contains__(self, val):
-        raise Exception('Not Implemented. This is an abstract class.')
+        raise NotImplementedError('This is an abstract class.')
 
+## Dynamic Value setter. Wrapper class
+class LambdaVal(object):
+    def __init__(self, func):
+        self._func = func
+    def __call__(self, name, props):
+        return self._func(name, props)
+        
 class LinkedParam(_ParamValidator):
     """ A validator class indicating that the param's value is derived by calling a function.
     Its value cannot be directly set, instead a function should be provided that will
@@ -402,9 +393,9 @@ class LinkedParam(_ParamValidator):
     """
     pass
 
-def equalto(name):
+class equalto(LambdaVal):
     """
-    Returns a callable (lambda function) that can be used to set the value of
+    A callable object that can be used to set the value of
     one property equal to the one passed in.
     Example:
         dlc.Params((
@@ -416,11 +407,12 @@ def equalto(name):
             PD('B',
                'Another property that should be equal in value to A',
                instanceof(int),
-               sameas('A')
+               equalto('A')
                )
            ))
     """
-    return lambda _, props: props[name]
+    def __init__(self, target):
+        LambdaVal.__init__(self, lambda _, props: props[target])
 
         
 # A validator that returns False for non-None values
