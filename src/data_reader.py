@@ -30,12 +30,13 @@ import threading
 import numpy as np
 from scipy import ndimage
 from keras.applications.vgg16 import preprocess_input
-from hyper_params import GLOBAL
 
 
 class ImageProcessor(object):
-    @staticmethod
-    def get_array(image_file_, height_, width_, padded_dim_):
+    def __init__(self, params):
+        self._params=params
+        
+    def get_array(self, image_file_, height_, width_, padded_dim_):
         padded_height = padded_dim_['height']
         padded_width = padded_dim_['width']
         ## Load image and convert to a 3-channel array
@@ -45,7 +46,7 @@ class ImageProcessor(object):
         assert width == width_
         assert channels == 3
         if (height < padded_height) or (width < padded_width):
-            ar = np.full((padded_height, padded_width, channels), 255.0, dtype=GLOBAL.dtype_np)
+            ar = np.full((padded_height, padded_width, channels), 255.0, dtype=self._params.dtype_np)
             h = (padded_height - height)//2
             ar[h:h+height, 0:width] = im_ar
             im_ar = ar
@@ -68,6 +69,9 @@ class ImageProcessor(object):
     
 
 class ImagenetProcessor(ImageProcessor):
+    def __init__(self, params):
+        ImageProcessor.__init__(self, params)
+        
     @staticmethod
     def whiten(image_ar):
         """
@@ -81,7 +85,14 @@ class ImagenetProcessor(ImageProcessor):
         """
         return preprocess_input(image_ar, data_format='channels_last')
 
-    
+class VGGProcessor(object):
+    def __init__(self, vgg_dir_):
+        self._vgg_dir = vgg_dir_
+        
+    def get_array(self, image_file_):
+        pkl_file = os.path.join(self._vgg_dir, os.path.splitext(image_file_)[0] + '.pkl')
+        return pd.read_pickle(pkl_file)
+        
 def make_batch_list(df_, batch_size_, assert_divisible_batchsize=True):
     ## Make a list of batches
     bin_lens = sorted(df_.bin_len.unique())
@@ -101,15 +112,18 @@ def make_batch_list(df_, batch_size_, assert_divisible_batchsize=True):
     return batch_list
 
 class ShuffleIterator(object):
-    def __init__(self, df_, batch_size_):
+    def __init__(self, df_, hyper):
         self._df = df_.sample(frac=1)
-        self._batch_size = batch_size_
-        self._batch_list = make_batch_list(self._df, batch_size_)
+        self._batch_size = hyper.B
+        self._batch_list = make_batch_list(self._df, self._batch_size)
         self._next_pos = 0
-        self._num_items = (df_.shape[0] // batch_size_)
+        self._num_items = (df_.shape[0] // self._batch_size)
         self._step = 0
         self._epoch = 1
         self.lock = threading.Lock()
+        
+        print 'ShuffleIterator initialized with batch_size = %d, steps-per-epoch = %d'%(self._batch_size, 
+                                                                                        self._num_items)
         
     def __iter__(self):
         return self
@@ -144,19 +158,18 @@ class ShuffleIterator(object):
                 'batch_idx': batch
                 })
 
-class BatchIterator(ShuffleIterator):
+class BatchImageIterator(ShuffleIterator):
     def __init__(self, raw_data_dir_, image_dir_, 
-                 batch_size=None, 
-                 image_processor=ImageProcessor()):
+                 hyper, 
+                 image_processor=None):
         
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
         self._image_dir = image_dir_
-        self._image_processor = image_processor
+        self._image_processor = image_processor or ImageProcessor(hyper)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-        if batch_size is None:
-            batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
-        ShuffleIterator.__init__(self, df, batch_size)
+#            batch_size = pd.read_pickle(os.path.join(raw_data_dir_, 'batch_size.pkl'))
+        ShuffleIterator.__init__(self, df, hyper)
 
     def next(self):
         nxt = ShuffleIterator.next(self)
@@ -177,10 +190,33 @@ class BatchIterator(ShuffleIterator):
                                'step': nxt.step
                                })
 
-#data_folder = '../data/generated2'
-#image_folder = os.path.join(data_folder,'formula_images')
-#raw_data_folder = os.path.join(data_folder, 'training')
-#print ('starting')
-#it = BatchIterator(raw_data_folder, image_folder)
-#print ('created batch iterator')
-#print it.next()
+class BatchContextIterator(ShuffleIterator):
+    def __init__(self, 
+                 raw_data_dir_,
+                 image_feature_dir_,
+                 hyper,
+                 image_processor_=None):
+        self._raw_data_dir = raw_data_dir_
+        self._image_feature_dir = image_feature_dir_
+        self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
+        self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
+        df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+        ShuffleIterator.__init__(self, df, hyper)
+
+    def next(self):
+        nxt = ShuffleIterator.next(self)
+        df_batch = nxt.df_batch[['image', 'bin_len', 'seq_len']]
+        a_batch = [
+            self._image_processor.get_array(row[0]) for row in df_batch.itertuples(index=False)
+        ]
+        
+        bin_len = df_batch.bin_len.iloc[0]
+        y_s = self._seq_data[bin_len].loc[df_batch.index].values
+        return dlc.Properties({'im':a_batch, 
+                               'y_s':y_s,
+                               'seq_len': df_batch.seq_len.values,
+                               'image_name': df_batch.image.values,
+                               'epoch': nxt.epoch,
+                               'step': nxt.step
+                               })
+    

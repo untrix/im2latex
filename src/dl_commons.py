@@ -43,7 +43,7 @@ class Properties(dict):
     The class inherits from dict therefore all standard python dictionary interfaces
     are available as well (such as iteritems etc.)
 
-    x = Dictionary({'x':1, 2:'y'})
+    x = Properties({'x':1, 2:'y'})
     assert d.x == d['x']
     d.x = 5
     assert d['x'] == 5
@@ -72,13 +72,13 @@ class Properties(dict):
         else:
             dict.__setitem__(self, key, val)
     
-#    def __copy__(self):
-#        ## Shallow copy
-#        return self.__class__(self)
-#    
-#    def copy(self, override_vals):
-#        ## Shallow copy
-#        return self.__class__(self)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+    
+    def copy(self):
+        ## Shallow copy
+        return self.__class__(self)
     
     def updated(self, other):
         """ chain-update
@@ -114,6 +114,17 @@ class Properties(dict):
         object.__setattr__(self, '_isSealed', True)
         return self
 
+class NoneProperties(Properties):
+    """
+    A variation of Properties which will silently return a None value for missing keys instead of throwing
+    an exception.
+    """
+    def _get_val_(self, key):
+        try:
+            return Properties._get_val_(self, key)
+        except KeyError:
+            return None
+    
 class ParamDesc(Properties):
     """
     A property descriptor.

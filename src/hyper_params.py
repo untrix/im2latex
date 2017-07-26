@@ -31,11 +31,15 @@ import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
-                        iscallable, iscallableOrNone, LambdaVal)
+                        iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
 
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
+        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
+           boolean,
+           False
+           ),
         PD('image_shape',
            'Shape of input images. Should be a python sequence.',
            None,
@@ -50,7 +54,7 @@ class GlobalParams(dlc.HyperParams):
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing.',
            integer(1),
-           45
+           64
            ),
         PD('K',
            'Vocabulary size including zero',
@@ -87,10 +91,11 @@ class GlobalParams(dlc.HyperParams):
            512),
         PD('tb', "Tensorboard Params.",
            instanceof(tfc.TensorboardParams),
-           tfc.TensorboardParams()),
+           tfc.TensorboardParams()
+           ),
         PD('dropout', 
            'Dropout parameters if any - global at the level of the RNN.',
-           instanceof(tfc.DropoutParams, True)),
+           instanceofOrNone(tfc.DropoutParams)),
         PD('dtype',
            'dtype for the entire model.',
            (tf.float32, tf.float64),
@@ -130,39 +135,39 @@ class GlobalParams(dlc.HyperParams):
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
-
-GLOBAL = GlobalParams().freeze()
-            
+    
 class CALSTMParams(dlc.HyperParams):
-    proto = GlobalParams.proto + (
-    ### Attention Model Params ###
-        PD('att_layers', 'MLP parameters', instanceof(tfc.MLPParams),
-           tfc.MLPParams(GLOBAL).updated({
-                # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (GLOBAL.D,),
-                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-                   }).freeze()
-            ),
-        PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
-           'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
-           boolean,
-           True),
-        PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-           "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here." 
-           "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)." 
-           "Default value however, is True in conformance with the paper's implementation.",
-           (True, False),
-           True),
-    ### Decoder LSTM Params ###
-        PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
-           instanceof(tfc.RNNParams),
-           tfc.RNNParams(GLOBAL).updated({
-                'B': GLOBAL.B,
-                'i': None, ## size of input vector + z_t. Set dynamically.
-                 ## paper uses a value of n=1000
-                'layers_units': (GLOBAL.n,)
-                })
-            )
+    @staticmethod
+    def makeProto(GLOBAL=GlobalParams()):
+        return GlobalParams.proto + (
+        ### Attention Model Params ###
+            PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
+               tfc.MLPParams(GLOBAL).updated({
+                    # Number of units in all layers of the attention model = D in the paper"s source-code.
+                    'layers_units': (GLOBAL.D,),
+                    'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+                       }).freeze()
+                ),
+            PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
+               'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
+               boolean,
+               True),
+            PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
+               "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here." 
+               "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)." 
+               "Default value however, is True in conformance with the paper's implementation.",
+               (True, False),
+               True),
+        ### Decoder LSTM Params ###
+            PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
+               instanceof(tfc.RNNParams),
+               tfc.RNNParams(GLOBAL).updated({
+                    'B': GLOBAL.B,
+                    'i': None, ## size of input vector + z_t. Set dynamically.
+                     ## paper uses a value of n=1000
+                    'layers_units': (GLOBAL.n,)
+                    })
+                )
         )
     def __init__(self, initVals):
        ## "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
@@ -170,9 +175,11 @@ class CALSTMParams(dlc.HyperParams):
        ## " it will be equal to output_size of the previous CALSTM. That's why the value of m needs to be "
        ## "appropriately adjusted for upper CALSTM layers."
         assert initVals['m'] is not None
-        dlc.HyperParams.__init__(self, self.proto, initVals)
-        self._trickledown()
-    def _trickledown(self):
+#        proto = self.proto if GLOBALS is None else self.makeProto(GLOBALS)
+        GLOBALS = GlobalParams(initVals)
+        dlc.HyperParams.__init__(self, self.makeProto(GLOBALS), initVals)
+        self._trickledown(GLOBALS)
+    def _trickledown(self, GLOBAL):
         self.decoder_lstm.i = self.m+GLOBAL.D
     def __copy__(self):
         ## Shallow copy
@@ -182,84 +189,86 @@ class CALSTMParams(dlc.HyperParams):
         return self.__class__(self).updated(override_vals)
 
 class Im2LatexModelParams(dlc.HyperParams):
-    proto = GlobalParams.proto + (
-        PD('use_ctc_loss', 
-           "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
-           "ctc_loss will be logged.",
-           boolean,
-           False),
-    ### Embedding Layer ###
-        PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(), 
-           tf.contrib.layers.xavier_initializer()),
-    ### Decoder LSTM Params ###
-        PD('D_RNN',
-           'sequence of CALSTMParams, one for each AttentionLSTM layer in the stack. The paper '
-           "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
-           "that the published results are based on one layer alone.",
-           issequenceof(CALSTMParams)),
-    ### Output MLP
-        PD('output_follow_paper',
-           '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
-           'Setting this value to True (default) will follow the paper"s logic. Otherwise'
-           "a straight MLP will be used.", 
-           boolean, 
-           True),
-        PD('output_layers',
-           "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
-           "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
-           "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
-           instanceof(tfc.MLPParams),
-               tfc.MLPParams(GLOBAL).updated({
-                    ## One layer with num_units = m is added if output_follow_paper == True
-                    ## Last layer must have num_units = K because it outputs logits.
-                    ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-                    'layers_units': (GLOBAL.m, GLOBAL.K),
-                    'activation_fn': tf.nn.relu # paper has it set to relu
-                    }).freeze()
-            ),
-    ### Initializer MLP ###
-        PD('init_model', 
-           'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
-           "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
-           "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
-           instanceof(tfc.MLPParams),
-               tfc.MLPParams(GLOBAL).updated({
-                   'layers_units': (GLOBAL.D,), ## The paper's source sets all hidden units to D
-                   ## paper sets hidden activations=relu and final=tanh
-                   'activation_fn': tf.nn.relu
-                   }).freeze()
-           ),
-        PD('init_model_final_layers', '',
-           instanceof(tfc.FCLayerParams),
-               tfc.FCLayerParams(GLOBAL).updated({
-                   ## num_units to be set dynamically
-                   ## paper sets hidden activations=relu and final=tanh
-                   'activation_fn': tf.nn.tanh                       
-                   }).freeze()
-           ),
-#        PD('init_layers', 'Number of layers in the initializer MLP', xrange(1,10),1),
-    ### Loss / Cost Layer ###
-        PD('sum_logloss',
-           'Whether to normalize log-loss per sample as in standard log perplexity ' 
-           'calculation or whether to just sum up log-losses as in the paper. Defaults' 
-           'to True in conformance with the paper.',
-           boolean,
-           True
-          ),
-        PD('MeanSumAlphaEquals1',
-          '(boolean): When calculating the alpha penalty, the paper uses the term: '
-           'square{1 - sum_over_t{alpha_t_i}}). This assumes that the mean sum_over_t should be 1. '
-           "However, that's not true, since the mean of sum_over_t term should be C/L. This "
-           "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
-           "The default value is True in conformance with the paper.",
-          boolean,
-          True),
-        PD('pLambda', 'Lambda value for alpha penalty',
-           decimal(0),
-           0.0001)   
+
+    @staticmethod
+    def makeProto(GLOBAL=GlobalParams()):
+        return GlobalParams.proto + (
+            PD('use_ctc_loss', 
+               "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
+               "ctc_loss will be logged.",
+               boolean,
+               False),
+        ### Embedding Layer ###
+            PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(), 
+               tf.contrib.layers.xavier_initializer()),
+        ### Decoder LSTM Params ###
+            PD('D_RNN',
+               'sequence of CALSTMParams, one for each AttentionLSTM layer in the stack. The paper '
+               "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
+               "that the published results are based on one layer alone.",
+               issequenceof(CALSTMParams)),
+        ### Output MLP
+            PD('output_follow_paper',
+               '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
+               'Setting this value to True (default) will follow the paper"s logic. Otherwise'
+               "a straight MLP will be used.", 
+               boolean, 
+               True),
+            PD('output_layers',
+               "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
+               "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
+               "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
+               instanceof(tfc.MLPParams),
+                   tfc.MLPParams(GLOBAL).updated({
+                        ## One layer with num_units = m is added if output_follow_paper == True
+                        ## Last layer must have num_units = K because it outputs logits.
+                        ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
+                        'layers_units': (GLOBAL.m, GLOBAL.K),
+                        'activation_fn': tf.nn.relu # paper has it set to relu
+                        }).freeze()
+                ),
+        ### Initializer MLP ###
+            PD('init_model', 
+               'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
+               "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
+               "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
+               instanceof(tfc.MLPParams),
+                   tfc.MLPParams(GLOBAL).updated({
+                       'layers_units': (GLOBAL.D,), ## The paper's source sets all hidden units to D
+                       ## paper sets hidden activations=relu and final=tanh
+                       'activation_fn': tf.nn.relu
+                       }).freeze()
+               ),
+            PD('init_model_final_layers', '',
+               instanceof(tfc.FCLayerParams),
+                   tfc.FCLayerParams(GLOBAL).updated({
+                       ## num_units to be set dynamically
+                       ## paper sets hidden activations=relu and final=tanh
+                       'activation_fn': tf.nn.tanh                       
+                       }).freeze()
+               ),
+        ### Loss / Cost Layer ###
+            PD('sum_logloss',
+               'Whether to normalize log-loss per sample as in standard log perplexity ' 
+               'calculation or whether to just sum up log-losses as in the paper. Defaults' 
+               'to True in conformance with the paper.',
+               boolean,
+               True
+              ),
+            PD('MeanSumAlphaEquals1',
+              '(boolean): When calculating the alpha penalty, the paper uses the term: '
+               'square{1 - sum_over_t{alpha_t_i}}). This assumes that the mean sum_over_t should be 1. '
+               "However, that's not true, since the mean of sum_over_t term should be C/L. This "
+               "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
+               "The default value is True in conformance with the paper.",
+              boolean,
+              True),
+            PD('pLambda', 'Lambda value for alpha penalty',
+               decimal(0),
+               0.0001)   
         )
-    def __init__(self, initVals=None):
-        dlc.HyperParams.__init__(self, self.proto, initVals)
+    def __init__(self, initVals):
+        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
         self._trickledown()
     def _trickledown(self):
         pass
@@ -270,9 +279,12 @@ class Im2LatexModelParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-
-CALSTM_1 = CALSTMParams({'m':GLOBAL.m}).freeze()
-## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
-HYPER = Im2LatexModelParams()
-HYPER.D_RNN = (CALSTM_1,)
-HYPER.freeze()
+def make_hyper(GLOBALS):
+    GLOBALS = GlobalParams(GLOBALS).freeze()
+    CALSTM_1 = CALSTMParams(GLOBALS).freeze()
+    ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
+    HYPER = Im2LatexModelParams(GLOBALS).updated({'D_RNN':(CALSTM_1,)}).freeze()
+    
+    print 'Hyper Params = '
+    print HYPER
+    return HYPER

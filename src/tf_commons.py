@@ -249,8 +249,8 @@ class FCLayer(object):
         scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
         with tf.variable_scope(scope_name) as var_scope:
             layer_name = var_scope.name
-            coll_w = layer_name + '/' + params.tb.tb_weights
-            coll_b = layer_name + '/' + params.tb.tb_biases
+#            coll_w = layer_name + '/' + params.tb.tb_weights
+#            coll_b = layer_name + '/' + params.tb.tb_biases
             
             a = tf.contrib.layers.fully_connected(
                     inputs=inp,
@@ -261,8 +261,8 @@ class FCLayer(object):
                     weights_regularizer = params.weights_regularizer,
                     biases_initializer = params.biases_initializer,
                     biases_regularizer = params.biases_regularizer,
-                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
-                                             "biases":[coll_b]},
+#                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
+#                                             "biases":[coll_b]},
                     trainable = True
                     )
 
@@ -272,7 +272,7 @@ class FCLayer(object):
 
             # Tensorboard Summaries
             if params.tb is not None:
-                summarize_layer(layer_name, tf.get_collection(coll_w), tf.get_collection(coll_b), a)
+                summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
     
         return a
 

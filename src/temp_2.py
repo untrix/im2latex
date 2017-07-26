@@ -10,8 +10,9 @@ import tensorflow as tf
 import tf_commons as tfc
 import dl_commons as dlc
 from hyper_params import HYPER
-from Im2LatexModel_2 import Im2LatexModel, train
-from data_reader import BatchIterator
+from Im2LatexModel import Im2LatexModel
+from train import train
+from data_reader import BatchImageIterator
 from keras import backend as K
 from keras.applications.vgg16 import preprocess_input
 data_folder = '../data/generated2'
@@ -75,8 +76,8 @@ def visualize_rnn():
 
 
 def test3():
-    b_it = BatchIterator(raw_data_folder, image_folder, HYPER.B)
-    train(b_it, 40)
+    b_it = BatchImageIterator(raw_data_folder, image_folder, HYPER.B)
+    train(b_it, HYPER, 40)
     
 test3()
 ##test_rnn()
