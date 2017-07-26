@@ -35,7 +35,7 @@ import hyper_params
 from data_reader import BatchContextIterator, BatchImageIterator
 
 
-def train(batch_iterator, HYPER, num_steps=0):
+def train(batch_iterator, HYPER, num_steps=0, print_steps=10):
     graph = tf.Graph()
     with graph.as_default():
         model = Im2LatexModel(HYPER)
@@ -95,7 +95,7 @@ def train(batch_iterator, HYPER, num_steps=0):
                 session.run(train_ops.train, feed_dict=feed)
                 if (num_steps >= 0) and (b.step >= num_steps):
                     break
-                if b.step % 10 == 0:
+                if b.step % print_steps == 0:
                     print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
@@ -107,6 +107,9 @@ def main():
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
                         default=-1)
+    parser.add_argument("--print-steps", "-p", dest="print_steps", type=int,
+                        help="Number of training steps after which to log results. Defaults to 10 if unspecified", 
+                        default=10)
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to whatever is in hyper_params", 
                         default=HYPER.B)
@@ -142,6 +145,6 @@ def main():
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
     b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER)
-    train(b_it, HYPER, args.num_steps)
+    train(b_it, HYPER, args.num_steps, args.print_steps)
     
 main()
