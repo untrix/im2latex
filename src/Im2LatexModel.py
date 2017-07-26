@@ -65,7 +65,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, beamsearch_width=1, reuse=None):
+    def __init__(self, params, beamsearch_width=1):
         """
         Args:
             params (Im2LatexModelParams)
@@ -75,17 +75,28 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """
         self._params = self.C = Im2LatexModelParams(params)
         self.outer_scope = tf.get_variable_scope()
-        
+        with tf.variable_scope('Inputs'):
+            self._inp_q = tf.FIFOQueue(2, (self.C.int_type, self.C.int_type, self.C.dtype)) # ('y_s','seq_len','im')
+            inp = self._inp_q.dequeue()
+            self._y_s = inp[0]
+            self._seq_len = inp[1]
+            
         if self._params.build_image_context:
             ## Image features/context from the Conv-Net
-            self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+            ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+            self._im = inp[2]
             self._a = build_image_context(params, self._im)
         else:
-            self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+            ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+            self._a = inp[2]
 
+        self._a.set_shape((self.C.B, self.C.L, self.C.D))
+        self._y_s.set_shape((self.C.B, None))
+        self._seq_len.set_shape((self.C.B,))
+        
         ## RNN portion of the model
         with tf.variable_scope('Im2LatexRNN') as scope:
-            super(Im2LatexModel, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+            super(Im2LatexModel, self).__init__(_scope=scope, name=scope.name)
             self.rnn_scope = tf.get_variable_scope()
 
             ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
@@ -95,12 +106,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
 
             ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
-            self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=tf.int32, name='go')
+            self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=self.C.int_type, name='go')
 
             cells = []
             for i, rnn_params in enumerate(self.C.D_RNN, start=1):
                 with tf.variable_scope('%d'%i):
-                    cells.append(CALSTM(rnn_params, self._a, beamsearch_width, reuse))
+                    cells.append(CALSTM(rnn_params, self._a, beamsearch_width))
             self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(cells)
             self._num_calstm_layers = len(self.C.D_RNN)
 
@@ -229,10 +240,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         
         return self.ScanOut(yLogits_t, state_t)
     
-    def build_train_graph(self):
+    def build_train_graph_old(self):
         ## y_s is the batch of target word sequences
-        y_s_p = tf.placeholder(dtype=tf.int32, shape=(self.C.B, None), name='Y_s') # (B, T)
-        seq_lens = tf.placeholder(dtype=tf.int32, shape=(self.C.B,), name='seq_lens')
+        ## y_s_p = tf.placeholder(dtype=tf.int32, shape=(self.C.B, None), name='Y_s') # (B, T)
+        ## seq_lens = tf.placeholder(dtype=tf.int32, shape=(self.C.B,), name='seq_lens')
+        y_s_p = self._y_s
+        seq_lens = self._seq_len
         
         with tf.variable_scope(self.rnn_scope):
             ## tf.scan requires time-dimension to be the first dimension
@@ -263,6 +276,38 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 return train_ops.updated({'im':self._im})
             else:
                 return train_ops.updated({'im':self._a})
+                
+    def build_train_graph(self):
+        ## y_s is the batch of target word sequences
+        y_s_p = self._y_s # (B, T)
+        seq_lens = self._seq_len #(B,)
+        
+        with tf.variable_scope(self.rnn_scope):
+            ## tf.scan requires time-dimension to be the first dimension
+            y_s = K.permute_dimensions(y_s_p, (1, 0)) # (T, B)
+            
+            ################ Build x_s ################
+            ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
+            ## last token of y_s which is <eos> token (zero) will not appear in x_s
+            x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
+            
+            """ Build the training graph of the model """
+            accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
+                                 self.init_state())
+            out_s = tf.scan(self._scan_step_training, x_s, 
+                            initializer=accum, swap_memory=True)
+            ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
+            ## WARNING: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
+            yLogits_s = out_s.yLogits
+            alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_state], axis=0) # (N, T, B, L)
+            ## Switch the batch dimension back to first position - (B, T, ...)
+            ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
+            yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
+            alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
+            
+            train_ops = self._optimizer(yLogits, y_s_p, alpha, seq_lens).updated({'inp_q':self._inp_q})
+
+            return train_ops
                 
 
     def _optimizer(self, yLogits, y_s, alpha, sequence_lengths):
@@ -345,7 +390,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             
         # Optimizer
         with tf.variable_scope('Optimizer'):
-            global_step = tf.get_variable('global_step', dtype=tf.int32, trainable=False, initializer=0)
+            global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
             optimizer = tf.train.AdamOptimizer()
             train = optimizer.minimize(cost, global_step=global_step)
             ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step, 

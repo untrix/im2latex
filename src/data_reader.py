@@ -29,6 +29,7 @@ import dl_commons as dlc
 import threading
 import numpy as np
 from scipy import ndimage
+import tensorflow as tf
 from keras.applications.vgg16 import preprocess_input
 
 
@@ -117,7 +118,7 @@ class ShuffleIterator(object):
         self._batch_size = hyper.B
         self._batch_list = make_batch_list(self._df, self._batch_size, hyper.assert_whole_batch)
         self._next_pos = 0
-        self._num_items = (df_.shape[0] // self._batch_size)
+        self._num_items = len(self._batch_list)
         self._step = 0
         self._epoch = 1
         self.lock = threading.Lock()
@@ -151,7 +152,6 @@ class ShuffleIterator(object):
             epoch= self._epoch
             self._next_pos += 1
             self._step += 1
-            step = self._step
         
         batch = self._batch_list[next_pos]
         print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
@@ -161,7 +161,7 @@ class ShuffleIterator(object):
         return dlc.Properties({
                 'df_batch': df_bin.iloc[batch[1]*self._batch_size : (batch[1]+1)*self._batch_size],
                 'epoch': epoch,
-                'step': step,
+                'step': self._step,
                 'batch_idx': batch
                 })
 
@@ -203,6 +203,7 @@ class BatchContextIterator(ShuffleIterator):
                  image_feature_dir_,
                  hyper,
                  image_processor_=None):
+        self._hyper = hyper
         self._raw_data_dir = raw_data_dir_
         self._image_feature_dir = image_feature_dir_
         self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
@@ -216,14 +217,21 @@ class BatchContextIterator(ShuffleIterator):
         a_batch = [
             self._image_processor.get_array(row[0]) for row in df_batch.itertuples(index=False)
         ]
+        a_batch = np.asarray(a_batch)
         
         bin_len = df_batch.bin_len.iloc[0]
-        y_s = self._seq_data[bin_len].loc[df_batch.index].values
+        y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values, 
+                         dtype=self._hyper.int_type_np)
         return dlc.Properties({'im':a_batch, 
                                'y_s':y_s,
-                               'seq_len': df_batch.seq_len.values,
+                               'seq_len': np.asarray(df_batch.seq_len.values, dtype=self._hyper.int_type_np),
                                'image_name': df_batch.image.values,
                                'epoch': nxt.epoch,
                                'step': nxt.step
                                })
     
+    def get_pyfunc(self):
+        def func(x=None):
+            d = self.next()
+            return (d.y_s, d.seq_len, d.im)
+        return tf.py_func(func,[0],[tf.int32, tf.int32, self._hyper.dtype])

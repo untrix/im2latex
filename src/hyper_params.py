@@ -93,7 +93,7 @@ class GlobalParams(dlc.HyperParams):
            'Dropout parameters if any - global at the level of the RNN.',
            instanceofOrNone(tfc.DropoutParams)),
         PD('dtype',
-           'dtype for the entire model.',
+           'tensorflow_dtype for the entire model.',
            (tf.float32, tf.float64),
            tf.float32
            ),
@@ -101,6 +101,16 @@ class GlobalParams(dlc.HyperParams):
            'dtype for the entire model.',
            (np.float32, np.float64),
            np.float32
+           ),
+        PD('int_type',
+           'tensorflow int type for the entire model.',
+           (tf.int32, tf.int64),
+           tf.int32
+           ),
+        PD('int_type_np',
+           'inttype for the entire model.',
+           (np.int32, np.int64),
+           np.int32
            ),
         PD('weights_initializer', 
               'Tensorflow weights initializer function', 
@@ -290,6 +300,6 @@ def make_hyper(GLOBALS):
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
     HYPER = Im2LatexModelParams(GLOBALS).updated({'D_RNN':(CALSTM_1,)}).freeze()
     
-    print 'Hyper Params = '
-    print HYPER
+#    print 'Hyper Params = '
+#    print HYPER
     return HYPER

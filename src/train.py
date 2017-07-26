@@ -35,7 +35,7 @@ import hyper_params
 from data_reader import BatchContextIterator, BatchImageIterator
 
 
-def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
+def train_old(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
     graph = tf.Graph()
     with graph.as_default():
         model = Im2LatexModel(HYPER)
@@ -109,6 +109,86 @@ def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
                     print 'Elapsed time for %d steps = %f'%(b.step, time.time()-start_time)
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
+def num_steps_to_run(num_steps, num_epochs, epoch_size):
+    if num_epochs > 0:
+        num_epoch_steps = num_epochs * epoch_size
+    else:
+        num_epoch_steps = -1
+
+    if num_steps < 0:
+        num_steps = num_epoch_steps
+    elif num_epoch_steps >= 0 and (num_epoch_steps < num_steps):
+        num_steps = num_epoch_steps
+        
+    return num_steps
+                
+def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
+    graph = tf.Graph()
+    with graph.as_default():
+        model = Im2LatexModel(HYPER)
+        train_ops = model.build_train_graph()
+        enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
+        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
+        coord = tf.train.Coordinator()
+        
+        total_n = 0
+        total_vggnet = 0
+        total_init = 0
+        total_calstm = 0
+        total_output = 0
+        total_embedding = 0
+        
+        print 'Trainable Variables'
+        for var in tf.trainable_variables():
+            n = tfc.sizeofVar(var)
+            total_n += n
+            if var.name.startswith('VGGNet/'):
+                total_vggnet += n
+            elif 'CALSTM' in var.name:
+                total_calstm += n
+            elif var.name.startswith('Im2LatexRNN/Output_Layer/'):
+                total_output += n
+            elif var.name.startswith('Initializer_MLP/'):
+                total_init += n
+            elif var.name.startswith('Im2LatexRNN/Ey/Embedding_Matrix'):
+                total_embedding += n
+            else:
+                assert False
+            print var.name, K.int_shape(var), 'num_params = ', n
+            
+        print '\nTotal number of trainable params = ', total_n
+        print 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n)
+        print 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n)
+        print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
+        print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
+        print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
+
+#        print '\nTrainable Variables Initializers'
+#        for var in tf.trainable_variables():
+#            print var.initial_value
+            
+        config=tf.ConfigProto(log_device_placement=True)
+        config.gpu_options.allow_growth = True
+
+        with tf.Session(config=config) as session:
+            print 'Flushing graph to disk'
+            tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
+            tf_sw.flush()
+            tf.global_variables_initializer().run()
+            
+            num_steps = num_steps_to_run(num_steps, num_epochs, batch_iterator.epoch_size)
+            enqueue_threads = qr.create_threads(session, coord=coord, start=True)
+            start_time = time.time()
+            for step in xrange(1,num_steps+1):
+                ## session.run([enqueue_op])
+                session.run(train_ops.train)
+                if step % print_steps == 0:
+                    print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+            print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+            
+            coord.request_stop()
+            coord.join(enqueue_threads)
+            
 def main():
     _data_folder = '../data/generated2'
 
@@ -117,8 +197,8 @@ def main():
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
                         default=-1)
     parser.add_argument("--num-epochs", "-e", dest="num_epochs", type=int,
-                        help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
-                        default=-1)
+                        help="Number of training steps to run. Defaults to 10 if unspecified.", 
+                        default=10)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 10 if unspecified", 
                         default=10)
