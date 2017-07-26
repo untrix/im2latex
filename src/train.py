@@ -100,25 +100,46 @@ def train(batch_iterator, HYPER, num_steps=0):
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
 def main():
-    data_folder = '../data/generated2'
+    _data_folder = '../data/generated2/training'
     HYPER = hyper_params.make_hyper({'B':1, 'build_image_context':False})
 
     parser = arg.ArgumentParser(description='train model')
-    parser.add_argument("--num_steps", "-n", dest="num_steps", type=int,
+    parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
                         default=-1)
-    parser.add_argument("--batch_size", "-b", dest="batch_size", type=int,
+    parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to whatever is in hyper_params", 
                         default=HYPER.B)
-    parser.add_argument("--data_folder", "-d", dest="data_folder", type=str,
-                        help="Data folder. If unspecified, defaults " + data_folder, 
-                        default=data_folder)
+    parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
+                        help="Data folder. If unspecified, defaults to " + _data_folder, 
+                        default=_data_folder)
+    parser.add_argument("--raw-data-folder", dest="raw_data_folder", type=str,
+                        help="Raw data folder. If unspecified, defaults to data_folder/training", 
+                        default=None)
+    parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
+                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features", 
+                        default=None)
+    parser.add_argument("--image-folder", dest="image_folder", type=str,
+                        help="image folder. If unspecified, defaults to data_folder/formula_images", 
+                        default=None)
+    
     
     args = parser.parse_args()
-    image_folder = os.path.join(data_folder,'formula_images')
-#    raw_data_folder = os.path.join(data_folder, 'training')
-    raw_data_folder = os.path.join(data_folder, 'training', 'temp_dir')
-    vgg16_folder = os.path.join(data_folder, 'training', 'vgg16_features')
+    data_folder = args.data_folder
+    if args.image_folder:
+        image_folder = args.image_folder
+    else:
+        image_folder = os.path.join(data_folder,'formula_images')
+        
+    if args.raw_data_folder:
+        raw_data_folder = args.raw_data_folder
+    else:
+        raw_data_folder = os.path.join(data_folder, 'training')
+    
+    if args.vgg16_folder:
+        vgg16_folder = args.vgg16_folder
+    else:
+        vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
     b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER)
     train(b_it, HYPER, args.num_steps)
