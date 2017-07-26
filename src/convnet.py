@@ -33,7 +33,7 @@ from data_reader import BatchIterator, ImageProcessor, ImagenetProcessor
 from hyper_params import HYPER as HYPER_
 import tf_commons as tfc
 
-HYPER = HYPER_.copy({'B':128})
+HYPER = HYPER_.copy({'B':64})
 data_folder = '../data/generated2'
 image_folder = os.path.join(data_folder,'formula_images')
 raw_data_folder = os.path.join(data_folder, 'training')

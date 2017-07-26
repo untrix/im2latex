@@ -93,7 +93,7 @@ class VGGProcessor(object):
         pkl_file = os.path.join(self._vgg_dir, os.path.splitext(image_file_)[0] + '.pkl')
         return pd.read_pickle(pkl_file)
         
-def make_batch_list(df_, batch_size_, assert_divisible_batchsize=True):
+def make_batch_list(df_, batch_size_, assert_whole_batch=True):
     ## Make a list of batches
     bin_lens = sorted(df_.bin_len.unique())
     bin_counts = [df_[df_.bin_len==l].shape[0] for l in bin_lens]
@@ -104,7 +104,7 @@ def make_batch_list(df_, batch_size_, assert_divisible_batchsize=True):
         ## Just making sure bin size is integral multiple of batch_size.
         ## This is not a requirement for this function to operate, rather
         ## is a way of possibly catching data-corrupting bugs
-        if assert_divisible_batchsize:
+        if assert_whole_batch:
             assert (bin_counts[i] % batch_size_) == 0
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
@@ -115,7 +115,7 @@ class ShuffleIterator(object):
     def __init__(self, df_, hyper):
         self._df = df_.sample(frac=1)
         self._batch_size = hyper.B
-        self._batch_list = make_batch_list(self._df, self._batch_size)
+        self._batch_list = make_batch_list(self._df, self._batch_size, hyper.assert_whole_batch)
         self._next_pos = 0
         self._num_items = (df_.shape[0] // self._batch_size)
         self._step = 0
@@ -127,7 +127,14 @@ class ShuffleIterator(object):
         
     def __iter__(self):
         return self
-    
+
+    @property
+    def batch_size(self):
+        return self._batch_size
+    @property
+    def epoch_size(self):
+        return self._num_items
+
     def next(self):
         ## This is an infinite iterator
         with self.lock:
@@ -136,7 +143,7 @@ class ShuffleIterator(object):
                 self._df = self._df.sample(frac=1)
                 ## Reshuffle the bin-batch list
                 np.random.shuffle(self._batch_list)
-                ## self._batch_list = make_batch_list(self._df, batch_size_)
+                ## self._batch_list = make_batch_list(self._df, batch_size_, hyper.assert_whole_batch)
                 self._next_pos = 0
                 print 'ShuffleIterator finished epoch %d'%self._epoch
                 self._epoch += 1

@@ -35,7 +35,7 @@ import hyper_params
 from data_reader import BatchContextIterator, BatchImageIterator
 
 
-def train(batch_iterator, HYPER, num_steps=0, print_steps=10):
+def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
     graph = tf.Graph()
     with graph.as_default():
         model = Im2LatexModel(HYPER)
@@ -88,31 +88,43 @@ def train(batch_iterator, HYPER, num_steps=0, print_steps=10):
         
             if batch_iterator is None or num_steps == 0:
                 return
+            
+            if num_epochs > 0:
+                num_epoch_steps = num_epochs * batch_iterator.epoch_size
+            else:
+                num_epoch_steps = -1
 
-            start_time = time.clock()
+            if num_steps < 0:
+                num_steps = num_epoch_steps
+            elif num_epoch_steps >= 0 and (num_epoch_steps < num_steps):
+                num_steps = num_epoch_steps
+
+            start_time = time.time()
             for b in batch_iterator:
                 feed = {train_ops.y_s: b.y_s, train_ops.seq_lens: b.seq_len, train_ops.im: b.im}
                 session.run(train_ops.train, feed_dict=feed)
                 if (num_steps >= 0) and (b.step >= num_steps):
                     break
                 if b.step % print_steps == 0:
-                    print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
+                    print 'Elapsed time for %d steps = %f'%(b.step, time.time()-start_time)
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
 def main():
-    _data_folder = '../data/generated2/training'
-    HYPER = hyper_params.make_hyper({'B':1, 'build_image_context':False})
+    _data_folder = '../data/generated2'
 
     parser = arg.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
                         default=-1)
-    parser.add_argument("--print-steps", "-p", dest="print_steps", type=int,
+    parser.add_argument("--num-epochs", "-e", dest="num_epochs", type=int,
+                        help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion", 
+                        default=-1)
+    parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 10 if unspecified", 
                         default=10)
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
-                        help="Batchsize. If unspecified, defaults to whatever is in hyper_params", 
-                        default=HYPER.B)
+                        help="Batchsize. If unspecified, defaults to the default value in hyper_params",
+                        default=None)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder, 
                         default=_data_folder)
@@ -125,6 +137,8 @@ def main():
     parser.add_argument("--image-folder", dest="image_folder", type=str,
                         help="image folder. If unspecified, defaults to data_folder/formula_images", 
                         default=None)
+    parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
+                        help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
     
     
     args = parser.parse_args()
@@ -144,7 +158,14 @@ def main():
     else:
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
+    hyperVals = {'build_image_context':False}
+    if args.batch_size is not None:
+        hyperVals['B'] = args.batch_size
+    if args.partial_batch:
+        hyperVals['assert_whole_batch'] = False
+
+    HYPER = hyper_params.make_hyper(hyperVals)
     b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER)
-    train(b_it, HYPER, args.num_steps, args.print_steps)
+    train(b_it, HYPER, args.num_steps, args.print_steps, args.num_epochs)
     
 main()

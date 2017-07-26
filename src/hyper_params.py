@@ -36,10 +36,6 @@ from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, isse
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
-        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
-           boolean,
-           False
-           ),
         PD('image_shape',
            'Shape of input images. Should be a python sequence.',
            None,
@@ -126,6 +122,15 @@ class GlobalParams(dlc.HyperParams):
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
               iscallableOrNone(), 
               None),
+        #### Training Parameters ####
+        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
+           boolean,
+           False
+           ),
+        PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
+           'of the bin-size',
+           boolean,
+           True)
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
