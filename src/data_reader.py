@@ -113,7 +113,7 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
     return batch_list
 
 class ShuffleIterator(object):
-    def __init__(self, df_, hyper):
+    def __init__(self, df_, hyper, num_steps, num_epochs):
         self._df = df_.sample(frac=1)
         self._batch_size = hyper.B
         self._batch_list = make_batch_list(self._df, self._batch_size, hyper.assert_whole_batch)
@@ -121,20 +121,44 @@ class ShuffleIterator(object):
         self._num_items = len(self._batch_list)
         self._step = 0
         self._epoch = 1
+        self._max_steps = self.num_steps_to_run(num_steps, num_epochs, self._num_items)
         self.lock = threading.Lock()
         
         print 'ShuffleIterator initialized with batch_size = %d, steps-per-epoch = %d'%(self._batch_size, 
                                                                                         self._num_items)
-        
     def __iter__(self):
         return self
-
     @property
     def batch_size(self):
         return self._batch_size
     @property
     def epoch_size(self):
         return self._num_items
+    @property
+    def steps_completed(self):
+        return self._step
+    @property
+    def max_steps(self):
+        return self._max_steps
+    @staticmethod
+    def num_steps_to_run(num_steps, num_epochs, epoch_size):
+        """
+        Calculates num_steps to run, based on num_steps and num_epoch arguments.
+        A negative value for either num_steps or num_epochs implies infinity.
+        num_epochs will be converted into steps and the smaller of num_steps and num_epoch_steps
+        will be returned.
+        """
+        if num_epochs > 0:
+            num_epoch_steps = num_epochs * epoch_size
+        else:
+            num_epoch_steps = -1
+    
+        if num_steps < 0:
+            num_steps = num_epoch_steps
+        elif num_epoch_steps >= 0 and (num_epoch_steps < num_steps):
+            num_steps = num_epoch_steps
+            
+        return num_steps
 
     def next(self):
         ## This is an infinite iterator
@@ -202,6 +226,8 @@ class BatchContextIterator(ShuffleIterator):
                  raw_data_dir_,
                  image_feature_dir_,
                  hyper,
+                 num_steps=-1,
+                 num_epochs=-1,
                  image_processor_=None):
         self._hyper = hyper
         self._raw_data_dir = raw_data_dir_
@@ -209,9 +235,12 @@ class BatchContextIterator(ShuffleIterator):
         self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-        ShuffleIterator.__init__(self, df, hyper)
+        ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
     def next(self):
+        if self.steps_completed >= self.max_steps:
+            raise StopIteration('Max steps executed (%d)'%self.steps_completed)
+
         nxt = ShuffleIterator.next(self)
         df_batch = nxt.df_batch[['image', 'bin_len', 'seq_len']]
         a_batch = [

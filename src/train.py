@@ -109,18 +109,6 @@ def train_old(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
                     print 'Elapsed time for %d steps = %f'%(b.step, time.time()-start_time)
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
-def num_steps_to_run(num_steps, num_epochs, epoch_size):
-    if num_epochs > 0:
-        num_epoch_steps = num_epochs * epoch_size
-    else:
-        num_epoch_steps = -1
-
-    if num_steps < 0:
-        num_steps = num_epoch_steps
-    elif num_epoch_steps >= 0 and (num_epoch_steps < num_steps):
-        num_steps = num_epoch_steps
-        
-    return num_steps
                 
 def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
     graph = tf.Graph()
@@ -176,18 +164,26 @@ def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
             tf_sw.flush()
             tf.global_variables_initializer().run()
             
-            num_steps = num_steps_to_run(num_steps, num_epochs, batch_iterator.epoch_size)
+#            num_steps = num_steps_to_run(num_steps, num_epochs, batch_iterator.epoch_size)
             enqueue_threads = qr.create_threads(session, coord=coord, start=True)
-            start_time = time.time()
-            for step in xrange(1,num_steps+1):
-                ## session.run([enqueue_op])
-                session.run(train_ops.train)
-                if step % print_steps == 0:
-                    print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
-            print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
             
-            coord.request_stop()
-            coord.join(enqueue_threads)
+            start_time = time.time()
+#            for step in xrange(1,num_steps+1):
+            step = 0
+            try:
+                while not coord.should_stop():
+                    session.run(train_ops.train)
+                    step += 1
+                    if step % print_steps == 0:
+                        print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+            except tf.errors.OutOfRangeError:
+                print('Done training -- epoch limit reached')
+            except Exception as e:
+                coord.request_stop(e)
+            finally:
+                print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+                coord.request_stop()
+                coord.join(enqueue_threads)
             
 def main():
     _data_folder = '../data/generated2'
@@ -219,6 +215,9 @@ def main():
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
                         help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
+    parser.add_argument("--queue-capacity", "-q", dest="queue_capacity", type=int,
+                        help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.", 
+                        default=None)
     
     
     args = parser.parse_args()
@@ -243,9 +242,12 @@ def main():
         hyperVals['B'] = args.batch_size
     if args.partial_batch:
         hyperVals['assert_whole_batch'] = False
+    if args.queue_capacity is not None:
+        hyperVals['input_queue_capacity'] = args.queue_capacity
 
     HYPER = hyper_params.make_hyper(hyperVals)
-    b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER)
+    b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER,
+                                args.num_steps, args.num_epochs)
     train(b_it, HYPER, args.num_steps, args.print_steps, args.num_epochs)
     
 main()

@@ -140,7 +140,10 @@ class GlobalParams(dlc.HyperParams):
         PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
            'of the bin-size',
            boolean,
-           True)
+           True),
+        PD('input_queue_capacity', 'Capacity of input queue.',
+           integer(),
+           5)
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)

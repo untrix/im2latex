@@ -76,7 +76,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         self._params = self.C = Im2LatexModelParams(params)
         self.outer_scope = tf.get_variable_scope()
         with tf.variable_scope('Inputs'):
-            self._inp_q = tf.FIFOQueue(2, (self.C.int_type, self.C.int_type, self.C.dtype)) # ('y_s','seq_len','im')
+            self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity, (self.C.int_type, self.C.int_type, self.C.dtype)) # ('y_s','seq_len','im')
             inp = self._inp_q.dequeue()
             self._y_s = inp[0]
             self._seq_len = inp[1]
