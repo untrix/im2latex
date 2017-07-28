@@ -33,6 +33,7 @@ from Im2LatexModel import Im2LatexModel
 from keras import backend as K
 import hyper_params
 from data_reader import BatchContextIterator, BatchImageIterator
+import dl_commons as dlc
 
 
 def train_old(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
@@ -110,14 +111,32 @@ def train_old(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
             print 'Elapsed time for %d steps = %f'%(b.step, time.clock()-start_time)
 
                 
-def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
+def train(num_steps, print_steps, num_epochs,
+          raw_data_folder=None,
+          vgg16_folder=None,
+          globalParams=None,
+          keep_prob=0.9):
+    """
+    Start training the model. All kwargs with default values==None must be supplied.
+    """
     graph = tf.Graph()
     with graph.as_default():
-        model = Im2LatexModel(HYPER)
+        globalParams.update({'build_image_context':False,
+                             'dropout':tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32, name="KeepProb")})
+                            })
+        hyper = hyper_params.make_hyper(globalParams)
+        batch_iterator = BatchContextIterator(raw_data_folder,
+                                              vgg16_folder, 
+                                              hyper,
+                                              num_steps, 
+                                              num_epochs)
+
+        model = Im2LatexModel(hyper)
         train_ops = model.build_train_graph()
-        enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
-        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
-        coord = tf.train.Coordinator()
+        with tf.variable_scope('Inputs'):
+            enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
+            qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
+            coord = tf.train.Coordinator()
         
         total_n = 0
         total_vggnet = 0
@@ -150,29 +169,24 @@ def train(batch_iterator, HYPER, num_steps, print_steps, num_epochs):
         print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
         print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
         print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
-
-#        print '\nTrainable Variables Initializers'
-#        for var in tf.trainable_variables():
-#            print var.initial_value
             
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as session:
             print 'Flushing graph to disk'
-            tf_sw = tf.summary.FileWriter(tfc.makeTBDir(HYPER.tb), graph=graph)
+            tf_sw = tf.summary.FileWriter(tfc.makeTBDir(hyper.tb), graph=graph)
             tf_sw.flush()
             tf.global_variables_initializer().run()
             
-#            num_steps = num_steps_to_run(num_steps, num_epochs, batch_iterator.epoch_size)
             enqueue_threads = qr.create_threads(session, coord=coord, start=True)
             
             start_time = time.time()
-#            for step in xrange(1,num_steps+1):
             step = 0
             try:
                 while not coord.should_stop():
-                    session.run(train_ops.train)
+                    feed_dict={hyper.dropout.keep_prob: keep_prob}
+                    session.run(train_ops.train, feed_dict=feed_dict)
                     step += 1
                     if step % print_steps == 0:
                         print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
@@ -195,12 +209,12 @@ def main():
     parser.add_argument("--num-epochs", "-e", dest="num_epochs", type=int,
                         help="Number of training steps to run. Defaults to 10 if unspecified.", 
                         default=10)
-    parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
-                        help="Number of training steps after which to log results. Defaults to 10 if unspecified", 
-                        default=10)
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
+    parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
+                        help="Number of training steps after which to log results. Defaults to 10 if unspecified", 
+                        default=10)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder, 
                         default=_data_folder)
@@ -219,7 +233,6 @@ def main():
                         help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.", 
                         default=None)
     
-    
     args = parser.parse_args()
     data_folder = args.data_folder
     if args.image_folder:
@@ -237,17 +250,17 @@ def main():
     else:
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
-    hyperVals = {'build_image_context':False}
+    globalParams = dlc.Properties()
     if args.batch_size is not None:
-        hyperVals['B'] = args.batch_size
+        globalParams.B = args.batch_size
     if args.partial_batch:
-        hyperVals['assert_whole_batch'] = False
+        globalParams.assert_whole_batch = False
     if args.queue_capacity is not None:
-        hyperVals['input_queue_capacity'] = args.queue_capacity
+        globalParams.input_queue_capacity = args.queue_capacity
 
-    HYPER = hyper_params.make_hyper(hyperVals)
-    b_it = BatchContextIterator(raw_data_folder, vgg16_folder, HYPER,
-                                args.num_steps, args.num_epochs)
-    train(b_it, HYPER, args.num_steps, args.print_steps, args.num_epochs)
+    train(args.num_steps, args.print_steps, args.num_epochs,
+          raw_data_folder=raw_data_folder,
+          vgg16_folder=vgg16_folder,
+          globalParams=globalParams)
     
 main()

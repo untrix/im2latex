@@ -90,8 +90,10 @@ class GlobalParams(dlc.HyperParams):
            tfc.TensorboardParams()
            ),
         PD('dropout', 
-           'Dropout parameters if any - global at the level of the RNN.',
-           instanceofOrNone(tfc.DropoutParams)),
+           'Dropout parameters if any - global at the level of the RNN. Absence of this property '
+           'signals no dropouts.',
+           instanceofOrNone(tfc.DropoutParams)
+           ),
         PD('dtype',
            'tensorflow_dtype for the entire model.',
            (tf.float32, tf.float64),
@@ -215,7 +217,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
                "ctc_loss will be logged.",
                boolean,
-               False),
+               True),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(), 
                tf.contrib.layers.xavier_initializer()),
@@ -297,8 +299,8 @@ class Im2LatexModelParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-def make_hyper(GLOBALS):
-    GLOBALS = GlobalParams(GLOBALS).freeze()
+def make_hyper(globalOverrides):
+    GLOBALS = GlobalParams(globalOverrides).freeze()
     CALSTM_1 = CALSTMParams(GLOBALS).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
     HYPER = Im2LatexModelParams(GLOBALS).updated({'D_RNN':(CALSTM_1,)}).freeze()

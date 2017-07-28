@@ -379,8 +379,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             y_idx =    tf.where(tf.not_equal(y_s, 0))
             y_vals =   tf.gather_nd(y_s, y_idx)
             y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_s, out_type=tf.int64))
-            ctc_loss = tf.nn.ctc_loss(y_sparse, yLogits, sequence_lengths,
-                           ctc_merge_repeated=False, time_major=False)           
+            ctc_loss = tf.nn.ctc_loss(y_sparse, 
+                                      yLogits, 
+                                      sequence_lengths,
+                                      ctc_merge_repeated=False,
+                                      ignore_longer_outputs_than_inputs=False,
+                                      time_major=False)           
             tf.summary.scalar("Loss/CTC", ctc_loss)
 
         if self.C.use_ctc_loss:

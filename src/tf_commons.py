@@ -94,13 +94,11 @@ class DropoutParams(HyperParams):
     proto = (
         PD('keep_prob',     
               'Probability of keeping an output (i.e. not dropping it).',
-              decimal(0.1,1.),
-              0.9
+              instanceof(tf.Tensor)
               ),
         PD('seed',
               'Integer seed for the random number generator',
-              integerOrNone(),
-              None
+              integerOrNone()
               )
         )
     def __init__(self, initVals=None):
@@ -266,8 +264,7 @@ class FCLayer(object):
                     trainable = True
                     )
 
-            dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
-            if dropout:
+            if self._params.dropout is not None:
                 a = DropoutLayer(self._params.dropout)(a)
 
             # Tensorboard Summaries
@@ -528,7 +525,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                                            forget_bias=params.forget_bias, 
                                            use_peephole=params.use_peephole
                                            )
-        if params.dropout is not None and params.dropout.keep_prob < 1.:
+        if params.dropout is not None:
             with tf.variable_scope('DropoutWrapper'):
                 cell = tf.nn.rnn_cell.DropoutWrapper(cell,
                                               input_keep_prob=1.,
