@@ -22,8 +22,9 @@ Created on Mon Jul 17 19:58:00 2017
 
 @author: Sumeet S Singh
 """
-import pandas as pd
 import os
+import collections
+import pandas as pd
 from six.moves import cPickle as pickle
 import dl_commons as dlc
 import threading
@@ -221,6 +222,7 @@ class BatchImageIterator(ShuffleIterator):
                                'step': nxt.step
                                })
 
+InpTup = collections.namedtuple('InpTup', ('y_s', 'seq_len', 'y_ctc', 'ctc_len', 'im'))
 class BatchContextIterator(ShuffleIterator):
     def __init__(self, 
                  raw_data_dir_,
@@ -234,6 +236,7 @@ class BatchContextIterator(ShuffleIterator):
         self._image_feature_dir = image_feature_dir_
         self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
+        self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_sq_train.pkl'))
         df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
@@ -242,18 +245,25 @@ class BatchContextIterator(ShuffleIterator):
             raise StopIteration('Max steps executed (%d)'%self.steps_completed)
 
         nxt = ShuffleIterator.next(self)
-        df_batch = nxt.df_batch[['image', 'bin_len', 'seq_len']]
+        df_batch = nxt.df_batch[['image', 'bin_len', 'seq_len', 'squashed_len']]
         a_batch = [
             self._image_processor.get_array(row[0]) for row in df_batch.itertuples(index=False)
         ]
         a_batch = np.asarray(a_batch)
         
         bin_len = df_batch.bin_len.iloc[0]
-        y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values, 
-                         dtype=self._hyper.int_type_np)
+        ##y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values, 
+        ##                 dtype=self._hyper.int_type_np)
+        y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values, 
+                           dtype=self._hyper.int_type_np)
+        ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
         return dlc.Properties({'im':a_batch, 
-                               'y_s':y_s,
-                               'seq_len': np.asarray(df_batch.seq_len.values, dtype=self._hyper.int_type_np),
+                               ##'y_s':y_s,
+                               ##'seq_len': np.asarray(df_batch.seq_len.values, dtype=self._hyper.int_type_np),
+                               'y_s':y_ctc,
+                               'seq_len': ctc_len,
+                               'y_ctc':y_ctc,
+                               'ctc_len': ctc_len,
                                'image_name': df_batch.image.values,
                                'epoch': nxt.epoch,
                                'step': nxt.step
@@ -262,5 +272,8 @@ class BatchContextIterator(ShuffleIterator):
     def get_pyfunc(self):
         def func(x=None):
             d = self.next()
-            return (d.y_s, d.seq_len, d.im)
-        return tf.py_func(func,[0],[tf.int32, tf.int32, self._hyper.dtype])
+            return InpTup(d.y_s, d.seq_len, d.y_ctc, d.ctc_len, d.im)
+        
+        int_type = self._hyper.int_type
+        return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
+    

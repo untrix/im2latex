@@ -265,12 +265,15 @@ class FCLayer(object):
                     )
 
             if self._params.dropout is not None:
-                a = DropoutLayer(self._params.dropout)(a)
+                a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
 
             # Tensorboard Summaries
             if params.tb is not None:
                 summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
-    
+        
+        if (self._batch_input_shape):
+            a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+            
         return a
 
 class DropoutLayer(object):

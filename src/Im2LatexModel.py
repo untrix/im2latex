@@ -26,7 +26,6 @@ Tested on python 2.7
 
 import collections
 import itertools
-import time
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
@@ -34,6 +33,7 @@ from keras.applications.vgg16 import VGG16
 from keras import backend as K
 from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
+from data_reader import InpTup
 
 def build_image_context(params, image_batch):
     ## Conv-net
@@ -65,7 +65,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, beamsearch_width=1):
+    def __init__(self, params, beamsearch_width=1, reuse=None):
         """
         Args:
             params (Im2LatexModelParams)
@@ -74,53 +74,61 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             reuse: Passed into the _reuse Tells the underlying RNNs whether or not to reuse the scope.
         """
         self._params = self.C = Im2LatexModelParams(params)
-        self.outer_scope = tf.get_variable_scope()
-        with tf.variable_scope('Inputs'):
-            self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity, (self.C.int_type, self.C.int_type, self.C.dtype)) # ('y_s','seq_len','im')
-            inp = self._inp_q.dequeue()
-            self._y_s = inp[0]
-            self._seq_len = inp[1]
+        with tf.variable_scope('Im2LatexStack', reuse=reuse) as outer_scope:
+            self.outer_scope = outer_scope
+            with tf.variable_scope('Inputs') as scope:
+                self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity,
+                                           (self.C.int_type, self.C.int_type,
+                                            self.C.int_type, self.C.int_type,
+                                            self.C.dtype))
+                inp_tup = InpTup(*self._inp_q.dequeue())
+                self._y_s = inp_tup.y_s
+                self._seq_len = inp_tup.seq_len
+                self._y_ctc = inp_tup.y_ctc
+                self._ctc_len = inp_tup.ctc_len
             
-        if self._params.build_image_context:
-            ## Image features/context from the Conv-Net
-            ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-            self._im = inp[2]
-            self._a = build_image_context(params, self._im)
-        else:
-            ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
-            self._a = inp[2]
-
-        self._a.set_shape((self.C.B, self.C.L, self.C.D))
-        self._y_s.set_shape((self.C.B, None))
-        self._seq_len.set_shape((self.C.B,))
-        
-        ## RNN portion of the model
-        with tf.variable_scope('Im2LatexRNN') as scope:
-            super(Im2LatexModel, self).__init__(_scope=scope, name=scope.name)
-            self.rnn_scope = tf.get_variable_scope()
-
-            ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
-            ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
-            ## phase.
-            self._beamsearch_width = beamsearch_width
-
-
-            ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
-            self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=self.C.int_type, name='go')
-
-            cells = []
-            for i, rnn_params in enumerate(self.C.D_RNN, start=1):
-                with tf.variable_scope('%d'%i):
-                    cells.append(CALSTM(rnn_params, self._a, beamsearch_width))
-            self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(cells)
-            self._num_calstm_layers = len(self.C.D_RNN)
-
-            with tf.variable_scope('Ey'):
-                self._embedding_matrix = tf.get_variable('Embedding_Matrix', 
-                                                         (self.C.K, self.C.m),
-                                                         initializer=self.C.embeddings_initializer,
-                                                         trainable=True)
-
+                if self._params.build_image_context:
+                    ## Image features/context from the Conv-Net
+                    ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+                    self._im = inp_tup.im
+                    self._a = build_image_context(params, self._im)
+                else:
+                    ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+                    self._a = inp_tup.im
+    
+            ## Fix tensor shapes
+            self._a.set_shape((self.C.B, self.C.L, self.C.D))
+            self._y_s.set_shape((self.C.B, None))
+            self._seq_len.set_shape((self.C.B,))
+            self._y_ctc.set_shape((self.C.B, None))
+            self._ctc_len.set_shape((self.C.B,))
+            
+            ## RNN portion of the model
+            with tf.variable_scope('Im2LatexRNN') as scope:
+                super(Im2LatexModel, self).__init__(_scope=scope, name=scope.name)
+                self.rnn_scope = scope
+    
+                ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
+                ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
+                ## phase.
+                self._beamsearch_width = beamsearch_width
+    
+    
+                ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
+                self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=self.C.int_type, name='go')
+    
+                cells = []
+                for i, rnn_params in enumerate(self.C.D_RNN, start=1):
+                    with tf.variable_scope('%d'%i):
+                        cells.append(CALSTM(rnn_params, self._a, beamsearch_width))
+                self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(cells)
+                self._num_calstm_layers = len(self.C.D_RNN)
+    
+                with tf.variable_scope('Ey'):
+                    self._embedding_matrix = tf.get_variable('Embedding_Matrix', 
+                                                             (self.C.K, self.C.m),
+                                                             initializer=self.C.embeddings_initializer,
+                                                             trainable=True)
 
     @property
     def BeamWidth(self):
@@ -135,7 +143,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope('Output_Layer'):
             ## Renaming HyperParams for convenience
             CONF = self.C
-            B = self.C.B*self.BeamWidth
+            B = self.RuntimeBatchSize
             D = self.C.D
             m = self.C.m
             Kv =self.C.K
@@ -167,41 +175,57 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             
             return tf.nn.softmax(logits_t), logits_t
 
+    @property
+    def output_size(self):
+        return self.C.K
+
+    @property
+    def state_size(self):
+        return Im2LatexState(self._CALSTM_stack.state_size, self.C.K)
+    
     def zero_state(self, batch_size, dtype):
         return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
                              tf.zeros((batch_size, self.C.K), dtype=dtype, name='yProbs'))
     
-    def init_state(self):
+    def init_state(self, reuse=None):
         
         ################ Initializer MLP ################
-        with tf.variable_scope(self.outer_scope):
-            with tf.variable_scope('Initializer_MLP'):
+        with tf.variable_scope(self.outer_scope, reuse=reuse):
+            with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
+                with tf.variable_scope('Initializer_MLP'):
+        
+                    ## Broadcast im_context to BeamWidth
+                    if self.BeamWidth > 1:
+                        a = K.tile(self._a, (self.BeamWidth,1,1))
+                    else:
+                        a = self._a
+                    ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
+                    ## one additional output layer for each of the h and c LSTM states. So if you had
+                    ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
+                    ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model'
+                    a = K.mean(a, axis=1) # final shape = (B, D)
+                    a = tfc.MLPStack(self.C.init_model)(a)
     
-                ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
-                ## one additional output layer for each of the h and c LSTM states. So if you had
-                ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
-                ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model'
-                a = K.mean(self._a, axis=1) # final shape = (B, D)
-                a = tfc.MLPStack(self.C.init_model)(a)
-
-                counter = itertools.count(0)
-                def zero_to_init_state(zs, counter):
-                    assert isinstance(zs, Im2LatexState)
-                    cs = zs.calstm_state
-                    assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
-                    lst = []
-                    for i in xrange(len(cs)):
-                        assert isinstance(cs[i], CALSTMState)
-                        lst.append(CALSTM.zero_to_init_state(cs[i], counter, 
-                                                             self.C.init_model_final_layers, a))
-                    
-                    cs = tuple(lst)
+                    counter = itertools.count(0)
+                    def zero_to_init_state(zs, counter):
+                        assert isinstance(zs, Im2LatexState)
+                        cs = zs.calstm_state
+                        assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
+                        lst = []
+                        for i in xrange(len(cs)):
+                            assert isinstance(cs[i], CALSTMState)
+                            lst.append(CALSTM.zero_to_init_state(cs[i], 
+                                                                 counter, 
+                                                                 self.C.init_model_final_layers, 
+                                                                 a))
                         
-                    return zs._replace(calstm_state=cs)
+                        cs = tuple(lst)
                             
-                with tf.variable_scope('Output_Layers'):
-                    init_state = self.zero_state(self.C.B*self.BeamWidth, dtype=self.C.dtype)
-                    init_state = zero_to_init_state(init_state, counter)
+                        return zs._replace(calstm_state=cs)
+                                
+                    with tf.variable_scope('Output_Layers'):
+                        init_state = self.zero_state(self.RuntimeBatchSize, dtype=self.C.dtype)
+                        init_state = zero_to_init_state(init_state, counter)
 
         return init_state
             
@@ -217,100 +241,72 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         embedded.set_shape(shape) # (...,m)
         return embedded
                     
-    def call(self, Ex_t, state):
+    def call(self, Ex_t, state, reuse=None):
         """ 
         One step of the RNN API of this class.
         Layers a deep-output layer on top of CALSTM
         """
-        ## State
-        calstm_state_t_1 = state.calstm_state
-        ## CALSTM stack
-        htop_t, calstm_state_t = self._CALSTM_stack(Ex_t, calstm_state_t_1)
-        ## Output layer
-        yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_state_t[-1].ztop)
-        
-        return yLogits_t, Im2LatexState(calstm_state_t, yProbs_t)
+        if reuse:
+            tf.get_variable_scope().reuse_variables()
+            
+        with tf.name_scope(self.rnn_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals            
+            ## State
+            calstm_state_t_1 = state.calstm_state
+            ## CALSTM stack
+            htop_t, calstm_state_t = self._CALSTM_stack(Ex_t, calstm_state_t_1)
+            ## Output layer
+            yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_state_t[-1].ztop)
+            
+            return yLogits_t, Im2LatexState(calstm_state_t, yProbs_t)
 
     ScanOut = collections.namedtuple('ScanOut', ('yLogits', 'state'))
     def _scan_step_training(self, out_t_1, x_t):
         with tf.variable_scope('Ey'):
             Ex_t = self._embedding_lookup(x_t)
 
-        yLogits_t, state_t = self(Ex_t, out_t_1[1])
+        ## RNN.__call__
+        yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self.rnn_scope)
         
         return self.ScanOut(yLogits_t, state_t)
     
-    def build_train_graph_old(self):
-        ## y_s is the batch of target word sequences
-        ## y_s_p = tf.placeholder(dtype=tf.int32, shape=(self.C.B, None), name='Y_s') # (B, T)
-        ## seq_lens = tf.placeholder(dtype=tf.int32, shape=(self.C.B,), name='seq_lens')
-        y_s_p = self._y_s
-        seq_lens = self._seq_len
+    def build_train_graph(self, reuse=None):
         
-        with tf.variable_scope(self.rnn_scope):
-            ## tf.scan requires time-dimension to be the first dimension
-            y_s = K.permute_dimensions(y_s_p, (1, 0)) # (T, B)
-            
-            ################ Build x_s ################
-            ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
-            ## last token of y_s which is <eos> token (zero) will not appear in x_s
-            x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
-            
-            """ Build the training graph of the model """
-            accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
-                                 self.init_state())
-            out_s = tf.scan(self._scan_step_training, x_s, 
-                            initializer=accum, swap_memory=True)
-            ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
-            ## WARNING: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
-            yLogits_s = out_s.yLogits
-            alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_state], axis=0) # (N, T, B, L)
-            ## Switch the batch dimension back to first position - (B, T, ...)
-            ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
-            yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
-            alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
-            
-            train_ops = self._optimizer(yLogits, y_s_p, alpha, seq_lens).updated({'y_s': y_s_p,
-                                                                           'seq_lens': seq_lens})
-            if self._params.build_image_context:
-                return train_ops.updated({'im':self._im})
-            else:
-                return train_ops.updated({'im':self._a})
-                
-    def build_train_graph(self):
-        ## y_s is the batch of target word sequences
-        y_s_p = self._y_s # (B, T)
-        seq_lens = self._seq_len #(B,)
-        
-        with tf.variable_scope(self.rnn_scope):
-            ## tf.scan requires time-dimension to be the first dimension
-            y_s = K.permute_dimensions(y_s_p, (1, 0)) # (T, B)
-            
-            ################ Build x_s ################
-            ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
-            ## last token of y_s which is <eos> token (zero) will not appear in x_s
-            x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
-            
-            """ Build the training graph of the model """
-            accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
-                                 self.init_state())
-            out_s = tf.scan(self._scan_step_training, x_s, 
-                            initializer=accum, swap_memory=True)
-            ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
-            ## WARNING: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
-            yLogits_s = out_s.yLogits
-            alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_state], axis=0) # (N, T, B, L)
-            ## Switch the batch dimension back to first position - (B, T, ...)
-            ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
-            yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
-            alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
-            
-            train_ops = self._optimizer(yLogits, y_s_p, alpha, seq_lens).updated({'inp_q':self._inp_q})
-
-            return train_ops
+        with tf.variable_scope(self.outer_scope, reuse=reuse):
+            with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
+                with tf.variable_scope('TrainingGraph'): 
+                    ## tf.scan requires time-dimension to be the first dimension
+                    y_s = K.permute_dimensions(self._y_s, (1, 0)) # (T, B)
+                    
+                    ################ Build x_s ################
+                    ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
+                    ## last token of y_s which is <eos> token (zero) will not appear in x_s
+                    x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
+                    
+                    """ Build the training graph of the model """
+                    accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
+                                         self.init_state())
+                    out_s = tf.scan(self._scan_step_training, x_s, 
+                                    initializer=accum, swap_memory=True)
+                    ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
+                    ## SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
+                    yLogits_s = out_s.yLogits
+                    alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_state], axis=0) # (N, T, B, L)
+                    ## Switch the batch dimension back to first position - (B, T, ...)
+                    ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
+                    yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
+                    alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
+                    
+                    train_ops = self._optimizer(yLogits, 
+                                                self._y_s, 
+                                                alpha, 
+                                                self._seq_len,
+                                                self._y_ctc,
+                                                self._ctc_len).updated({'inp_q':self._inp_q})
+    
+                    return train_ops
                 
 
-    def _optimizer(self, yLogits, y_s, alpha, sequence_lengths):
+    def _optimizer(self, yLogits, y_s, alpha, sequence_lengths, y_ctc, ctc_len):
         B = self.C.B
         Kv =self.C.K
         L = self.C.L
@@ -320,13 +316,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
         assert K.int_shape(y_s) == (B, None) # (B, T)
         assert K.int_shape(sequence_lengths) == (B,)
+        assert K.int_shape(y_ctc) == (B, None) # (B, T)
+        assert K.int_shape(ctc_len) == (B,)
         
         ################ Build Cost Function ################
         with tf.variable_scope('Cost'):
             sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
                                              dtype=self.C.dtype) # (B, T)
             assert K.int_shape(sequence_mask) == (B,None) # (B,T)
-
+            
             ## Masked negative log-likelihood of the sequence.
             ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
             ## joint-sequence-probability is same as taking sum of log of probability at each time-step
@@ -368,22 +366,24 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             tf.summary.scalar("Loss/alpha-penalty", alpha_penalty)
 
         ################ Build CTC Cost Function ################
-        ## Compute CTC loss/score with intermediate blanks removed. (We've collapsed all blanks in our
-        ## train/test sequences to a single space, so our training samples are already as compact as
-        ## possible). This will have the following side-effect:
+        ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
+        ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s). 
+        ## Using CTC loss will have the following side-effect:
         ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
         ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
         ##     between tokens at inferencing step.
         with tf.variable_scope('CTC_Cost'):
             ## sparse tensor
-            y_idx =    tf.where(tf.not_equal(y_s, 0))
-            y_vals =   tf.gather_nd(y_s, y_idx)
-            y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_s, out_type=tf.int64))
+#            y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
+            ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+            assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+            y_idx =    tf.where(ctc_mask)
+            y_vals =   tf.gather_nd(y_ctc, y_idx)
+            y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
             ctc_loss = tf.nn.ctc_loss(y_sparse, 
                                       yLogits, 
                                       sequence_lengths,
                                       ctc_merge_repeated=False,
-                                      ignore_longer_outputs_than_inputs=False,
                                       time_major=False)           
             tf.summary.scalar("Loss/CTC", ctc_loss)
 
@@ -391,7 +391,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             cost = ctc_loss + alpha_penalty
         else:
             cost = log_likelihood + alpha_penalty
-            
+        
+        tf.summary.scalar('training/logloss', log_likelihood)
+        tf.summary.scalar('training/ctc_loss', ctc_loss)
+        tf.summary.scalar('training/alpha_penalty', alpha_penalty)
+        tf.summary.scalar('training/total_cost', cost)
+        
         # Optimizer
         with tf.variable_scope('Optimizer'):
             global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
@@ -409,7 +414,27 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 'global_step':global_step
                 })
 
-    def beamsearch(self, x_0):
+    def beamsearch(self, beamwidth):
         """ Build the prediction graph of the model using beamsearch """
-        pass
+        with tf.variable_scope(self.outer_scope, reuse=True):
+            with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
+                with tf.variable_scope('BeamSearch'):
+                    begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
+                    
+                    ## create init_state for new batch-size, but reuse model variables
+                    init_state_model = self.init_state(reuse=True)
+                        
+                    decoder = tf.contrib.seq2seq.BeamSearchDecoder(self,
+                                                                   self._embedding_lookup,
+                                                                   begin_tokens,
+                                                                   0,
+                                                                   init_state_model,
+                                                                   beam_width=beamwidth)
+                    final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
+                                                                            decoder,
+                                                                            maximum_iterations=self.C.Max_Seq_Len + 10,
+                                                                            swap_memory=True)
+        return final_outputs, final_state, final_sequence_lengths
+        
+        
 

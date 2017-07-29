@@ -42,11 +42,11 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
     that includes one LSTM-Stack conditioned by image features and an attention model.
     """
 
-    def __init__(self, config, context, beamsearch_width=1, reuse=None):
+    def __init__(self, config, context, beamsearch_width=1):
         assert K.int_shape(context) == (config.B, config.L, config.D)
         
         with tf.variable_scope('CALSTM') as scope:
-            super(CALSTM, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
+            super(CALSTM, self).__init__(_scope=scope, name=scope.name)
             self.my_scope = scope
             self.C = CALSTMParams(config)
             ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
@@ -104,8 +104,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         """ 
         Creates FC layers for lstm_states (init_c and init_h) which will sit atop the init-state MLP.
         It does this by replacing each instance of 'h' or 'c' with a FC layer using the given params.
-        This static method is part of the init-state model not the CALSTM. Therefore it
-        belongs within the Im2LatexModel class but is being kept here due to dependency on the
+        This static method is part of the init-state model not the CALSTM. Though it belongs inside
+        the Im2LatexModel class, it is nevertheless being kept here due to dependency on the
         CALSTMState class.
         """
         if counter is None:
