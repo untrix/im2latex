@@ -465,6 +465,11 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def batch_state_shape(self):
         return self._batch_state_shape
 
+#    def _set_beamwidth(self, beamwidth):
+#        self._beamsearch_width = beamwidth
+#        self._batch_state_shape = expand_nested_shape(self.state_size,
+#                                                      self._params.B*beamwidth)
+
     def assertStateShape(self, state):
         """
         Asserts that the shape of the tensor is consistent with the RNN's state shape.

@@ -65,13 +65,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, beamsearch_width=1, reuse=None):
+    def __init__(self, params, beamsearch_width=1, reuse=True):
         """
         Args:
             params (Im2LatexModelParams)
             beamsearch_width (integer): Only used when inferencing with beamsearch. Otherwise set it to 1.
                 Will cause the batch_size in internal assert statements to get multiplied by beamwidth.
-            reuse: Passed into the _reuse Tells the underlying RNNs whether or not to reuse the scope.
+            reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
         with tf.variable_scope('Im2LatexStack', reuse=reuse) as outer_scope:
@@ -114,7 +114,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 self._beamsearch_width = beamsearch_width
 
                 ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
-                self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width), dtype=self.C.int_type, name='go')
+                self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width),
+                                    dtype=self.C.int_type,
+                                    name='begin_sequence')
 
                 self._calstms = []
                 for i, rnn_params in enumerate(self.C.D_RNN, start=1):
@@ -140,41 +142,47 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def RuntimeBatchSize(self):
         return self.C.B * self.BeamWidth
 
+#    def _set_beamwidth(self, beamwidth):
+#        self._beamsearch_width = beamwidth
+#        for calstm in self._calstms:
+#            calstm._set_beamwidth(beamwidth)
+
     def _output_layer(self, Ex_t, h_t, z_t):
-        with tf.variable_scope(self._rnn_scope):
-            with tf.variable_scope('Output_Layer'):
-                ## Renaming HyperParams for convenience
-                CONF = self.C
-                B = self.RuntimeBatchSize
-                D = self.C.D
-                m = self.C.m
-                Kv =self.C.K
-                n = self._CALSTM_stack.output_size
+        with tf.variable_scope(self._rnn_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                with tf.variable_scope('Output_Layer'):
+                    ## Renaming HyperParams for convenience
+                    CONF = self.C
+                    B = self.RuntimeBatchSize
+                    D = self.C.D
+                    m = self.C.m
+                    Kv =self.C.K
+                    n = self._CALSTM_stack.output_size
 
-                assert K.int_shape(Ex_t) == (B, m)
-                assert K.int_shape(h_t) == (B, self._CALSTM_stack.output_size)
-                assert K.int_shape(z_t) == (B, D)
+                    assert K.int_shape(Ex_t) == (B, m)
+                    assert K.int_shape(h_t) == (B, self._CALSTM_stack.output_size)
+                    assert K.int_shape(z_t) == (B, D)
 
-                ## First layer of output MLP
-                if CONF.output_follow_paper: ## Follow the paper.
-                    ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-                    o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb},
-                                      batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
-                    ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
-                    o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
-                    ## non-linearity for the first layer
-                    o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
-                    dim = m
-                else: ## Use a straight MLP Stack
-                    o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
-                    dim = m+n+D
+                    ## First layer of output MLP
+                    if CONF.output_follow_paper: ## Follow the paper.
+                        ## Affine transformation of h_t and z_t from size n/D to bring it down to m
+                        o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb},
+                                          batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+                        ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
+                        o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
+                        ## non-linearity for the first layer
+                        o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
+                        dim = m
+                    else: ## Use a straight MLP Stack
+                        o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
+                        dim = m+n+D
 
-                ## Regular MLP layers
-                assert CONF.output_layers.layers_units[-1] == Kv
-                logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
+                    ## Regular MLP layers
+                    assert CONF.output_layers.layers_units[-1] == Kv
+                    logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
 
-                assert K.int_shape(logits_t) == (B, Kv)
-                return tf.nn.softmax(logits_t), logits_t
+                    assert K.int_shape(logits_t) == (B, Kv)
+                    return tf.nn.softmax(logits_t), logits_t
 
     @property
     def output_size(self):
@@ -188,7 +196,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
                              tf.zeros((batch_size, self.C.K), dtype=dtype, name='yProbs'))
 
-    def _make_init_FCLayers(self, zero_state, counter, params, inp):
+    def _recur_init_FCLayers(self, zero_state, counter, params, inp):
         """
         Creates FC layers for lstm_states (init_c and init_h) which will sit atop the init-state MLP.
         It does this by replacing each instance of 'h' or 'c' with a FC layer using the given params.
@@ -216,7 +224,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 lst = []
                 for i in xrange(len(s)):
                     if dlc.issequence(s[i]):
-                        lst.append(self._make_init_FCLayers(s[i], counter, params, inp))
+                        lst.append(self._recur_init_FCLayers(s[i], counter, params, inp))
                     else:
                         lst.append(s[i])
 
@@ -233,9 +241,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return s
 
-    def _init_state(self, reuse=None):
+    def _init_state(self):
         ################ Initializer MLP ################
-        with tf.variable_scope(self.outer_scope, reuse=reuse):
+        with tf.variable_scope(self.outer_scope):
             ## ugly, but only option to get pretty tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 with tf.variable_scope('Initializer_MLP'):
@@ -243,8 +251,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Broadcast im_context to BeamWidth
                     if self.BeamWidth > 1:
                         a = K.tile(self._a, (self.BeamWidth,1,1))
+                        batchsize = self.RuntimeBatchSize
                     else:
                         a = self._a
+                        batchsize = self.C.B
                     ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
                     ## one additional output layer for each of the h and c LSTM states. So if you had
                     ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
@@ -260,7 +270,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         lst = []
                         for i in xrange(len(cs)):
                             assert isinstance(cs[i], CALSTMState)
-                            lst.append(self._make_init_FCLayers(cs[i],
+                            lst.append(self._recur_init_FCLayers(cs[i],
                                                                  counter,
                                                                  self.C.init_model_final_layers,
                                                                  a))
@@ -271,7 +281,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     with tf.variable_scope('Output_Layers'):
                         self._init_FC_scope = tf.get_variable_scope()
-                        init_state = self.zero_state(self.RuntimeBatchSize, dtype=self.C.dtype)
+                        init_state = self.zero_state(batchsize, dtype=self.C.dtype)
                         init_state = zero_to_init_state(init_state, counter)
 
         return init_state
@@ -290,12 +300,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 embedded.set_shape(shape) # (...,m)
                 return embedded
 
-    def call(self, Ex_t, state, reuse=None):
+    def call(self, Ex_t, state):
         """
         One step of the RNN API of this class.
         Layers a deep-output layer on top of CALSTM
         """
-        with tf.variable_scope(self._rnn_scope, reuse=reuse) as var_scope:
+        with tf.variable_scope(self._rnn_scope) as var_scope:
             with tf.name_scope(var_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## State
                 calstm_states_t_1 = state.calstm_states
@@ -316,8 +326,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
         return self.ScanOut(yLogits_t, state_t)
 
-    def build_train_graph(self, reuse=None):
-        with tf.variable_scope(self.outer_scope, reuse=reuse):
+    def build_train_graph(self):
+        with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
 #                with tf.variable_scope('TrainingGraph'):
                 ## tf.scan requires time-dimension to be the first dimension
@@ -462,9 +472,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'global_step':global_step
                         })
 
-    def beamsearch(self, beamwidth):
+    def beamsearch(self):
         """ Build the prediction graph of the model using beamsearch """
-        with tf.variable_scope(self.outer_scope, reuse=True):
+        with tf.variable_scope(self.outer_scope) as var_scope:
+            assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
 #                with tf.variable_scope('BeamSearch'):
@@ -475,7 +486,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                begin_tokens,
                                                                0,
                                                                self._init_state_model,
-                                                               beam_width=beamwidth)
+                                                               beam_width=self.BeamWidth)
                 final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                         decoder,
                                                                         maximum_iterations=self.C.Max_Seq_Len + 10,

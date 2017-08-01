@@ -98,7 +98,7 @@ def train(num_steps, print_steps, num_epochs,
 
         ## Training Graph
         with tf.name_scope('TrainingGraph'):
-            model = Im2LatexModel(hyper)
+            model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
                 enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
@@ -111,7 +111,7 @@ def train(num_steps, print_steps, num_epochs,
             beamwidth=10
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
-            o,s,l = model_predict.beamsearch(beamwidth)
+            o,s,l = model_predict.beamsearch()
             assert(num_trainable_vars() == trainable_vars_n)
 
         printVars()

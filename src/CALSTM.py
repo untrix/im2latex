@@ -57,13 +57,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 
                 self._a = context ## Image features from the Conv-Net
 
-                ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
-                ## to the input batch.
-                if self._beamsearch_width > 1:
-                    self._a = K.tile(self._a, (beamsearch_width,1,1))
-
                 self._LSTM_stack = tfc.RNNWrapper(self.C.decoder_lstm,
-                                                 beamsearch_width=beamsearch_width)
+                                                  beamsearch_width=beamsearch_width)
 
     @property
     def output_size(self):
@@ -104,74 +99,79 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
     def ActualBatchSize(self):
         return self.C.B*self.BeamWidth
 
+#    def _set_beamwidth(self, beamwidth):
+#        self._beamsearch_width = beamwidth
+#        self._LSTM_stack._set_beamwidth(beamwidth)
+
     def _attention_model(self, a, h_prev):
-        with tf.variable_scope(self.my_scope):
-            with tf.variable_scope('AttentionModel'):
-                CONF = self.C
-                B = CONF.B*self.BeamWidth
-                L = CONF.L
-                D = CONF.D
-                h = h_prev
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                with tf.variable_scope('AttentionModel'):
+                    CONF = self.C
+                    B = CONF.B*self.BeamWidth
+                    L = CONF.L
+                    D = CONF.D
+                    h = h_prev
 
-                self._LSTM_stack.assertOutputShape(h_prev)
-                assert K.int_shape(a) == (B, L, D)
+                    self._LSTM_stack.assertOutputShape(h_prev)
+                    assert K.int_shape(a) == (B, L, D)
 
-                ## For #layers > 1 this will endup being different than the paper's implementation
-                if CONF.att_share_weights:
-                    """
-                    Here we'll effectively create L MLP stacks all sharing the same weights. Each
-                    stack receives a concatenated vector of a(l) and h as input.
+                    ## For #layers > 1 this will endup being different than the paper's implementation
+                    if CONF.att_share_weights:
+                        """
+                        Here we'll effectively create L MLP stacks all sharing the same weights. Each
+                        stack receives a concatenated vector of a(l) and h as input.
 
-                    TODO: We could also
-                    use 2D convolution here with a kernel of size (1,D) and stride=1 resulting in
-                    an output dimension of (L,1,depth) or (B, L, 1, depth) including the batch dimension.
-                    That may be more efficient.
-                    """
-                    ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
-                    ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
-                    h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
-                    ## Concatenate a and h. Final shape = (B, L, D+n)
-                    ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
-                    ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
-                    assert K.int_shape(ah) == (B, L, dim)
+                        TODO: We could also
+                        use 2D convolution here with a kernel of size (1,D) and stride=1 resulting in
+                        an output dimension of (L,1,depth) or (B, L, 1, depth) including the batch dimension.
+                        That may be more efficient.
+                        """
+                        ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
+                        ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
+                        h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
+                        ## Concatenate a and h. Final shape = (B, L, D+n)
+                        ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
+                        ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
+                        assert K.int_shape(ah) == (B, L, dim)
 
-                    ## Below is roughly how it is implemented in the code released by the authors of the paper
-                    ##     for i in range(1, CONF.att_a_layers+1):
-                    ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
-                    ##     for i in range(1, CONF.att_h_layers+1):
-                    ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
-                    ##    ah = a + K.expand_dims(h, axis=1)
+                        ## Below is roughly how it is implemented in the code released by the authors of the paper
+                        ##     for i in range(1, CONF.att_a_layers+1):
+                        ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
+                        ##     for i in range(1, CONF.att_h_layers+1):
+                        ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
+                        ##    ah = a + K.expand_dims(h, axis=1)
 
-                    ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
-                    ## One could've just summed/averaged them all here, but the paper uses yet
-                    ## another set of weights to accomplish this. So we'll keeep that as an option.
-                    if CONF.att_weighted_gather:
-                        with tf.variable_scope('weighted_gather'):
-                            ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
-                            ah = K.squeeze(ah, axis=2) # output shape = (B, L)
-                    else:
-                        ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
+                        ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
+                        ## One could've just summed/averaged them all here, but the paper uses yet
+                        ## another set of weights to accomplish this. So we'll keeep that as an option.
+                        if CONF.att_weighted_gather:
+                            with tf.variable_scope('weighted_gather'):
+                                ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
+                                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
+                        else:
+                            ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
 
-                else: # weights not shared across L
-                    ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
-                    ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
-                    ## of the L*D vector receives its own weight because the effective weight matrix here would be
-                    ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
+                    else: # weights not shared across L
+                        ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
+                        ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
+                        ## of the L*D vector receives its own weight because the effective weight matrix here would be
+                        ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
 
-                    ## Concatenate a and h. Final shape will be (B, L*D+n)
-                    with tf.variable_scope('a_flatten_concat_h'):
-                        ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
-                    ah = tfc.MLPStack(CONF.att_layers)(ah);
-                    ## At this point, ah.shape = (B, L)
-                    dim = CONF.att_layers.layers_units[-1]
-                    assert dim == L
-                    assert K.int_shape(ah) == (B, L)
+                        ## Concatenate a and h. Final shape will be (B, L*D+n)
+                        with tf.variable_scope('a_flatten_concat_h'):
+                            ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
+                        ah = tfc.MLPStack(CONF.att_layers)(ah);
+                        ## At this point, ah.shape = (B, L)
+                        dim = CONF.att_layers.layers_units[-1]
+                        assert dim == L
+                        assert K.int_shape(ah) == (B, L)
 
-                alpha = tf.nn.softmax(ah) # output shape = (B, L)
-                alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
+                    alpha = tf.nn.softmax(ah) # output shape = (B, L)
+                    alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
 
-                assert K.int_shape(alpha) == (B, L)
-                return alpha
+                    assert K.int_shape(alpha) == (B, L)
+                    return alpha
 
     def _decoder_lstm(self, Ex_t, z_t, lstm_states_t_1):
         """Represents invocation of the decoder lstm. (h_t, lstm_states_t) = *(z_t|Ex_t, lstm_states_t_1)"""
@@ -207,6 +207,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
                 alpha_t_1 = state.alpha            # shape = (B, L)
                 a = self._a
+                ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
+                ## to the input batch.
+                if self.BeamWidth > 1:
+                    a = K.tile(self._a, (self.BeamWidth,1,1))
 
                 CONF = self.C
                 B = CONF.B*self.BeamWidth

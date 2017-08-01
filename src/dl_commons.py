@@ -278,7 +278,8 @@ class Params(Properties):
                     print('##### Error while processing property: \n', prop, '\n')
                     raise
             else:
-                raise ParamsValueError('property %s has already been initialized with value %s'%(name, _vals[name]))
+                raise ParamsValueError('property %s has already been initialized with value %s'%(name,
+                                                                                                 _vals[name]))
 
         object.__setattr__(self, '_descr_dict', props.freeze())
 
