@@ -201,18 +201,19 @@ class MLPStack(object):
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp):
-        with tf.variable_scope(self.my_scope):
-            assert isinstance(inp, tf.Tensor)
-            if self._batch_input_shape is not None:
-                assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
 
-            params = self._params
+                params = self._params
 
-            a = inp
-            with tf.variable_scope(params.op_name):
-                for i in xrange(len(self._params.layers_units)):
-                    a = FCLayer(self._params.get_layer_params(i))(a, i)
-            return a
+                a = inp
+                with tf.variable_scope(params.op_name):
+                    for i in xrange(len(self._params.layers_units)):
+                        a = FCLayer(self._params.get_layer_params(i))(a, i)
+                return a
 
 class FCLayerParams(HyperParams):
     proto = CommonParams.proto + (
@@ -239,45 +240,46 @@ class FCLayer(object):
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        with tf.variable_scope(self.my_scope):
-            ## Parameter Validation
-            assert isinstance(inp, tf.Tensor)
-            if self._batch_input_shape is not None:
-                assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
 
-            params = self._params
-            prefix = 'FC' if params.activation_fn is not None else 'Affine'
-            scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
-            with tf.variable_scope(scope_name) as var_scope:
-                layer_name = var_scope.name
-    #            coll_w = layer_name + '/' + params.tb.tb_weights
-    #            coll_b = layer_name + '/' + params.tb.tb_biases
+                params = self._params
+                prefix = 'FC' if params.activation_fn is not None else 'Affine'
+                scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+                with tf.variable_scope(scope_name) as var_scope:
+                    layer_name = var_scope.name
+        #            coll_w = layer_name + '/' + params.tb.tb_weights
+        #            coll_b = layer_name + '/' + params.tb.tb_biases
 
-                a = tf.contrib.layers.fully_connected(
-                        inputs=inp,
-                        num_outputs = params.num_units,
-                        activation_fn = params.activation_fn,
-                        normalizer_fn = params.normalizer_fn,
-                        weights_initializer = params.weights_initializer,
-                        weights_regularizer = params.weights_regularizer,
-                        biases_initializer = params.biases_initializer,
-                        biases_regularizer = params.biases_regularizer,
-    #                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
-    #                                             "biases":[coll_b]},
-                        trainable = True
-                        )
+                    a = tf.contrib.layers.fully_connected(
+                            inputs=inp,
+                            num_outputs = params.num_units,
+                            activation_fn = params.activation_fn,
+                            normalizer_fn = params.normalizer_fn,
+                            weights_initializer = params.weights_initializer,
+                            weights_regularizer = params.weights_regularizer,
+                            biases_initializer = params.biases_initializer,
+                            biases_regularizer = params.biases_regularizer,
+        #                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
+        #                                             "biases":[coll_b]},
+                            trainable = True
+                            )
 
-                if self._params.dropout is not None:
-                    a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
+                    if self._params.dropout is not None:
+                        a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
 
-                # Tensorboard Summaries
-                if params.tb is not None:
-                    summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
+                    # Tensorboard Summaries
+                    if params.tb is not None:
+                        summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
 
-            if (self._batch_input_shape):
-                a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+                if (self._batch_input_shape):
+                    a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
 
-            return a
+                return a
 
 class DropoutLayer(object):
     def __init__(self, params, batch_input_shape=None):
@@ -286,16 +288,17 @@ class DropoutLayer(object):
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        with tf.variable_scope(self.my_scope):
-            ## Parameter Validation
-            assert isinstance(inp, tf.Tensor)
-            if self._batch_input_shape is not None:
-                assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
 
-            params = self._params
-            scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
-            with tf.variable_scope(scope_name):
-                return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
+                params = self._params
+                scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
+                with tf.variable_scope(scope_name):
+                    return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
 
 class ActivationParams(HyperParams):
     proto = (CommonParamsProto.activation_fn,
@@ -317,21 +320,22 @@ class Activation(object):
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        with tf.variable_scope(self.my_scope):
-            ## Parameter Validation
-            assert isinstance(inp, tf.Tensor)
-            if self._batch_input_shape is not None:
-                assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
 
-            params = self._params
-            scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
-            with tf.variable_scope(scope_name):
-                h = params.activation_fn(inp)
-                # Tensorboard Summaries
-                if params.tb is not None:
-                    summarize_layer(scope_name, None, None, h)
+                params = self._params
+                scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
+                with tf.variable_scope(scope_name):
+                    h = params.activation_fn(inp)
+                    # Tensorboard Summaries
+                    if params.tb is not None:
+                        summarize_layer(scope_name, None, None, h)
 
-            return h
+                return h
 
 class RNNParams(HyperParams):
     proto = (
@@ -445,8 +449,9 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         return self._cell.output_size
 
     def zero_state(self, batch_size, dtype):
-        with tf.variable_scope(self.my_scope):
-            return self._cell.zero_state(batch_size, dtype)
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                return self._cell.zero_state(batch_size, dtype)
 
     @property
     def batch_input_shape(self):

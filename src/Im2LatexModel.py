@@ -59,7 +59,7 @@ def build_image_context(params, image_batch):
 
     return a
 
-Im2LatexState = collections.namedtuple('Im2LatexState', ('calstm_state', 'yProbs'))
+Im2LatexState = collections.namedtuple('Im2LatexState', ('calstm_states', 'yProbs'))
 class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     """
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
@@ -255,7 +255,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     counter = itertools.count(0)
                     def zero_to_init_state(zs, counter):
                         assert isinstance(zs, Im2LatexState)
-                        cs = zs.calstm_state
+                        cs = zs.calstm_states
                         assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
                         lst = []
                         for i in xrange(len(cs)):
@@ -267,7 +267,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                         cs = tuple(lst)
 
-                        return zs._replace(calstm_state=cs)
+                        return zs._replace(calstm_states=cs)
 
                     with tf.variable_scope('Output_Layers'):
                         self._init_FC_scope = tf.get_variable_scope()
@@ -298,13 +298,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope(self._rnn_scope, reuse=reuse) as var_scope:
             with tf.name_scope(var_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## State
-                calstm_state_t_1 = state.calstm_state
+                calstm_states_t_1 = state.calstm_states
                 ## CALSTM stack
-                htop_t, calstm_state_t = self._CALSTM_stack(Ex_t, calstm_state_t_1)
+                htop_t, calstm_states_t = self._CALSTM_stack(Ex_t, calstm_states_t_1)
                 ## Output layer
-                yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_state_t[-1].ztop)
+                yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_states_t[-1].ztop)
 
-                return yLogits_t, Im2LatexState(calstm_state_t, yProbs_t)
+                return yLogits_t, Im2LatexState(calstm_states_t, yProbs_t)
 
     ScanOut = collections.namedtuple('ScanOut', ('yLogits', 'state'))
     def _scan_step_training(self, out_t_1, x_t):
@@ -336,7 +336,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
                 ## SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
                 yLogits_s = out_s.yLogits
-                alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_state], axis=0) # (N, T, B, L)
+                alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_states], axis=0) # (N, T, B, L)
                 ## Switch the batch dimension back to first position - (B, T, ...)
                 ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
                 yLogits = K.permute_dimensions(yLogits_s, [1,0,2])

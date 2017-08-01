@@ -35,6 +35,46 @@ import hyper_params
 from data_reader import BatchContextIterator, BatchImageIterator
 import dl_commons as dlc
 
+def num_trainable_vars():
+    total_n = 0
+    for var in tf.trainable_variables():
+        n = tfc.sizeofVar(var)
+        total_n += n
+    return total_n
+
+def printVars():
+    total_n = 0
+    total_vggnet = 0
+    total_init = 0
+    total_calstm = 0
+    total_output = 0
+    total_embedding = 0
+
+    print 'Trainable Variables'
+    for var in tf.trainable_variables():
+        n = tfc.sizeofVar(var)
+        total_n += n
+        if 'VGGNet/' in var.name :
+            total_vggnet += n
+        elif 'CALSTM' in var.name:
+            total_calstm += n
+        elif 'Im2LatexRNN/Output_Layer/' in var.name:
+            total_output += n
+        elif 'Initializer_MLP/' in var.name:
+            total_init += n
+        elif 'Im2LatexRNN/Embedding/Embedding_Matrix' in var.name:
+            total_embedding += n
+        else:
+            assert False
+        print var.name, K.int_shape(var), 'num_params = ', n
+
+    print '\nTotal number of trainable params = ', total_n
+    print 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n)
+    print 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n)
+    print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
+    print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
+    print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
+
 def train(num_steps, print_steps, num_epochs,
           raw_data_folder=None,
           vgg16_folder=None,
@@ -56,51 +96,25 @@ def train(num_steps, print_steps, num_epochs,
                                               num_steps,
                                               num_epochs)
 
-        model = Im2LatexModel(hyper)
-        train_ops = model.build_train_graph()
-        with tf.variable_scope('InputQueue'):
-            enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
-            qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
-            coord = tf.train.Coordinator()
+        ## Training Graph
+        with tf.name_scope('TrainingGraph'):
+            model = Im2LatexModel(hyper)
+            train_ops = model.build_train_graph()
+            with tf.variable_scope('InputQueue'):
+                enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
+                qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
+                coord = tf.train.Coordinator()
+            trainable_vars_n = num_trainable_vars()
 
-        beamwidth=10
+        ## Validation Graph
+        with tf.name_scope('DecodingGraph'):
+            beamwidth=10
+            hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
+            model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
+            o,s,l = model_predict.beamsearch(beamwidth)
+            assert(num_trainable_vars() == trainable_vars_n)
 
-        hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
-        model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
-        o,s,l = model_predict.beamsearch(beamwidth)
-
-        total_n = 0
-        total_vggnet = 0
-        total_init = 0
-        total_calstm = 0
-        total_output = 0
-        total_embedding = 0
-
-        print 'Trainable Variables'
-        for var in tf.trainable_variables():
-            n = tfc.sizeofVar(var)
-            total_n += n
-            if 'VGGNet/' in var.name :
-                total_vggnet += n
-            elif 'CALSTM' in var.name:
-                total_calstm += n
-            elif 'Im2LatexRNN/Output_Layer/' in var.name:
-                total_output += n
-            elif 'Initializer_MLP/' in var.name:
-                total_init += n
-            elif 'Im2LatexRNN/Embedding/Embedding_Matrix' in var.name:
-                total_embedding += n
-            else:
-                assert False
-            print var.name, K.int_shape(var), 'num_params = ', n
-
-        print '\nTotal number of trainable params = ', total_n
-        print 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n)
-        print 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n)
-        print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
-        print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
-        print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
-        assert total_n == 8544670
+        printVars()
 
         config=tf.ConfigProto(log_device_placement=False)
         config.gpu_options.allow_growth = True
