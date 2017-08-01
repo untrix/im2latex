@@ -41,9 +41,9 @@ class tensor(instanceof):
         dlc._ParamValidator.__init__(self, tf.Tensor)
     def __contains__(self, obj):
         return instanceof.__contains__(self, obj) and  keras.backend.int_shape(obj) == self._shape
-        
 
-def summarize_layer(layer_name, weights, biases, activations):
+
+def summarize_layer(layer_name, weights, biases, activations, state=None):
     def summarize_vars(var, section_name):
         """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
         mean = tf.reduce_mean(var)
@@ -54,13 +54,15 @@ def summarize_layer(layer_name, weights, biases, activations):
         tf.summary.scalar(section_name+'/min', tf.reduce_min(var))
         tf.summary.histogram(section_name+'/histogram', var)
 
-    with tf.variable_scope('SummaryLogs', reuse=False):
+    with tf.variable_scope('Instrumentation'):
         if weights is not None:
             summarize_vars(weights, 'Weights')
         if biases is not None:
             summarize_vars(biases, 'Biases')
         if activations is not None:
             summarize_vars(activations, 'Activations')
+        if state is not None:
+            summarize_vars(state, 'State')
 
 class TensorboardParams(HyperParams):
     proto = (
@@ -84,7 +86,7 @@ class TensorboardParams(HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
@@ -92,7 +94,7 @@ class TensorboardParams(HyperParams):
 class DropoutParams(HyperParams):
     """ Dropout Layer descriptor """
     proto = (
-        PD('keep_prob',     
+        PD('keep_prob',
               'Probability of keeping an output (i.e. not dropping it).',
               instanceof(tf.Tensor)
               ),
@@ -106,7 +108,7 @@ class DropoutParams(HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
@@ -114,22 +116,22 @@ class DropoutParams(HyperParams):
 class CommonParams(HyperParams):
     proto = (
         PD('activation_fn',
-              'The activation function to use. None signifies no activation function.', 
+              'The activation function to use. None signifies no activation function.',
               ## iscallable((tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid, None)),
               iscallableOrNone(),
               tf.nn.tanh),
         PD('normalizer_fn',
-              'Normalizer function to use instead of biases. If set, biases are not used.', 
-              (None,) 
+              'Normalizer function to use instead of biases. If set, biases are not used.',
+              (None,)
               ),
-        PD('weights_initializer', 
-              'Tensorflow weights initializer function', 
+        PD('weights_initializer',
+              'Tensorflow weights initializer function',
               iscallableOrNone(),
               tf.contrib.layers.xavier_initializer()
               # tf.contrib.layers.xavier_initializer_conv2d()
               # tf.contrib.layers.variance_scaling_initializer()
               ),
-        PD('biases_initializer', 
+        PD('biases_initializer',
               'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
               iscallable(),
               tf.zeros_initializer()
@@ -153,13 +155,13 @@ class CommonParams(HyperParams):
         PD('tb', "Tensorboard Params.",
            instanceofOrNone(TensorboardParams))
         )
-        
+
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
@@ -174,166 +176,162 @@ class MLPParams(HyperParams):
                'MLP'
               ),
             PD('layers_units',
-              "(sequence of integers): sequence of numbers denoting number of units for each layer." 
+              "(sequence of integers): sequence of numbers denoting number of units for each layer."
               "As many layers will be created as the length of the sequence",
               issequenceof(int)
               ),
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        
+
     def get_layer_params(self, i):
         return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
 class MLPStack(object):
     def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
         self._params = MLPParams(params)
         self._batch_input_shape = batch_input_shape
-        
-    def __call__(self, inp):
-        assert isinstance(inp, tf.Tensor)
-        if self._batch_input_shape is not None:
-            assert K.int_shape(inp) == self._batch_input_shape
 
-        params = self._params
-#        dropout = params.dropout is not None and (params.dropout.keep_prob < 1.)
-        
-        a = inp
-        with tf.variable_scope(params.op_name):
-            for i in xrange(len(self._params.layers_units)):
-                a = FCLayer(self._params.get_layer_params(i))(a, i)
-#                if dropout:
-#                    a = DropoutLayer(self._params.dropout)(a, i)
-        return a
-            
+    def __call__(self, inp):
+        with tf.variable_scope(self.my_scope):
+            assert isinstance(inp, tf.Tensor)
+            if self._batch_input_shape is not None:
+                assert K.int_shape(inp) == self._batch_input_shape
+
+            params = self._params
+
+            a = inp
+            with tf.variable_scope(params.op_name):
+                for i in xrange(len(self._params.layers_units)):
+                    a = FCLayer(self._params.get_layer_params(i))(a, i)
+            return a
+
 class FCLayerParams(HyperParams):
     proto = CommonParams.proto + (
-        PD('num_units', 
+        PD('num_units',
           "(integer): number of output units in the layer." ,
           integer(1),
           ),
         )
-        
+
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
 class FCLayer(object):
     def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
         self._params = FCLayerParams(params)
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        ## Parameter Validation
-        assert isinstance(inp, tf.Tensor)
-        if self._batch_input_shape is not None:
-            assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope):
+            ## Parameter Validation
+            assert isinstance(inp, tf.Tensor)
+            if self._batch_input_shape is not None:
+                assert K.int_shape(inp) == self._batch_input_shape
 
-        params = self._params    
-        prefix = 'FC' if params.activation_fn is not None else 'Affine'
-        scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
-        with tf.variable_scope(scope_name) as var_scope:
-            layer_name = var_scope.name
-#            coll_w = layer_name + '/' + params.tb.tb_weights
-#            coll_b = layer_name + '/' + params.tb.tb_biases
-            
-            a = tf.contrib.layers.fully_connected(
-                    inputs=inp,
-                    num_outputs = params.num_units,
-                    activation_fn = params.activation_fn,
-                    normalizer_fn = params.normalizer_fn,
-                    weights_initializer = params.weights_initializer,
-                    weights_regularizer = params.weights_regularizer,
-                    biases_initializer = params.biases_initializer,
-                    biases_regularizer = params.biases_regularizer,
-#                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
-#                                             "biases":[coll_b]},
-                    trainable = True
-                    )
+            params = self._params
+            prefix = 'FC' if params.activation_fn is not None else 'Affine'
+            scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+            with tf.variable_scope(scope_name) as var_scope:
+                layer_name = var_scope.name
+    #            coll_w = layer_name + '/' + params.tb.tb_weights
+    #            coll_b = layer_name + '/' + params.tb.tb_biases
 
-            if self._params.dropout is not None:
-                a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
+                a = tf.contrib.layers.fully_connected(
+                        inputs=inp,
+                        num_outputs = params.num_units,
+                        activation_fn = params.activation_fn,
+                        normalizer_fn = params.normalizer_fn,
+                        weights_initializer = params.weights_initializer,
+                        weights_regularizer = params.weights_regularizer,
+                        biases_initializer = params.biases_initializer,
+                        biases_regularizer = params.biases_regularizer,
+    #                    variables_collections = {"weights":[coll_w, params.weights_coll_name],
+    #                                             "biases":[coll_b]},
+                        trainable = True
+                        )
 
-            # Tensorboard Summaries
-            if params.tb is not None:
-                summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
-        
-        if (self._batch_input_shape):
-            a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
-            
-        return a
+                if self._params.dropout is not None:
+                    a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
+
+                # Tensorboard Summaries
+                if params.tb is not None:
+                    summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
+
+            if (self._batch_input_shape):
+                a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+
+            return a
 
 class DropoutLayer(object):
     def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
         self._params = DropoutParams(params)
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        ## Parameter Validation
-        assert isinstance(inp, tf.Tensor)
-        if self._batch_input_shape is not None:
-            assert K.int_shape(inp) == self._batch_input_shape
-        
-        params = self._params    
-        scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
-        with tf.variable_scope(scope_name):
-            return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
+        with tf.variable_scope(self.my_scope):
+            ## Parameter Validation
+            assert isinstance(inp, tf.Tensor)
+            if self._batch_input_shape is not None:
+                assert K.int_shape(inp) == self._batch_input_shape
+
+            params = self._params
+            scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
+            with tf.variable_scope(scope_name):
+                return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
 
 class ActivationParams(HyperParams):
-    proto = (CommonParamsProto.activation_fn, 
+    proto = (CommonParamsProto.activation_fn,
              CommonParamsProto.tb)
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
 class Activation(object):
     def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
         self._params = ActivationParams(params)
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
-        ## Parameter Validation
-        assert isinstance(inp, tf.Tensor)
-        if self._batch_input_shape is not None:
-            assert K.int_shape(inp) == self._batch_input_shape
+        with tf.variable_scope(self.my_scope):
+            ## Parameter Validation
+            assert isinstance(inp, tf.Tensor)
+            if self._batch_input_shape is not None:
+                assert K.int_shape(inp) == self._batch_input_shape
 
-        params = self._params        
-        scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
-        with tf.variable_scope(scope_name):
-            h = params.activation_fn(inp)
-            # Tensorboard Summaries
-            if params.tb is not None:
-                summarize_layer(scope_name, None, None, h)
+            params = self._params
+            scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
+            with tf.variable_scope(scope_name):
+                h = params.activation_fn(inp)
+                # Tensorboard Summaries
+                if params.tb is not None:
+                    summarize_layer(scope_name, None, None, h)
 
-        return h
-
-def make_lstm_optname(_, d):
-    opt_name = 'LSTMWrapper'
-    try:
-        if ("dropout" in d and d['dropout'] is not None and d['dropout']['keep_prob'] < 1.):
-            opt_name = 'LSTMWrapper_w_Dropout'
-    except:
-        pass
-    return opt_name
+            return h
 
 class RNNParams(HyperParams):
     proto = (
@@ -342,10 +340,10 @@ class RNNParams(HyperParams):
                integerOrNone(1)
                ),
             PD('i',
-               '(integer): dimensionality of the input vector (Ey / Ex)', 
+               '(integer): dimensionality of the input vector (Ey / Ex)',
                integer(1)
                ),
-            PD('type', 
+            PD('type',
                'Type of RNN cell to create. Only LSTM is supported at this time.',
                ('lstm',),
                'lstm'),
@@ -356,20 +354,20 @@ class RNNParams(HyperParams):
             PD('op_name',
                'Name of the layer; will show up in tensorboard visualization',
                None,
-               make_lstm_optname
+               'LSTMWrapper'
               ),
             PD('layers_units',
               "(sequence of integers): Either layers_units or num_units must be specified. Not both."
-              "Sequence of numbers denoting number of units for each layer." 
+              "Sequence of numbers denoting number of units for each layer."
               "As many layers will be created as the length of the sequence",
               issequenceofOrNone(int)
               ),
             PD('activation_fn',
-              'Output activation function to use.', 
+              'Output activation function to use.',
               iscallable((tf.nn.tanh, tf.nn.sigmoid)),
               tf.nn.tanh),
-            PD('weights_initializer', 
-              'Tensorflow weights initializer function', 
+            PD('weights_initializer',
+              'Tensorflow weights initializer function',
               iscallableOrNone(),
               None
               #tf.contrib.layers.xavier_initializer()
@@ -394,7 +392,7 @@ class RNNParams(HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
@@ -413,16 +411,16 @@ def get_nested_shape(obj):
         return K.int_shape(obj)
     else:
         return tuple(get_nested_shape(o) for o in obj)
-    
+
 
 
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def __init__(self, params, reuse=None, _scope=None, beamsearch_width=1):
         self._params = params = RNNParams(params)
-        with tf.variable_scope(_scope or self._params.op_name, 
+        with tf.variable_scope(_scope or self._params.op_name,
                                initializer=self._params.weights_initializer) as scope:
             super(RNNWrapper, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
-            
+            self.my_scope = scope
             if len(self._params.layers_units) == 1:
                 self._cell = self._make_one_cell(self._params.layers_units[0])
                 self._num_layers = 1
@@ -433,8 +431,8 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                 self._cell = tf.nn.rnn_cell.MultiRNNCell(
                         [self._make_one_cell(n) for n in self._params.layers_units])
                 self._num_layers = len(self._params.layers_units)
-    
-            self._batch_state_shape = expand_nested_shape(self._cell.state_size, 
+
+            self._batch_state_shape = expand_nested_shape(self._cell.state_size,
                                                           self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
 
@@ -447,22 +445,23 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         return self._cell.output_size
 
     def zero_state(self, batch_size, dtype):
-        return self._cell.zero_state(batch_size, dtype)
+        with tf.variable_scope(self.my_scope):
+            return self._cell.zero_state(batch_size, dtype)
 
     @property
     def batch_input_shape(self):
         return (self._params.B*self._beamsearch_width, self._params.i)
-        
+
     @property
     def batch_output_shape(self):
         return (self._params.B*self._beamsearch_width, self._cell.output_size)
-        
+
     @property
     def batch_state_shape(self):
         return self._batch_state_shape
-        
+
     def assertStateShape(self, state):
-        """ 
+        """
         Asserts that the shape of the tensor is consistent with the RNN's state shape.
         For e.g. the state-shape of a MultiRNNCell with L layers would be ((n1, n1), (n2, n2) ... (nL, nL))
         and the corresponding state-tensor should be of shape :
@@ -473,71 +472,73 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         except:
             print 'state-shape assertion Failed for state type = ', type(state), ' and value = ', state
             raise
-        
+
     def assertOutputShape(self, output):
-        """ 
+        """
         Asserts that the shape of the tensor is consistent with the RNN's output shape.
         For e.g. the output shape is o then the input-tensor should be of shape (B,o)
         """
         assert self.batch_output_shape == K.int_shape(output)
-        
+
     def assertInputShape(self, inp):
-        """ 
+        """
         Asserts that the shape of the tensor is consistent with the RNN's input shape.
         For e.g. if the input shape is m then the input-tensor should be of shape (B,m)
         """
         assert K.int_shape(inp) == self.batch_input_shape
 
     def _assertBatchShape(self, shape, tnsr):
-        """ 
+        """
         Asserts that the shape of the tensor is consistent with the RNN's shape.
         For e.g. the state-shape of a MultiRNNCell with L layers would be ((n1, n1), (n2, n2) ... (nL, nL))
         and the corresponding state-tensor should be (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         Similarly, if the input shape is m then the input-tensor should be of shape (B,m)
         """
         return expand_nested_shape(shape, self._params.B*self._beamsearch_width) == K.int_shape(tnsr)
-    
+
     @property
     def num_layers(self):
         return self._num_layers
-    
+
     def call(self, inp, state):
-        ## Parameter Validation
-        assert isinstance(inp, tf.Tensor)
-        self.assertInputShape(inp)
-        self.assertStateShape(state)
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                self.assertInputShape(inp)
+                self.assertStateShape(state)
 
-        params = self._params
-#        with tf.variable_scope(self._var_scope) as scope:
-        output, new_state = self._cell(inp, state)
-        # Tensorboard Summaries
-        if params.tb is not None:
-            summarize_layer(self._params.op_name, tf.get_collection('weights'), 
-                            tf.get_collection('biases'), output)
-            summarize_layer(self._params.op_name, None, None, new_state)
+                params = self._params
+                output, new_state = self._cell(inp, state)
+                # Tensorboard Summaries
+                if params.tb is not None:
+                    summarize_layer(self._params.op_name, tf.get_collection('weights'),
+                                    tf.get_collection('biases'), output, new_state)
 
-        self.assertOutputShape(output)
-        self.assertStateShape(new_state)
-        return output, new_state
-            
+                self.assertOutputShape(output)
+                self.assertStateShape(new_state)
+                return output, new_state
+
     def _make_one_cell(self, num_units):
-        params = self._params
-        #The implementation is based on: http://arxiv.org/abs/1409.2329.
-        ## LSTMBlockFusedCell is replacement for LSTMBlockCell
-        cell = tf.contrib.rnn.LSTMBlockCell(num_units, 
-                                           forget_bias=params.forget_bias, 
-                                           use_peephole=params.use_peephole
-                                           )
-        if params.dropout is not None:
-            with tf.variable_scope('DropoutWrapper'):
-                cell = tf.nn.rnn_cell.DropoutWrapper(cell,
-                                              input_keep_prob=1.,
-                                              state_keep_prob=params.dropout.keep_prob,
-                                              output_keep_prob=params.dropout.keep_prob,
-                                              variational_recurrent=True,
-                                              dtype=params.dtype
-                                              )
-        return cell
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                params = self._params
+                #The implementation is based on: http://arxiv.org/abs/1409.2329.
+                ## LSTMBlockFusedCell is replacement for LSTMBlockCell
+                cell = tf.contrib.rnn.LSTMBlockCell(num_units,
+                                                   forget_bias=params.forget_bias,
+                                                   use_peephole=params.use_peephole
+                                                   )
+                if params.dropout is not None:
+                    with tf.variable_scope('DropoutWrapper'):
+                        cell = tf.nn.rnn_cell.DropoutWrapper(cell,
+                                                      input_keep_prob=1.,
+                                                      state_keep_prob=params.dropout.keep_prob,
+                                                      output_keep_prob=params.dropout.keep_prob,
+                                                      variational_recurrent=True,
+                                                      dtype=params.dtype
+                                                      )
+                return cell
 
 def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')

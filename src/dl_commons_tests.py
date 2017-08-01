@@ -6,7 +6,56 @@
 
 import unittest
 import dl_commons as dlc
+from dl_commons import PD, LambdaVal, integer, instanceof, equalto
 #import tf_commons as tfc
+
+class Props(dlc.HyperParams):
+    proto = (
+            PD('m', '',
+               integer(),
+               64),
+            PD('D', '',
+               integer(),
+               512)
+            )
+    def __init__(self, initVals={}):
+        dlc.HyperParams.__init__(self, self.proto, initVals)
+
+class Props2(dlc.HyperParams):
+    def makeProto(self, GLOBAL):
+        return Props.proto + (
+            PD('i', '',
+               integer(),
+               LambdaVal(lambda _, __: GLOBAL.m + GLOBAL.D)
+               ),
+            PD('m2', '',
+               integer(),
+               equalto('m', GLOBAL)),
+            PD('D2', '',
+               integer(),
+               equalto('D', GLOBAL))
+            )
+    def __init__(self, initVals={}):
+        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
+
+class Props3(dlc.HyperParams):
+    def makeProto(self, GLOBAL):
+        return Props.proto + (
+            PD('i', '',
+               integer(),
+               equalto('i', GLOBAL)
+               ),
+            PD('m3', '',
+               integer(),
+               equalto('m2', GLOBAL)),
+            PD('D3', '',
+               integer(),
+               equalto('D2', GLOBAL))
+            )
+    def __init__(self, initVals={}):
+        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
+
+
 
 class TestCaseBase(unittest.TestCase):
 
@@ -17,7 +66,7 @@ class TestCaseBase(unittest.TestCase):
     @staticmethod
     def dictGet(d, name):
         return d[name]
-    
+
     @staticmethod
     def instantiate(cls, *args):
         cls(*args)
@@ -25,14 +74,14 @@ class TestCaseBase(unittest.TestCase):
 class PropertiesTest(TestCaseBase):
     def __init__(self, *args):
         unittest.TestCase.__init__(self, *args)
-        
+
     def test_good_props(self):
         props = {
                 'model_name':'im2latex',
                 'num_layers':None,
                 'unset':None
                 }
-        open = dlc.Properties(props)      
+        open = dlc.Properties(props)
         sealed = dlc.Properties(open).seal()
         props['num_layers'] = 10
         frozen = dlc.Properties(props).freeze()
@@ -43,13 +92,13 @@ class PropertiesTest(TestCaseBase):
         open['layer_type'] = 'CNN'
         self.assertEqual(open.layer_type, 'CNN')
         self.assertEqual(open['layer_type'], 'CNN')
-        
+
         self.assertEqual(frozen.model_name, 'im2latex')
         self.assertEqual(frozen.unset, None)
         self.assertEqual(frozen['unset'], None)
         self.assertEqual(frozen['num_layers'], 10)
         self.assertEqual(frozen.num_layers, 10)
-        
+
 
     def test_bad_props(self):
         props = {
@@ -57,7 +106,7 @@ class PropertiesTest(TestCaseBase):
                 'num_layers':None,
                 'unset':None
                 }
-        open = dlc.Properties(props)      
+        open = dlc.Properties(props)
         sealed = dlc.Properties(open).seal()
         props['num_layers'] = 10
         frozen = dlc.Properties(props).freeze()
@@ -85,12 +134,12 @@ class PropertiesTest(TestCaseBase):
         sealed['layer_type'] = 'CNN'
         self.assertEqual(sealed.layer_type, 'CNN')
         self.assertEqual(sealed['layer_type'], 'CNN')
-        
+
         self.assertEqual(frozen.model_name, 'im2latex')
         self.assertEqual(frozen.layer_type, None)
         self.assertEqual(frozen['num_layers'], 10)
         self.assertEqual(frozen.num_layers, 10)
-        
+
 
     def test_bad_params(self):
         sealed = dlc.Params((
@@ -128,7 +177,7 @@ class PropertiesTest(TestCaseBase):
         sealed['layer_type'] = 'CNN'
         self.assertEqual(sealed.layer_type, 'CNN')
         self.assertEqual(sealed['layer_type'], 'CNN')
-        
+
         self.assertEqual(frozen.model_name, 'im2latex')
         self.assertEqual(frozen['num_layers'], 10)
         self.assertEqual(frozen.num_layers, 10)
@@ -136,7 +185,6 @@ class PropertiesTest(TestCaseBase):
         self.assertEqual(frozen['none'], None)
         self.assertEqual(sealed.none, None)
         self.assertEqual(sealed['none'], None)
-        
 
     def test_bad_hyperparams(self):
         sealed = dlc.HyperParams((
@@ -160,5 +208,38 @@ class PropertiesTest(TestCaseBase):
         self.assertRaises(KeyError, self.dictGet, sealed, "x")
         self.assertRaises(KeyError, getattr, frozen, 'layer_type')
         self.assertRaises(KeyError, getattr, sealed, 'layer_type')
-        
+
+
+    def test_lambda_vals(self):
+        p = Props()
+        p2 = Props2(p)
+        p3 = Props3(p2)
+        self.assertEqual(p.m, 64)
+        self.assertEqual(p.D, 512)
+        self.assertEqual(p2.m, 64)
+        self.assertEqual(p2.D, 512)
+        self.assertEqual(p2.i, 512+64)
+        self.assertEqual(p2.m2, 64)
+        self.assertEqual(p2.D2, 512)
+        self.assertEqual(p3.m, 64)
+        self.assertEqual(p3.D, 512)
+        self.assertEqual(p3.i, 512+64)
+        self.assertEqual(p3.m3, 64)
+        self.assertEqual(p3.D3, 512)
+
+        p.m = 128
+        self.assertEqual(p.m, 128)
+        self.assertEqual(p.D, 512)
+        self.assertEqual(p2.m, 64)
+        self.assertEqual(p2.D, 512)
+        self.assertEqual(p2.i, 512+128)
+        self.assertEqual(p2.m2, 128)
+        self.assertEqual(p2.D2, 512)
+        self.assertEqual(p3.m, 64)
+        self.assertEqual(p3.D, 512)
+        self.assertEqual(p3.i, 512+128)
+        self.assertEqual(p3.m3, 128)
+        self.assertEqual(p3.D3, 512)
+
+
 unittest.TextTestRunner(verbosity=2).run(unittest.TestLoader().loadTestsFromTestCase(PropertiesTest))

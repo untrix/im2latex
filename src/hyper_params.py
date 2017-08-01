@@ -164,7 +164,7 @@ class CALSTMParams(dlc.HyperParams):
             PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
                tfc.MLPParams(GLOBAL).updated({
                     # Number of units in all layers of the attention model = D in the paper"s source-code.
-                    'layers_units': (GLOBAL.D,),
+                    'layers_units': (equalto('D', GLOBAL),),
                     'activation_fn': tf.nn.tanh # = tanh in the paper's source code
                        }).freeze()
                 ),
@@ -182,10 +182,10 @@ class CALSTMParams(dlc.HyperParams):
             PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
                instanceof(tfc.RNNParams),
                tfc.RNNParams(GLOBAL).updated({
-                    'B': GLOBAL.B,
+                    'B': equalto('B', GLOBAL),
                     'i': None, ## size of input vector + z_t. Set dynamically.
                      ## paper uses a value of n=1000
-                    'layers_units': (GLOBAL.n,)
+                    'layers_units': (equalto('n', GLOBAL),)
                     })
                 )
         )
@@ -200,7 +200,7 @@ class CALSTMParams(dlc.HyperParams):
         dlc.HyperParams.__init__(self, self.makeProto(GLOBALS), initVals)
         self._trickledown(GLOBALS)
     def _trickledown(self, GLOBAL):
-        self.decoder_lstm.i = self.m+GLOBAL.D
+        self.decoder_lstm.i = LambdaVal(lambda _, __: self.m + GLOBAL.D)
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -243,7 +243,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                         ## One layer with num_units = m is added if output_follow_paper == True
                         ## Last layer must have num_units = K because it outputs logits.
                         ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-                        'layers_units': (GLOBAL.m, GLOBAL.K),
+                        'layers_units': (equalto('m',GLOBAL), equalto('K',GLOBAL)),
                         'activation_fn': tf.nn.relu # paper has it set to relu
                         }).freeze()
                 ),
@@ -254,7 +254,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
                instanceof(tfc.MLPParams),
                    tfc.MLPParams(GLOBAL).updated({
-                       'layers_units': (GLOBAL.D,), ## The paper's source sets all hidden units to D
+                       'layers_units': (equalto('D', GLOBAL),), ## The paper's source sets all hidden units to D
                        ## paper sets hidden activations=relu and final=tanh
                        'activation_fn': tf.nn.relu
                        }).freeze()

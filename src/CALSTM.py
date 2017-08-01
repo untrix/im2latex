@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
     Conditioned Attentive LSTM
-    
+
     Copyright 2017 Sumeet S Singh
 
     This file is part of im2latex solution by Sumeet S Singh.
@@ -42,199 +42,154 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
     that includes one LSTM-Stack conditioned by image features and an attention model.
     """
 
-    def __init__(self, config, context, beamsearch_width=1):
+    def __init__(self, config, context, beamsearch_width=1, var_scope=None):
         assert K.int_shape(context) == (config.B, config.L, config.D)
-        
-        with tf.variable_scope('CALSTM') as scope:
-            super(CALSTM, self).__init__(_scope=scope, name=scope.name)
-            self.my_scope = scope
-            self.C = CALSTMParams(config)
-            ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
-            ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
-            ## phase.
-            self._beamsearch_width = beamsearch_width
-    
-            self._a = context ## Image features from the Conv-Net
-            
-            ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
-            ## to the input batch.
-            if self._beamsearch_width > 1:
-                self._a = K.tile(self._a, (beamsearch_width,1,1))
-    
-            with tf.variable_scope('Decoder_LSTM') as lstm_scope:
-                self._LSTM_stack = tfc.RNNWrapper(self.C.decoder_lstm, 
-                                                 _scope=lstm_scope,
-                                                 beamsearch_width=beamsearch_width)
-                self._lstm_scope = lstm_scope
 
+        with tf.variable_scope(var_scope or 'CALSTM') as scope:
+            with tf.name_scope(scope.original_name_scope):
+                super(CALSTM, self).__init__(_scope=scope, name=scope.name)
+                self.my_scope = scope
+                self.C = CALSTMParams(config)
+                ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
+                ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
+                ## phase.
+                self._beamsearch_width = beamsearch_width
+
+                self._a = context ## Image features from the Conv-Net
+
+                ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
+                ## to the input batch.
+                if self._beamsearch_width > 1:
+                    self._a = K.tile(self._a, (beamsearch_width,1,1))
+
+                self._LSTM_stack = tfc.RNNWrapper(self.C.decoder_lstm,
+                                                 beamsearch_width=beamsearch_width)
 
     @property
     def output_size(self):
         # h_t
         return self._LSTM_stack.output_size
-       
+
     @property
     def state_size(self):
         L = self.C.L # sizeof alpha
         D = self.C.D # size of z
-    
+
         # must match CALSTMState
 #        return CALSTMState(self._LSTM_stack.output_size, self._LSTM_stack.state_size, L, D)
         return CALSTMState(self._LSTM_stack.state_size, L, D)
-    
+
     def assertOutputShape(self, output):
-        """ 
+        """
         Asserts that the shape of the tensor is consistent with the stack's output shape.
         For e.g. the output shape is o then the input-tensor should be of shape (B,o)
         """
         assert (self.ActualBatchSize, self._LSTM_stack.output_size) == K.int_shape(output)
-        
+
     def zero_state(self, batch_size, dtype):
-        with tf.variable_scope(self.my_scope):
-            with tf.variable_scope("ZeroState", values=[batch_size]):
-                return CALSTMState(
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                with tf.variable_scope("ZeroState", values=[batch_size]):
+                    return CALSTMState(
                         self._LSTM_stack.zero_state(batch_size, dtype),
                         tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'),
                         tf.zeros((batch_size, self.C.D), dtype=dtype, name='ztop')
                         )
 
-    ## collections.namedtuple("CALSTMState", (lstm_state', 'alpha', 'ztop'))
-    @staticmethod
-    def zero_to_init_state(zero_state, counter, params, inp):
-        """ 
-        Creates FC layers for lstm_states (init_c and init_h) which will sit atop the init-state MLP.
-        It does this by replacing each instance of 'h' or 'c' with a FC layer using the given params.
-        This static method is part of the init-state model not the CALSTM. Though it belongs inside
-        the Im2LatexModel class, it is nevertheless being kept here due to dependency on the
-        CALSTMState class.
-        """
-        if counter is None:
-            counter = itertools.count(1)
-            
-        assert dlc.issequence(zero_state)
-        
-        s = zero_state
-        if hasattr(s, 'h'):
-            num_units = K.int_shape(s.h)[1]
-            layer_params = tfc.FCLayerParams(params).updated({'num_units':num_units})
-            s = s._replace(h = tfc.FCLayer(layer_params)(inp, counter.next()))
-        if hasattr(s, 'c'):
-            num_units = K.int_shape(s.c)[1]
-            layer_params = tfc.FCLayerParams(params).updated({'num_units':num_units})
-            s = s._replace(c=tfc.FCLayer(layer_params)(inp, counter.next()))
-
-        ## Create a mutable list from the immutable tuple            
-        lst = []
-        for i in xrange(len(s)):
-            if dlc.issequence(s[i]):
-                lst.append(CALSTM.zero_to_init_state(s[i], counter, params, inp))
-            else:
-                lst.append(s[i])
-        
-        ## Create the tuple back from the list
-        if hasattr(s, '_make'):
-            s = s._make(lst)
-        else:
-            s = tuple(lst)
-
-        ## Set htop to the topmost 'h' of the LSTM stack
-#        if hasattr(s, 'htop') and isinstance(s, CALSTMState):
-#            ## s.lstm_state can be a single LSTMStateTuple or a tuple of LSTMStateTuples
-#            s.htop = s.lstm_state.h if hasattr(s.lstm_state, 'h') else s.lstm_state[-1].h
-            
-        return s
-
     @property
     def BeamWidth(self):
         return self._beamsearch_width
-    
+
     @property
     def ActualBatchSize(self):
         return self.C.B*self.BeamWidth
-    
+
     def _attention_model(self, a, h_prev):
-        CONF = self.C
-        B = CONF.B*self.BeamWidth
-        L = CONF.L
-        D = CONF.D
-        h = h_prev
+        with tf.variable_scope(self.my_scope):
+            with tf.variable_scope('AttentionModel'):
+                CONF = self.C
+                B = CONF.B*self.BeamWidth
+                L = CONF.L
+                D = CONF.D
+                h = h_prev
 
-        self._LSTM_stack.assertOutputShape(h_prev)
-        assert K.int_shape(a) == (B, L, D)
+                self._LSTM_stack.assertOutputShape(h_prev)
+                assert K.int_shape(a) == (B, L, D)
 
-        ## For #layers > 1 this will endup being different than the paper's implementation
-        if CONF.att_share_weights:
-            """
-            Here we'll effectively create L MLP stacks all sharing the same weights. Each
-            stack receives a concatenated vector of a(l) and h as input.
+                ## For #layers > 1 this will endup being different than the paper's implementation
+                if CONF.att_share_weights:
+                    """
+                    Here we'll effectively create L MLP stacks all sharing the same weights. Each
+                    stack receives a concatenated vector of a(l) and h as input.
 
-            TODO: We could also
-            use 2D convolution here with a kernel of size (1,D) and stride=1 resulting in
-            an output dimension of (L,1,depth) or (B, L, 1, depth) including the batch dimension.
-            That may be more efficient.
-            """
-            ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
-            ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
-            h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
-            ## Concatenate a and h. Final shape = (B, L, D+n)
-            ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
-            ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
-            assert K.int_shape(ah) == (B, L, dim)
-                
-            ## Below is roughly how it is implemented in the code released by the authors of the paper
-            ##     for i in range(1, CONF.att_a_layers+1):
-            ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
-            ##     for i in range(1, CONF.att_h_layers+1):
-            ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)    
-            ##    ah = a + K.expand_dims(h, axis=1)
+                    TODO: We could also
+                    use 2D convolution here with a kernel of size (1,D) and stride=1 resulting in
+                    an output dimension of (L,1,depth) or (B, L, 1, depth) including the batch dimension.
+                    That may be more efficient.
+                    """
+                    ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
+                    ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
+                    h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
+                    ## Concatenate a and h. Final shape = (B, L, D+n)
+                    ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
+                    ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
+                    assert K.int_shape(ah) == (B, L, dim)
 
-            ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
-            ## One could've just summed/averaged them all here, but the paper uses yet
-            ## another set of weights to accomplish this. So we'll keeep that as an option.
-            if CONF.att_weighted_gather:
-                with tf.variable_scope('weighted_gather'):
-                    ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
-                    ah = K.squeeze(ah, axis=2) # output shape = (B, L)
-            else:
-                ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
-            
-        else: # weights not shared across L
-            ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
-            ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
-            ## of the L*D vector receives its own weight because the effective weight matrix here would be
-            ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
+                    ## Below is roughly how it is implemented in the code released by the authors of the paper
+                    ##     for i in range(1, CONF.att_a_layers+1):
+                    ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
+                    ##     for i in range(1, CONF.att_h_layers+1):
+                    ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
+                    ##    ah = a + K.expand_dims(h, axis=1)
 
-            ## Concatenate a and h. Final shape will be (B, L*D+n)
-            with tf.variable_scope('a_flatten_concat_h'):
-                ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
-            ah = tfc.MLPStack(CONF.att_layers)(ah);
-            ## At this point, ah.shape = (B, L)
-            dim = CONF.att_layers.layers_units[-1]
-            assert dim == L
-            assert K.int_shape(ah) == (B, L)
-        
-        alpha = tf.nn.softmax(ah) # output shape = (B, L)
-        alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
-        
-        assert K.int_shape(alpha) == (B, L)
-        return alpha
+                    ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
+                    ## One could've just summed/averaged them all here, but the paper uses yet
+                    ## another set of weights to accomplish this. So we'll keeep that as an option.
+                    if CONF.att_weighted_gather:
+                        with tf.variable_scope('weighted_gather'):
+                            ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
+                            ah = K.squeeze(ah, axis=2) # output shape = (B, L)
+                    else:
+                        ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
+
+                else: # weights not shared across L
+                    ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
+                    ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
+                    ## of the L*D vector receives its own weight because the effective weight matrix here would be
+                    ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
+
+                    ## Concatenate a and h. Final shape will be (B, L*D+n)
+                    with tf.variable_scope('a_flatten_concat_h'):
+                        ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
+                    ah = tfc.MLPStack(CONF.att_layers)(ah);
+                    ## At this point, ah.shape = (B, L)
+                    dim = CONF.att_layers.layers_units[-1]
+                    assert dim == L
+                    assert K.int_shape(ah) == (B, L)
+
+                alpha = tf.nn.softmax(ah) # output shape = (B, L)
+                alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
+
+                assert K.int_shape(alpha) == (B, L)
+                return alpha
 
     def _decoder_lstm(self, Ex_t, z_t, lstm_states_t_1):
         """Represents invocation of the decoder lstm. (h_t, lstm_states_t) = *(z_t|Ex_t, lstm_states_t_1)"""
-        m = self.C.m
-        D = self.C.D
-        B = self.C.B*self.BeamWidth
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                m = self.C.m
+                D = self.C.D
+                B = self.C.B*self.BeamWidth
 
-        inputs_t = K.concatenate((Ex_t, z_t))
-        assert K.int_shape(inputs_t) == (B, m+D)
-        self._LSTM_stack.assertStateShape(lstm_states_t_1)
-        
-        (htop_t, lstm_states_t) = self._LSTM_stack(inputs_t, lstm_states_t_1)
-        return (htop_t, lstm_states_t)
+                inputs_t = tf.concat((Ex_t, z_t), axis=-1, name="Ex_concat_z")
+                assert K.int_shape(inputs_t) == (B, m+D)
+                self._LSTM_stack.assertStateShape(lstm_states_t_1)
+
+                (htop_t, lstm_states_t) = self._LSTM_stack(inputs_t, lstm_states_t_1)
+                return (htop_t, lstm_states_t)
 
     def call(self, inputs, state):
         """
-        TODO: Incorporate Dropout
         Builds/threads tf graph for one RNN iteration.
         Takes in previous lstm states (h and c),
         the current input and the image annotations (a) as input and outputs the states and outputs for the
@@ -242,47 +197,47 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         Note that input(t) = Ey(t-1). Input(t=0) = Null. When training, the target output is used for Ey
         whereas at prediction time (via. beam-search for e.g.) the actual output is used.
         """
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):## Ugly but only way to fix TB visuals
 
-        ## Input
-        Ex_t = inputs                          # shape = (B,m)
-        ## State
-        htop_1 = state.lstm_state.h if self._LSTM_stack.num_layers == 1 else state.lstm_state[-1].h
-        lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
-        alpha_t_1 = state.alpha            # shape = (B, L)
-        a = self._a
+                ## Input
+                Ex_t = inputs                          # shape = (B,m)
+                ## State
+                htop_1 = state.lstm_state.h if self._LSTM_stack.num_layers == 1 else state.lstm_state[-1].h
+                lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
+                alpha_t_1 = state.alpha            # shape = (B, L)
+                a = self._a
 
-        CONF = self.C
-        B = CONF.B*self.BeamWidth
-        m = CONF.m
-        L = CONF.L
-#        Kv =CONF.K
+                CONF = self.C
+                B = CONF.B*self.BeamWidth
+                m = CONF.m
+                L = CONF.L
+        #        Kv =CONF.K
 
-        assert K.int_shape(Ex_t) == (B,m)
-        assert K.int_shape(alpha_t_1) == (B, L)
-        self._LSTM_stack.assertStateShape(lstm_states_t_1)
+                assert K.int_shape(Ex_t) == (B, m)
+                assert K.int_shape(alpha_t_1) == (B, L)
+                self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
-        ################ Attention Model ################
-        with tf.variable_scope('Attention'):
-            alpha_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
+                ################ Attention Model ################
+                alpha_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
 
-        ################ Soft deterministic attention: z = alpha-weighted mean of a ################
-        ## (B, L) batch_dot (B,L,D) -> (B, D)
-        with tf.variable_scope('Phi'):
-            z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
-            z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
+                ################ Soft deterministic attention: z = alpha-weighted mean of a ################
+                ## (B, L) batch_dot (B,L,D) -> (B, D)
+                with tf.variable_scope('Phi'):
+                    z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
+                    z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
 
-        ################ Decoder Layer ################
-        with tf.variable_scope(self._lstm_scope):
-            (htop_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
+                ################ Decoder Layer ################
+                (htop_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
 
-#        ################ Output Layer ################
-#        with tf.variable_scope('Output_Layer'):
-#            yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
+        #        ################ Output Layer ################
+        #        with tf.variable_scope('Output_Layer'):
+        #            yLogits_t = self._output_layer(Ex_t, h_t, z_t) # yProbs_t.shape = (B,K)
 
-        self._LSTM_stack.assertOutputShape(htop_t)
-        self._LSTM_stack.assertStateShape(lstm_states_t)
-        ## assert K.int_shape(yProbs_t) == (B, Kv)
-        ## assert K.int_shape(yLogits_t) == (B, Kv)
-        assert K.int_shape(alpha_t) == (B, L)
+                self._LSTM_stack.assertOutputShape(htop_t)
+                self._LSTM_stack.assertStateShape(lstm_states_t)
+                ## assert K.int_shape(yProbs_t) == (B, Kv)
+                ## assert K.int_shape(yLogits_t) == (B, Kv)
+                assert K.int_shape(alpha_t) == (B, L)
 
-        return htop_t, CALSTMState(lstm_states_t, alpha_t, z_t)
+                return htop_t, CALSTMState(lstm_states_t, alpha_t, z_t)

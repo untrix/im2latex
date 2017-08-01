@@ -21,13 +21,12 @@ Tested on python 2.7
 
 @author: Sumeet S Singh
 """
-import copy
 import collections
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
         Exception.__init__(self, msg)
-    
+
 class Properties(dict):
     """
     A shorthand way to create a class with
@@ -60,10 +59,20 @@ class Properties(dict):
         dict.__init__(self, d)
         object.__setattr__(self, '_isFrozen', False)
         object.__setattr__(self, '_isSealed', False)
-        
+
     def _get_val_(self, key):
         return dict.__getitem__(self, key)
-            
+
+    def _rvn(self, key):
+        """
+        For internal use only - needed by Params.__init__.
+        returns the dictionary value or None
+        """
+        try:
+            return self._get_val_(key)
+        except KeyError:
+            return None
+
     def _set_val_(self, key, val):
         if self.isFrozen():
             raise AccessDeniedError('Object is frozen, therefore key "%s" cannot be modified'%(key,))
@@ -71,38 +80,38 @@ class Properties(dict):
             raise AccessDeniedError('Object is sealed, new key "%s" cannot be added'%(key,))
         else:
             dict.__setitem__(self, key, val)
-    
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def copy(self):
         ## Shallow copy
         return self.__class__(self)
-    
+
     def updated(self, other):
         """ chain-update
-        Same as dict.update except that it returns self and therefore 
+        Same as dict.update except that it returns self and therefore
         supports call-chaining. E.g. Properties(other).cupdate(other2).cupdate(other2)
         """
         dict.update(self, other)
         return self
-    
+
     def __getattr__(self, key):
         return self._get_val_(key)
-    
+
     def __setattr__(self, key, val):
         return self._set_val_(key, val)
-    
+
     def __getitem__(self, key):
         return self._get_val_(key)
-    
+
     def __setitem__(self, key, val):
         return self._set_val_(key, val)
-    
+
     def isFrozen(self):
         return object.__getattribute__(self, '_isFrozen')
-    
+
     def isSealed(self):
         return object.__getattribute__(self, '_isSealed')
 
@@ -124,17 +133,17 @@ class NoneProperties(Properties):
             return Properties._get_val_(self, key)
         except KeyError:
             return None
-    
+
 class ParamDesc(Properties):
     """
     A property descriptor.
     """
     def __init__(self, name, text, validator=None, default=None):
-        """ 
+        """
         @name = name of property,
-        @text = textual description, 
+        @text = textual description,
         @validator = (optional) a validator object that implements the __contains__()
-            method so that membership may be inspected using the 'in' operator - 
+            method so that membership may be inspected using the 'in' operator -
             as in 'if val in validator:'
         @default = value (optional) stands for the default value. Set to None if
             unspecified.
@@ -146,17 +155,17 @@ class ParamDesc(Properties):
 
         Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
         self.freeze()
-    
+
 ## A shorter alias of ParamDesc
 PD = ParamDesc
 
 class PDTuple(tuple):
     def __new__ (cls, pd_tuple):
         return super(PDTuple, cls).__new__(cls, pd_tuple)
-    
+
     def __getitem__(self, name):
         return [pd for pd in self if pd.name == name][0]
-    
+
 ## Shorter alias of ParamList
 PDL = PDTuple
 
@@ -213,14 +222,14 @@ class Params(Properties):
         the callable is a copy of the resolved values, and therefore changing
         some other property's value will have no impact. This feature is used
         to set one property's value based on others. See the example below.
-        
+
         Examples:
         o1 = Params(
                     [
                      ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
                      ParamDesc('layer_type', 'Type of layers to be created'),
                      ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1),
-                     ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers', 
+                     ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers',
                                xrange(1, 10000),
                                lambda name, props: 10000 // props["num_layers"]), ## Lambda function will be invoked
                      ParamDesc('activation_fn', 'tensorflow activation function',
@@ -234,22 +243,20 @@ class Params(Properties):
         Properties.__init__(self)
         descriptors = prototype
         props = Properties()
-        vals1_ = {}
-        vals2_ = {}
+        vals1_ = Properties()
+        vals2_ = Properties()
         _vals = {}
-        
+
         if isinstance(prototype, Params):
             descriptors = prototype.protoS
             if initVals is None:
                 vals1_ = prototype
             else:
-                vals1_ = initVals
+                vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
                 vals2_ = prototype
         else:
-            if initVals is None:
-                vals1_ = {}
-            else:
-                vals1_ = initVals
+            if initVals is not None:
+                vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
 
         object.__setattr__(self, '_desc_list', tuple(descriptors) )
 
@@ -259,8 +266,10 @@ class Params(Properties):
             if name not in props:
                 try:
                     props[name] = prop
-                    _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
-#                    if callable(_vals[name]) and (not isinstance(prop.validator, iscallable)):
+#                    _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
+                    val1 = vals1_._rvn(name)
+                    val2 = vals2_._rvn(name)
+                    _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
                     if isinstance(_vals[name], LambdaVal):
                         ## This is a case where a proxy function has been provided
                         ## in place of a value.
@@ -276,10 +285,10 @@ class Params(Properties):
         # Derivatives: Run the derived param callables
         # First copy _vals so that we may safely pass the dictionary of values to
         # the callables
-        _vals_copy = copy.copy(_vals)
-        for name in derivatives:
-            _vals[name] = _vals_copy[name] = _vals[name](name, _vals_copy)
-        
+#        _vals_copy = copy.copy(_vals)
+#        for name in derivatives:
+#            _vals[name] = _vals_copy[name] = _vals[name](name, _vals_copy)
+
         # Validation: Now insert the property values one by one. Doing so will invoke
         # self._set_val_ which will validate their values against self._descr_dict.
         for prop in descriptors:
@@ -294,62 +303,93 @@ class Params(Properties):
 
         # Finally, seal the object so that no new properties may be added.
         self.seal()
-                        
+
     def _set_val_(self, name, val):
         """ Polymorphic override of _set_val_. Be careful of recursion. """
         protoD = self.protoD
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
-        # As a special case, we allow setting None values even if that's not an 
+        # As a special case, we allow setting None values even if that's not an
         # allowed value. This is so because the code may want to set the
         # property value in the future based on some dynamic decision.
-        elif (val is not None) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
+        elif (val is not None) and (not isinstance(val, LambdaVal)) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
             raise ParamsValueError('%s is not a valid value of property %s'%(val, name))
         else:
             return Properties._set_val_(self, name, val)
 
+
+    def _resolve_raw_val(self, name, val):
+        """Check to see if a value is dynamic and resolve it if so. """
+        if isinstance(val, LambdaVal):
+            val = val(name, self)
+        return val
+
+    def _resolve_raw_vals(self, name, vals):
+        """ Resolve a single (possibly lambda) val or sequence of (possibly lambda) vals. """
+#        if isTupleOrList(vals):
+        if issequence(vals):
+            vals = [self._resolve_raw_val(name, val) for val in vals]
+            vals = vals.__class__(vals)
+        else:
+            vals = self._resolve_raw_val(name, vals)
+
+        protoD = self.protoD
+        if (vals is not None) and (protoD[name].validator is not None) and (vals not in protoD[name].validator):
+            raise ParamsValueError('%s is not a valid value of property %s'%(vals, name))
+
+        return vals
+
+    def _rvn(self, name):
+        """
+        Return raw-value if key exists else return None.
+        """
+        try:
+            return Properties._get_val_(self, name)
+        except KeyError:
+            return None
 
     """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
         else:
-            return Properties._get_val_(self, name)
-    
+            val = Properties._get_val_(self, name)
+            return self._resolve_raw_vals(name, val)
+
     def isValidName(self, name):
         return name in self.protoD
-    
+
     def append(self, other):
         assert isinstance(other, Params)
         for param in other.protoS:
             assert param.name not in self.protoD
-        
+
         ## Update Descriptor first
         protoD = self.protoD.copy()
         for param in other.protoS:
             protoD[param.name] = param
-            self.protoS.append(param)            
+            self.protoS.append(param)
         object.__setattr__(self, '_descr_dict', protoD.freeze())
-        
+
         ## Update values
         for param in other.protoS:
             self[param.name] = other[param.name]
-            
+
         return self
-    
+
     @property
     def protoS(self):
         # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
         #return self._desc_list
         return object.__getattribute__(self, '_desc_list')
-    
+
     @property
     def protoD(self):
         # self._descr_dict won't call __getattr__ because __getattribute__ returns successfully
         #return self._descr_dict
         return object.__getattribute__(self, '_descr_dict')
-    
-    
+
+
 class HyperParams(Params):
     """
     Params class specialized for HyperParams. Adds the following semantic:
@@ -366,7 +406,7 @@ class HyperParams(Params):
         code may wish to initialize a property to None, and set it to a valid value
         later. Setting a property value to None tantamounts to unsetting / deleting
         the property.
-    """        
+    """
 
     def __contains__(self, name):
         """ Handles None values in a special way as stated above. """
@@ -375,7 +415,7 @@ class HyperParams(Params):
             return True
         except KeyError:
             return False
-    
+
     def _get_val_(self, name):
         """ Polymorphic override of _get_val_. Be careful of recursion. """
         val = Params._get_val_(self, name)
@@ -396,7 +436,7 @@ class LambdaVal(object):
         self._func = func
     def __call__(self, name, props):
         return self._func(name, props)
-        
+
 class LinkedParam(_ParamValidator):
     """ A validator class indicating that the param's value is derived by calling a function.
     Its value cannot be directly set, instead a function should be provided that will
@@ -422,10 +462,10 @@ class equalto(LambdaVal):
                )
            ))
     """
-    def __init__(self, target):
-        LambdaVal.__init__(self, lambda _, props: props[target])
+    def __init__(self, target, d=None):
+        LambdaVal.__init__(self, lambda _, props: props[target] if d is None else d[target])
 
-        
+
 # A validator that returns False for non-None values
 class _mandatoryValidator(_ParamValidator):
     def __contains__(self, val):
@@ -436,12 +476,12 @@ class instanceof(_ParamValidator):
         self._cls = cls
         self._noneokay = noneokay
     def __contains__(self, obj):
-        return (self._noneokay and obj is None) or isinstance(obj, self._cls)
+        return (self._noneokay and obj is None) or isinstance(obj, self._cls) or isinstance(obj, LambdaVal)
 
 class instanceofOrNone(instanceof):
     def __init__(self, cls):
         super(instanceofOrNone, self).__init__(cls, True)
-        
+
 # A inclusive range validator class
 class range_incl(_ParamValidator):
     def __init__(self, begin=None, end=None):
@@ -478,12 +518,15 @@ def issequence(v):
         return False
     return isinstance(v, collections.Sequence)
 
+def isTupleOrList(v):
+    return isinstance(v, tuple) or isinstance(v, list)
+
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):
         assert lst is None or issequence(lst)
         self._noneokay = noneokay
         self._lst = lst
-        
+
     def __contains__(self, v):
         if v is None: ## special handling for None values
             if self._noneokay:
@@ -511,11 +554,11 @@ class issequenceof(instanceof):
 class issequenceofOrNone(issequenceof):
     def __init__(self, cls):
         issequenceof.__init__(self, cls, noneokay=True)
-        
+
 class _anyok(_ParamValidator):
     def __contains__(self, v):
         return True
-    
+
 # Helpful validator objects
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
