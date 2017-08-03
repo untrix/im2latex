@@ -491,6 +491,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                         decoder,
                                                                         maximum_iterations=self.C.Max_Seq_Len + 10,
                                                                         swap_memory=True)
+
+                return dlc.Properties({
+                        'inp_q':self._inp_q,
+                        'outputs': final_outputs,
+                        'seq_lens': final_sequence_lengths
+                        })
         return final_outputs, final_state, final_sequence_lengths
 
 

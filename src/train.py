@@ -27,6 +27,7 @@ Tested on python 2.7
 import os
 import time
 import argparse as arg
+import numpy as np
 import tensorflow as tf
 import tf_commons as tfc
 from Im2LatexModel import Im2LatexModel
@@ -101,9 +102,7 @@ def train(num_steps, print_steps, num_epochs,
             model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
-                enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc())
-                qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
-                coord = tf.train.Coordinator()
+                enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
             trainable_vars_n = num_trainable_vars()
 
         ## Validation Graph
@@ -111,8 +110,13 @@ def train(num_steps, print_steps, num_epochs,
             beamwidth=10
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
-            o,s,l = model_predict.beamsearch()
+            valid_ops = model_predict.beamsearch()
+            with tf.variable_scope('InputQueue'):
+                enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
             assert(num_trainable_vars() == trainable_vars_n)
+
+        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
+        coord = tf.train.Coordinator()
 
         printVars()
 
@@ -128,14 +132,34 @@ def train(num_steps, print_steps, num_epochs,
             enqueue_threads = qr.create_threads(session, coord=coord, start=True)
 
             start_time = time.time()
+            train_time = []
+            valid_time = []
             step = 0
             try:
                 while not coord.should_stop():
+                    step_start_time = time.time()
                     feed_dict={hyper.dropout.keep_prob: keep_prob}
-                    session.run(train_ops.train, feed_dict=feed_dict)
+                    _, ll, ctc, cost, gstep, penalty = session.run((train_ops.train, 
+                                    train_ops.log_likelihood,
+                                    train_ops.ctc_loss,
+                                    train_ops.cost,
+                                    train_ops.global_step,
+                                    train_ops.alpha_penalty), feed_dict=feed_dict)
                     step += 1
+                    train_time.append(time.time()-step_start_time)
                     if step % print_steps == 0:
-                        print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+                        valid_start_time = time.time()
+                        session.run((valid_ops.outputs, valid_ops.seq_lens))
+                        valid_time.append(time.time() - valid_start_time)
+                        print 'Time for %d steps, elapsed = %f, mean training = %f, mean validation = %f'%(step,
+                                                                           time.time()-start_time,
+                                                                           np.mean(train_time),
+                                                                           np.mean(valid_time))
+                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f'%(gstep,
+                                                                                              ll,
+                                                                                              ctc,
+                                                                                              penalty,
+                                                                                              cost)
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
             except Exception as e:
@@ -197,6 +221,7 @@ def main():
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
     globalParams = dlc.Properties()
+    
     if args.batch_size is not None:
         globalParams.B = args.batch_size
     if args.partial_batch:
