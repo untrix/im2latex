@@ -87,9 +87,12 @@ def train(num_steps, print_steps, num_epochs,
     graph = tf.Graph()
     with graph.as_default():
         globalParams.update({'build_image_context':False,
+                             'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                              'dropout':tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
                                                                                       name="KeepProb")})
                             })
+
+        print 'Hyper-params overrides:\n%s'%(globalParams,)
         hyper = hyper_params.make_hyper(globalParams)
         batch_iterator = BatchContextIterator(raw_data_folder,
                                               vgg16_folder,
@@ -156,10 +159,10 @@ def train(num_steps, print_steps, num_epochs,
                                                                            np.mean(train_time),
                                                                            np.mean(valid_time))
                         print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f'%(gstep,
-                                                                                              ll.mean(),
-                                                                                              ctc.mean(),
-                                                                                              penalty.mean(),
-                                                                                              cost.mean())
+                                                                                              ll[()],
+                                                                                              ctc[()],
+                                                                                              penalty[()],
+                                                                                              cost[()])
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
             except Exception as e:

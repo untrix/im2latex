@@ -391,19 +391,24 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     if self.C.sum_logloss:
                         ## Here we do not normalize the log-loss across time-steps because the
                         ## paper as well as it's source-code do not do that.
-                        loss_vector = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                        log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
                                                                        targets=y_s,
                                                                        weights=sequence_mask,
                                                                        average_across_timesteps=False,
-                                                                       average_across_batch=True)
-                        log_likelihood = tf.reduce_sum(loss_vector) # scalar
+                                                                       average_across_batch=False)
+                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                        log_losses = tf.reduce_sum(log_losses, axis=1) # sum along time dimension => (B,)
+                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                        log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
                     else: ## Standard log perplexity (average per-word)
-                        log_likelihood = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                        log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
                                                                        targets=y_s,
                                                                        weights=sequence_mask,
                                                                        average_across_timesteps=True,
-                                                                       average_across_batch=True)
-
+                                                                       average_across_batch=False)
+                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                        log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
+                    assert K.int_shape(log_likelihood) == tuple()
                     alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
                     ## Calculate the alpha penalty: lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i)))
                     ##
@@ -419,10 +424,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
                     alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-
-                    tf.summary.scalar("Loss/log_likelihood", log_likelihood)
-                    tf.summary.scalar("Loss/alpha-penalty", alpha_penalty)
-
+                    assert K.int_shape(alpha_penalty) == tuple()
                 ################ Build CTC Cost Function ################
                 ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
                 ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
@@ -438,13 +440,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     y_idx =    tf.where(ctc_mask)
                     y_vals =   tf.gather_nd(y_ctc, y_idx)
                     y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
-                    ctc_loss = tf.nn.ctc_loss(y_sparse,
+                    ctc_losses = tf.nn.ctc_loss(y_sparse,
                                               yLogits,
                                               sequence_lengths,
                                               ctc_merge_repeated=False,
                                               time_major=False)
-                    tf.summary.scalar("Loss/CTC", ctc_loss)
-
+                    print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
+                    assert K.int_shape(ctc_losses) == (B, )
+                    if self.C.sum_logloss:
+                        ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
+                    else: # mean loss per word
+                        ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
+                    assert K.int_shape(ctc_loss) == tuple()
                 if self.C.use_ctc_loss:
                     cost = ctc_loss + alpha_penalty
                 else:

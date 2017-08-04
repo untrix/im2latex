@@ -288,7 +288,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                0.0001)   
         )
     def __init__(self, initVals):
-        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
+        dlc.HyperParams.__init__(self, self.makeProto(GlobalParams(initVals).freeze()), initVals)
         self._trickledown()
     def _trickledown(self):
         pass
@@ -299,11 +299,11 @@ class Im2LatexModelParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-def make_hyper(globalOverrides):
-    GLOBALS = GlobalParams(globalOverrides).freeze()
-    CALSTM_1 = CALSTMParams(GLOBALS).freeze()
+def make_hyper(initVals):
+    globals = GlobalParams(initVals)
+    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
-    HYPER = Im2LatexModelParams(GLOBALS).updated({'D_RNN':(CALSTM_1,)}).freeze()
+    HYPER = Im2LatexModelParams(initVals).updated({'D_RNN':(CALSTM_1,)}).freeze()
     
 #    print 'Hyper Params = '
 #    print HYPER
