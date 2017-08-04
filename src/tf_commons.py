@@ -567,3 +567,4 @@ def printVars(name, coll):
         total_n += n
         print var.name, K.int_shape(var), 'num_params = ', n
     print '\nTotal number of variables = ', total_n
+    return total_n

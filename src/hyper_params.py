@@ -38,7 +38,7 @@ class GlobalParams(dlc.HyperParams):
     proto = (
         PD('image_shape',
            'Shape of input images. Should be a python sequence.',
-           None,
+           issequenceof(int),
            (120,1075,3)
            ),
         PD('Max_Seq_Len',

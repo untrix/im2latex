@@ -325,14 +325,14 @@ class Params(Properties):
             val = val(name, self)
         return val
 
-    def _resolve_raw_vals(self, name, vals):
+    def _resolve_raw_vals(self, name, vals_):
         """ Resolve a single (possibly lambda) val or sequence of (possibly lambda) vals. """
-#        if isTupleOrList(vals):
-        if issequence(vals):
-            vals = [self._resolve_raw_val(name, val) for val in vals]
-            vals = vals.__class__(vals)
+#        if isTupleOrList(vals_):
+        if issequence(vals_):
+            vals_l = [self._resolve_raw_val(name, val) for val in vals_]
+            vals = vals_.__class__(vals_l)
         else:
-            vals = self._resolve_raw_val(name, vals)
+            vals = self._resolve_raw_val(name, vals_)
 
         protoD = self.protoD
         if (vals is not None) and (protoD[name].validator is not None) and (vals not in protoD[name].validator):
