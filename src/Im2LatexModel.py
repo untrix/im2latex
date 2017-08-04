@@ -424,8 +424,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
                     alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                    sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
+                    mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
                     mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
+                    mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
                     assert K.int_shape(alpha_penalty) == tuple()
                 ################ Build CTC Cost Function ################
                 ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
@@ -479,7 +480,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'alpha_penalty': alpha_penalty,
                         'cost': cost,
                         'global_step':global_step,
-                        'sum_alpha_i': sum_alpha_i,
+                        'mean_sum_alpha_i': mean_sum_alpha_i,
+                        'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len
                         })
 

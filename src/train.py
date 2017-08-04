@@ -146,13 +146,13 @@ def train(num_steps, print_steps, num_epochs,
                 while not coord.should_stop():
                     step_start_time = time.time()
                     feed_dict={hyper.dropout.keep_prob: keep_prob}
-                    _, ll, ctc, cost, gstep, penalty, sai, msl = session.run((train_ops.train, 
+                    _, ll, ctc, cost, gstep, penalty, sai, sai2, msl = session.run((train_ops.train, 
                                     train_ops.log_likelihood,
                                     train_ops.ctc_loss,
                                     train_ops.cost,
                                     train_ops.global_step,
                                     train_ops.alpha_penalty,
-                                    train_ops.sum_alpha_i,
+                                    train_ops.mean_sum_alpha_i, train_ops.mean_sum_alpha_i2,
                                     train_ops.mean_seq_len), feed_dict=feed_dict)
                     step += 1
                     train_time.append(time.time()-step_start_time)
@@ -164,12 +164,13 @@ def train(num_steps, print_steps, num_epochs,
                                                                            time.time()-start_time,
                                                                            np.mean(train_time),
                                                                            np.mean(valid_time))
-                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, sum_alpha %f, mean_seq_len %f'%(step,
+                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, sum_alpha %f, sum_alpha1 %f, mean_seq_len %f'%(step,
                                                                                               ll[()],
                                                                                               ctc[()],
                                                                                               penalty[()],
                                                                                               cost[()],
                                                                                               sai[()],
+                                                                                              sai2[()],
                                                                                               msl[()]
                                                                                               )
             except tf.errors.OutOfRangeError:
