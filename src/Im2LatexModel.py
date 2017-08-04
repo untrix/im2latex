@@ -400,7 +400,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         log_losses = tf.reduce_sum(log_losses, axis=1) # sum along time dimension => (B,)
                         # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
                         log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
-                    else: ## Standard log perplexity (average per-word)
+                    else: ## Standard log perplexity (average per-word log perplexity)
                         log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
                                                                        targets=y_s,
                                                                        weights=sequence_mask,
@@ -415,7 +415,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     if self.C.MeanSumAlphaEquals1:
                         mean_sum_alpha_i = 1.0
                     else:
-                        mean_sum_alpha_i = tf.cast(sequence_lengths, dtype=tf.float32) / self.C.L # (B,)
+                        mean_sum_alpha_i = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
                         mean_sum_alpha_i = tf.expand_dims(mean_sum_alpha_i, axis=1) # (B, 1)
 
         #                sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
@@ -424,6 +424,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
                     alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                    sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
+                    mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
                     assert K.int_shape(alpha_penalty) == tuple()
                 ################ Build CTC Cost Function ################
                 ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
@@ -476,7 +478,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'ctc_loss': ctc_loss,
                         'alpha_penalty': alpha_penalty,
                         'cost': cost,
-                        'global_step':global_step
+                        'global_step':global_step,
+                        'sum_alpha_i': sum_alpha_i,
+                        'mean_seq_len': mean_seq_len
                         })
 
     def beamsearch(self):
