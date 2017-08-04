@@ -33,7 +33,7 @@ import tf_commons as tfc
 from Im2LatexModel import Im2LatexModel
 from keras import backend as K
 import hyper_params
-from data_reader import BatchContextIterator, BatchImageIterator
+from data_reader import BatchContextIterator
 import dl_commons as dlc
 
 def num_trainable_vars():
@@ -183,8 +183,8 @@ def main():
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
-                        help="Number of training steps after which to log results. Defaults to 10 if unspecified",
-                        default=10)
+                        help="Number of training steps after which to log results. Defaults to 50 if unspecified",
+                        default=50)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
