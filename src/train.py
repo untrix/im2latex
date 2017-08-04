@@ -79,13 +79,13 @@ def printVars():
 def train(num_steps, print_steps, num_epochs,
           raw_data_folder=None,
           vgg16_folder=None,
-          globalParams=None,
-          keep_prob=0.9):
+          globalParams=None):
     """
     Start training the model. All kwargs with default values==None must be supplied.
     """
     graph = tf.Graph()
     with graph.as_default():
+        keep_prob = globalParams.keep_prob
         globalParams.update({'build_image_context':False,
                              'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                              'dropout':tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
@@ -160,11 +160,11 @@ def train(num_steps, print_steps, num_epochs,
                         valid_start_time = time.time()
                         ## session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time.append(time.time() - valid_start_time)
-                        print 'Time for %d steps, elapsed = %f, mean training = %f, mean validation = %f'%(gstep,
+                        print 'Time for %d steps, elapsed = %f, training rate = %f, validation rate = %f'%(gstep,
                                                                            time.time()-start_time,
-                                                                           np.mean(train_time),
-                                                                           np.mean(valid_time))
-                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, sum_alpha %f, sum_alpha1 %f, mean_seq_len %f'%(step,
+                                                                           np.mean(train_time) * hyper.B / 100.,
+                                                                           np.mean(valid_time) * hyper.B / 100.)
+                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, sum_alpha %f, sum_alpha2 %f, mean_seq_len %f'%(step,
                                                                                               ll[()],
                                                                                               ctc[()],
                                                                                               penalty[()],
@@ -198,6 +198,9 @@ def main():
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 50 if unspecified",
                         default=50)
+    parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
+                        help="Dropout 'keep' probability. Defaults to 0.9",
+                        default=0.9)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
@@ -233,7 +236,7 @@ def main():
     else:
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
-    globalParams = dlc.Properties()
+    globalParams = dlc.Properties({'keep_prob': args.keep_prob})
     
     if args.batch_size is not None:
         globalParams.B = args.batch_size
