@@ -89,11 +89,13 @@ def train(num_steps, print_steps, num_epochs,
         globalParams.update({'build_image_context':False,
                              'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                              'dropout':tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
-                                                                                      name="KeepProb")})
+                                                                                      name="KeepProb")}),
+                             'pLambda': 0.0005,
+                             'MeanSumAlphaEquals1': False
                             })
 
-        print 'Hyper-params overrides:\n%s'%(globalParams,)
         hyper = hyper_params.make_hyper(globalParams)
+        print 'Hyper-params %s'%(hyper,)
         batch_iterator = BatchContextIterator(raw_data_folder,
                                               vgg16_folder,
                                               hyper,
@@ -152,13 +154,13 @@ def train(num_steps, print_steps, num_epochs,
                     train_time.append(time.time()-step_start_time)
                     if step % print_steps == 0:
                         valid_start_time = time.time()
-                        session.run((valid_ops.outputs, valid_ops.seq_lens))
+                        ## session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time.append(time.time() - valid_start_time)
-                        print 'Time for %d steps, elapsed = %f, mean training = %f, mean validation = %f'%(step,
+                        print 'Time for %d steps, elapsed = %f, mean training = %f, mean validation = %f'%(gstep,
                                                                            time.time()-start_time,
                                                                            np.mean(train_time),
                                                                            np.mean(valid_time))
-                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f'%(gstep,
+                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f'%(step,
                                                                                               ll[()],
                                                                                               ctc[()],
                                                                                               penalty[()],

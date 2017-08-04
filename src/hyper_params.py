@@ -285,7 +285,7 @@ class Im2LatexModelParams(dlc.HyperParams):
               True),
             PD('pLambda', 'Lambda value for alpha penalty',
                decimal(0),
-               0.0001)   
+               0.00001)
         )
     def __init__(self, initVals):
         dlc.HyperParams.__init__(self, self.makeProto(GlobalParams(initVals).freeze()), initVals)
