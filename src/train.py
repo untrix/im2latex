@@ -156,10 +156,10 @@ def train(num_steps, print_steps, num_epochs,
                                                                            np.mean(train_time),
                                                                            np.mean(valid_time))
                         print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f'%(gstep,
-                                                                                              ll,
-                                                                                              ctc,
-                                                                                              penalty,
-                                                                                              cost)
+                                                                                              ll.mean(),
+                                                                                              ctc.mean(),
+                                                                                              penalty.mean(),
+                                                                                              cost.mean())
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
             except Exception as e:
