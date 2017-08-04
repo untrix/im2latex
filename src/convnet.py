@@ -94,8 +94,8 @@ def run(params):
             print '\n'
             start_time = time.clock()
             for step, b in enumerate(b_it, start=1):
-                if b.epoch > 1 or (params.num_steps >= 0 and step > params.num_steps):
-                    break
+                # if b.epoch > 1 or (params.num_steps >= 0 and step > params.num_steps):
+                #     break
                 feed_dict = {tf_im:b.im, K.learning_phase(): 0}
                 a_list = tf_session.run(tf_a_list, feed_dict = feed_dict)
                 assert len(a_list) == len(b.image_name)
@@ -106,7 +106,7 @@ def run(params):
                         pickle.dump(a, f, pickle.HIGHEST_PROTOCOL)
                 if step % 10 == 0:
                     print('Elapsed time for %d steps = %d seconds'%(step, time.clock()-start_time))
-            print('Elapsed time for %d steps = %d seconds'%(step-1, time.clock()-start_time))
+            print('Elapsed time for %d steps = %d seconds'%(step, time.clock()-start_time))
             print 'done'
               
 def main():
