@@ -110,7 +110,7 @@ def train(num_steps, print_steps, num_epochs,
 
         ## Validation Graph
         with tf.name_scope('DecodingGraph'):
-            beamwidth=10
+            beamwidth=1
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
             valid_ops = model_predict.beamsearch()

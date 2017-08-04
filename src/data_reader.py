@@ -179,7 +179,7 @@ class ShuffleIterator(object):
             self._step += 1
         
         batch = self._batch_list[next_pos]
-        print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
+        ## print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
         df_bin = self._df[self._df.bin_len == batch[0]]
         assert df_bin.bin_len.iloc[batch[1]*self._batch_size] == batch[0]
         assert df_bin.bin_len.iloc[(batch[1]+1)*self._batch_size-1] == batch[0]
