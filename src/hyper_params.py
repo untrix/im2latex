@@ -301,6 +301,7 @@ class Im2LatexModelParams(dlc.HyperParams):
 
 def make_hyper(initVals):
     globals = GlobalParams(initVals)
+    initVals = dlc.Properties(initVals)
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
     HYPER = Im2LatexModelParams(initVals).updated({'D_RNN':(CALSTM_1,)}).freeze()
