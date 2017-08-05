@@ -323,7 +323,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
         ## RNN.__call__
         yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
-
         return self.ScanOut(yLogits_t, state_t)
 
     def build_train_graph(self):
@@ -357,7 +356,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                             alpha,
                                             self._seq_len,
                                             self._y_ctc,
-                                            self._ctc_len).updated({'inp_q':self._inp_q})
+                                            self._ctc_len).updated({
+                                                'inp_q':self._inp_q,
+                                                'tb_logs': tf.summary.merge_all()}
+                                                )
 
                 return train_ops
 
@@ -460,10 +462,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 else:
                     cost = log_likelihood + alpha_penalty
 
-                tf.summary.scalar('training/logloss', log_likelihood)
-                tf.summary.scalar('training/ctc_loss', ctc_loss)
-                tf.summary.scalar('training/alpha_penalty', alpha_penalty)
-                tf.summary.scalar('training/total_cost', cost)
+                tf.summary.scalar('training/logloss/', log_likelihood)
+                tf.summary.scalar('training/ctc_loss/', ctc_loss)
+                tf.summary.scalar('training/alpha_penalty/', alpha_penalty)
+                tf.summary.scalar('training/total_cost/', cost)
 
                 # Optimizer
                 with tf.variable_scope('Optimizer'):

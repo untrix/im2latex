@@ -24,6 +24,7 @@ Created on Mon Jul 17 19:58:00 2017
 """
 import os
 import collections
+import logging
 import pandas as pd
 from six.moves import cPickle as pickle
 import dl_commons as dlc
@@ -37,7 +38,7 @@ from keras.applications.vgg16 import preprocess_input
 class ImageProcessor(object):
     def __init__(self, params):
         self._params=params
-        
+
     def get_array(self, image_file_, height_, width_, padded_dim_):
         padded_height = padded_dim_['height']
         padded_width = padded_dim_['width']
@@ -52,7 +53,7 @@ class ImageProcessor(object):
             h = (padded_height - height)//2
             ar[h:h+height, 0:width] = im_ar
             im_ar = ar
-    
+
         return im_ar
 
     @staticmethod
@@ -68,16 +69,16 @@ class ImageProcessor(object):
         """
         MAX_PIXEL = 255.0
         return (image_ar - 127.5) / 255.0
-    
+
 
 class ImagenetProcessor(ImageProcessor):
     def __init__(self, params):
         ImageProcessor.__init__(self, params)
-        
+
     @staticmethod
     def whiten(image_ar):
         """
-        Run Imagenet preprocessing - 
+        Run Imagenet preprocessing -
         1) flip RGB to BGR
         2) Adjust mean per Imagenet stats
         3) No std-dev adjustment
@@ -90,11 +91,11 @@ class ImagenetProcessor(ImageProcessor):
 class VGGProcessor(object):
     def __init__(self, vgg_dir_):
         self._vgg_dir = vgg_dir_
-        
+
     def get_array(self, image_file_):
         pkl_file = os.path.join(self._vgg_dir, os.path.splitext(image_file_)[0] + '.pkl')
         return pd.read_pickle(pkl_file)
-        
+
 def make_batch_list(df_, batch_size_, assert_whole_batch=True):
     ## Make a list of batches
     bin_lens = sorted(df_.bin_len.unique())
@@ -123,10 +124,12 @@ class ShuffleIterator(object):
         self._step = 0
         self._epoch = 1
         self._max_steps = self.num_steps_to_run(num_steps, num_epochs, self._num_items)
-        self.lock = threading.Lock()
-        
-        print 'ShuffleIterator initialized with batch_size = %d, steps-per-epoch = %d'%(self._batch_size, 
-                                                                                        self._num_items)
+        self.lock = threading.RLock()
+        self._hyper =  hyper
+
+        print 'ShuffleIterator initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d'%(self._batch_size,
+                                                                                        self._num_items,
+                                                                                        self._max_steps)
     def __iter__(self):
         return self
     @property
@@ -135,9 +138,6 @@ class ShuffleIterator(object):
     @property
     def epoch_size(self):
         return self._num_items
-    @property
-    def steps_completed(self):
-        return self._step
     @property
     def max_steps(self):
         return self._max_steps
@@ -153,17 +153,19 @@ class ShuffleIterator(object):
             num_epoch_steps = num_epochs * epoch_size
         else:
             num_epoch_steps = -1
-    
+
         if num_steps < 0:
             num_steps = num_epoch_steps
         elif num_epoch_steps >= 0 and (num_epoch_steps < num_steps):
             num_steps = num_epoch_steps
-            
+
         return num_steps
 
     def next(self):
-        ## This is an infinite iterator
         with self.lock:
+            if self._step >= self.max_steps:
+                raise StopIteration('Max steps executed (%d)'%self._step)
+
             if self._next_pos >= self._num_items:
                 ## Reshuffle sample-to-batch assignment
                 self._df = self._df.sample(frac=1)
@@ -173,29 +175,30 @@ class ShuffleIterator(object):
                 self._next_pos = 0
                 print 'ShuffleIterator finished epoch %d'%self._epoch
                 self._epoch += 1
-            next_pos = self._next_pos
+            curr_pos = self._next_pos
+            self._next_pos += 1 # value for next iteration
             epoch= self._epoch
-            self._next_pos += 1
             self._step += 1
-        
-        batch = self._batch_list[next_pos]
-        ## print 'ShuffleIterator epoch %d, step %d, bin-batch idx %s'%(self._epoch, self._step, batch)
+            curr_step = self._step
+
+        batch = self._batch_list[curr_pos]
+        self._hyper.logger.debug('ShuffleIterator epoch %d, step %d, bin-batch idx %s', self._epoch, self._step, batch)
         df_bin = self._df[self._df.bin_len == batch[0]]
         assert df_bin.bin_len.iloc[batch[1]*self._batch_size] == batch[0]
         assert df_bin.bin_len.iloc[(batch[1]+1)*self._batch_size-1] == batch[0]
         return dlc.Properties({
                 'df_batch': df_bin.iloc[batch[1]*self._batch_size : (batch[1]+1)*self._batch_size],
                 'epoch': epoch,
-                'step': self._step,
+                'step': curr_step,
                 'batch_idx': batch
                 })
 
 class BatchImageIterator1(ShuffleIterator):
-    def __init__(self, raw_data_dir_, image_dir_, 
-                 hyper, 
+    def __init__(self, raw_data_dir_, image_dir_,
+                 hyper,
                  image_processor,
                  df):
-        
+
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
@@ -211,10 +214,10 @@ class BatchImageIterator1(ShuffleIterator):
             for row in df_batch.itertuples(index=False)
         ]
         im_batch = self._image_processor.whiten(np.asarray(im_batch))
-        
+
         bin_len = df_batch.bin_len.iloc[0]
         y_s = self._seq_data[bin_len].loc[df_batch.index].values
-        return dlc.Properties({'im':im_batch, 
+        return dlc.Properties({'im':im_batch,
                                'y_s':y_s,
                                'seq_len': df_batch.seq_len.values,
                                'image_name': df_batch.image.values,
@@ -225,14 +228,14 @@ class BatchImageIterator1(ShuffleIterator):
 class BatchImageIterator2(ShuffleIterator):
     def __init__(self,
                 raw_data_dir_,
-                image_dir_, 
-                hyper, 
+                image_dir_,
+                hyper,
                 image_processor,
                 df,
                 num_steps=-1,
                 num_epochs=-1
                 ):
-        
+
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
@@ -240,9 +243,6 @@ class BatchImageIterator2(ShuffleIterator):
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
     def next(self):
-        if self.steps_completed >= self.max_steps:
-            raise StopIteration('Max steps executed (%d)'%self.steps_completed)
-
         nxt = ShuffleIterator.next(self)
         df_batch = nxt.df_batch[['image', 'height', 'width']]
         im_batch = [
@@ -250,8 +250,8 @@ class BatchImageIterator2(ShuffleIterator):
             for row in df_batch.itertuples(index=False)
         ]
         im_batch = self._image_processor.whiten(np.asarray(im_batch))
-        
-        return dlc.Properties({'im':im_batch, 
+
+        return dlc.Properties({'im':im_batch,
                                'image_name': df_batch.image.values,
                                'epoch': nxt.epoch,
                                'step': nxt.step
@@ -260,7 +260,7 @@ class BatchImageIterator2(ShuffleIterator):
 
 InpTup = collections.namedtuple('InpTup', ('y_s', 'seq_len', 'y_ctc', 'ctc_len', 'im'))
 class BatchContextIterator(ShuffleIterator):
-    def __init__(self, 
+    def __init__(self,
                  raw_data_dir_,
                  image_feature_dir_,
                  hyper,
@@ -277,23 +277,20 @@ class BatchContextIterator(ShuffleIterator):
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
     def next(self):
-        if self.steps_completed >= self.max_steps:
-            raise StopIteration('Max steps executed (%d)'%self.steps_completed)
-
         nxt = ShuffleIterator.next(self)
         df_batch = nxt.df_batch[['image', 'bin_len', 'seq_len', 'squashed_len']]
         a_batch = [
             self._image_processor.get_array(row[0]) for row in df_batch.itertuples(index=False)
         ]
         a_batch = np.asarray(a_batch)
-        
+
         bin_len = df_batch.bin_len.iloc[0]
-        ##y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values, 
+        ##y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,
         ##                 dtype=self._hyper.int_type_np)
-        y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values, 
+        y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values,
                            dtype=self._hyper.int_type_np)
         ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
-        return dlc.Properties({'im':a_batch, 
+        return dlc.Properties({'im':a_batch,
                                ##'y_s':y_s,
                                ##'seq_len': np.asarray(df_batch.seq_len.values, dtype=self._hyper.int_type_np),
                                'y_s':y_ctc,
@@ -304,12 +301,12 @@ class BatchContextIterator(ShuffleIterator):
                                'epoch': nxt.epoch,
                                'step': nxt.step
                                })
-    
+
     def get_pyfunc(self):
         def func(x=None):
             d = self.next()
             return InpTup(d.y_s, d.seq_len, d.y_ctc, d.ctc_len, d.im)
-        
+
         int_type = self._hyper.int_type
         return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
-    
+
