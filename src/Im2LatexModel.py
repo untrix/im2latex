@@ -470,7 +470,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 # Optimizer
                 with tf.variable_scope('Optimizer'):
                     global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
-                    optimizer = tf.train.AdamOptimizer()
+                    optimizer = tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
                     train = optimizer.minimize(cost, global_step=global_step)
                     ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step,
                     ##                                                               name="optimizer")

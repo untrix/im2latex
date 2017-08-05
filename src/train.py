@@ -80,17 +80,17 @@ def printVars():
 def train(num_steps, print_steps, num_epochs,
           raw_data_folder=None,
           vgg16_folder=None,
-          globalParams=None):
+          globalParams=None,
+          keep_prob=None):
     """
     Start training the model. All kwargs with default values==None must be supplied.
     """
     graph = tf.Graph()
     with graph.as_default():
-        keep_prob = globalParams.keep_prob
         globalParams.update({'build_image_context':False,
                              'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
-                             'dropout':tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
-                                                                                      name="KeepProb")}),
+                             'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
+                                                                                         name="KeepProb")}),
                              'pLambda': 0.0005,
                              'MeanSumAlphaEquals1': False
                             })
@@ -147,7 +147,10 @@ def train(num_steps, print_steps, num_epochs,
             try:
                 while not coord.should_stop():
                     step_start_time = time.time()
-                    feed_dict={hyper.dropout.keep_prob: keep_prob}
+                    if hyper.dropout is not None:
+                        feed_dict={hyper.dropout.keep_prob: keep_prob}
+                    else:
+                        feed_dict={}
                     _, ll, ctc, cost, gstep, penalty, sai, sai2, msl, logs = session.run(
                         (
                             train_ops.train, 
@@ -213,6 +216,9 @@ def main():
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.9",
                         default=0.9)
+    parser.add_argument("--alpha", "-a", dest="alpha", type=float,
+                        help="Alpha (step / learning-rate) value of adam optimizer.",
+                        default=None)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
@@ -256,7 +262,7 @@ def main():
     logger.setLevel(logging_level[args.logging_level - 1])
     logger.addHandler(logging.StreamHandler())
 
-    globalParams = dlc.Properties({'keep_prob': args.keep_prob, 'logger': logger})
+    globalParams = dlc.Properties({'logger': logger})
     
     if args.batch_size is not None:
         globalParams.B = args.batch_size
@@ -264,11 +270,14 @@ def main():
         globalParams.assert_whole_batch = False
     if args.queue_capacity is not None:
         globalParams.input_queue_capacity = args.queue_capacity
-
+    if args.alpha is not None:
+        globalParams.adam_alpha = args.alpha
 
     train(args.num_steps, args.print_steps, args.num_epochs,
           raw_data_folder=raw_data_folder,
           vgg16_folder=vgg16_folder,
-          globalParams=globalParams)
+          globalParams=globalParams,
+          keep_prob=args.keep_prob
+         )
 
 main()

@@ -289,7 +289,10 @@ class Im2LatexModelParams(dlc.HyperParams):
               True),
             PD('pLambda', 'Lambda value for alpha penalty',
                decimal(0),
-               0.00001)
+               0.00001),
+            PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
+               instanceofOrNone(float)
+           )
         )
     def __init__(self, initVals):
         dlc.HyperParams.__init__(self, self.makeProto(GlobalParams(initVals).freeze()), initVals)
