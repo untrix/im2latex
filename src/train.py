@@ -89,16 +89,17 @@ def train(num_steps, print_steps, num_epochs,
     with graph.as_default():
         globalParams.update({'build_image_context':False,
                              'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
-                             'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
-                                                                                         name="KeepProb")}),
+                            #  'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
+                            #                                                              name="KeepProb")}),
+                             #'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': keep_prob}),
                              'pLambda': 0.0005,
                              'MeanSumAlphaEquals1': False
                             })
-        print('#################### Default Param Overrides: ####################\n%s'%(globalParams,))
-        print('##################################################################\n%s'%(globalParams,))
+        print('\n#################### Default Param Overrides: ####################\n%s'%(globalParams,))
+        print('##################################################################\n')
         hyper = hyper_params.make_hyper(globalParams)
-        print '#########################  Hyper-params: #########################\n%s'%(hyper,)
-        print('##################################################################\n%s'%(globalParams,))
+        print '\n#########################  Hyper-params: #########################\n%s'%(hyper,)
+        print('##################################################################\n')
         batch_iterator = BatchContextIterator(raw_data_folder,
                                               vgg16_folder,
                                               hyper,
@@ -147,10 +148,10 @@ def train(num_steps, print_steps, num_epochs,
             try:
                 while not coord.should_stop():
                     step_start_time = time.time()
-                    if hyper.dropout is not None:
-                        feed_dict={hyper.dropout.keep_prob: keep_prob}
-                    else:
-                        feed_dict={}
+                    # if hyper.dropout is not None:
+                    #     feed_dict={hyper.dropout.keep_prob: keep_prob}
+                    # else:
+                    #     feed_dict=None
                     _, ll, ctc, cost, gstep, penalty, sai, sai2, msl, logs = session.run(
                         (
                             train_ops.train, 
@@ -162,8 +163,7 @@ def train(num_steps, print_steps, num_epochs,
                             train_ops.mean_sum_alpha_i, train_ops.mean_sum_alpha_i2,
                             train_ops.mean_seq_len,
                             train_ops.tb_logs
-                        ),
-                        feed_dict=feed_dict)
+                        ))
                     step += 1
                     train_time.append(time.time()-step_start_time)
                     if step % print_steps == 0:
@@ -216,7 +216,7 @@ def main():
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.9",
                         default=0.9)
-    parser.add_argument("--alpha", "-a", dest="alpha", type=float,
+    parser.add_argument("--adap_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=None)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,

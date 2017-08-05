@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
     Hyper-parameters for the model.
-    
+
     Copyright 2017 Sumeet S Singh
 
     This file is part of im2latex solution by Sumeet S Singh.
@@ -43,7 +43,7 @@ class GlobalParams(dlc.HyperParams):
            (120,1075,3)
            ),
         PD('Max_Seq_Len',
-           "Max sequence length including the end-of-sequence marker token. Is used to " 
+           "Max sequence length including the end-of-sequence marker token. Is used to "
             "limit the number of decoding steps.",
            integer(151,200),
            151 #get_max_seq_len(data_folder)
@@ -68,29 +68,29 @@ class GlobalParams(dlc.HyperParams):
            "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
            "therefore their input dimensionality will not be equal to the embedding dimensionality, rather "
            " it will be equal to output_size of the previous CALSTM. That's why this value needs to be "
-           "appropriately adjusted for upper CALSTM layers.", 
+           "appropriately adjusted for upper CALSTM layers.",
            integer(1),
            64
            ),
-        PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None, 
+        PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None,
            3),
-        PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None, 
+        PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None,
            33),
         PD('L',
-           '(integer): number of pixels in an image feature-map = HxW (see paper or model description)', 
+           '(integer): number of pixels in an image feature-map = HxW (see paper or model description)',
            integer(1),
            LambdaVal(lambda _, d: d['H'] * d['W'])
            ),
-        PD('D', 
+        PD('D',
            '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
-           'See paper or model description.', 
+           'See paper or model description.',
            integer(1),
            512),
         PD('tb', "Tensorboard Params.",
            instanceof(tfc.TensorboardParams),
            tfc.TensorboardParams()
            ),
-        PD('dropout', 
+        PD('dropout',
            'Dropout parameters if any - global at the level of the RNN. Absence of this property '
            'signals no dropouts.',
            instanceofOrNone(tfc.DropoutParams)
@@ -115,25 +115,25 @@ class GlobalParams(dlc.HyperParams):
            (np.int32, np.int64),
            np.int32
            ),
-        PD('weights_initializer', 
-              'Tensorflow weights initializer function', 
+        PD('weights_initializer',
+              'Tensorflow weights initializer function',
               iscallableOrNone(),
               tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32) ## = glorot_uniform
               # tf.contrib.layers.xavier_initializer_conv2d()
               # tf.contrib.layers.variance_scaling_initializer()
               ),
-        PD('biases_initializer', 
+        PD('biases_initializer',
               'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
               iscallableOrNone(),
               None
               ),
         PD('weights_regularizer',
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallableOrNone(), 
+              iscallableOrNone(),
               None),
         PD('biases_regularizer',
               'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallableOrNone(), 
+              iscallableOrNone(),
               None),
         #### Training Parameters ####
         PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
@@ -159,7 +159,7 @@ class GlobalParams(dlc.HyperParams):
     def copy(self, override_vals=None):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
-    
+
 class CALSTMParams(dlc.HyperParams):
     @staticmethod
     def makeProto(GLOBAL=GlobalParams()):
@@ -177,8 +177,8 @@ class CALSTMParams(dlc.HyperParams):
                boolean,
                True),
             PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-               "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here." 
-               "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)." 
+               "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here."
+               "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
                "Default value however, is True in conformance with the paper's implementation.",
                (True, False),
                True),
@@ -217,13 +217,13 @@ class Im2LatexModelParams(dlc.HyperParams):
     @staticmethod
     def makeProto(GLOBAL=GlobalParams()):
         return GlobalParams.proto + (
-            PD('use_ctc_loss', 
+            PD('use_ctc_loss',
                "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
                "ctc_loss will be logged.",
                boolean,
                True),
         ### Embedding Layer ###
-            PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(), 
+            PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(),
                tf.contrib.layers.xavier_initializer()),
         ### Decoder LSTM Params ###
             PD('D_RNN',
@@ -235,12 +235,12 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('output_follow_paper',
                '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
                'Setting this value to True (default) will follow the paper"s logic. Otherwise'
-               "a straight MLP will be used.", 
-               boolean, 
+               "a straight MLP will be used.",
+               boolean,
                True),
             PD('output_layers',
                "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
-               "must have num_units = K. If output_follow_paper==True, an additional initial layer is created " 
+               "must have num_units = K. If output_follow_paper==True, an additional initial layer is created "
                "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
                instanceof(tfc.MLPParams),
                    tfc.MLPParams(GLOBAL).updated({
@@ -252,7 +252,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                         }).freeze()
                 ),
         ### Initializer MLP ###
-            PD('init_model', 
+            PD('init_model',
                'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
                "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
                "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
@@ -268,13 +268,13 @@ class Im2LatexModelParams(dlc.HyperParams):
                    tfc.FCLayerParams(GLOBAL).updated({
                        ## num_units to be set dynamically
                        ## paper sets hidden activations=relu and final=tanh
-                       'activation_fn': tf.nn.tanh                       
+                       'activation_fn': tf.nn.tanh
                        }).freeze()
                ),
         ### Loss / Cost Layer ###
             PD('sum_logloss',
-               'Whether to normalize log-loss per sample as in standard log perplexity ' 
-               'calculation or whether to just sum up log-losses as in the paper. Defaults' 
+               'Whether to normalize log-loss per sample as in standard log perplexity '
+               'calculation or whether to just sum up log-losses as in the paper. Defaults'
                'to True in conformance with the paper.',
                boolean,
                True
@@ -291,7 +291,8 @@ class Im2LatexModelParams(dlc.HyperParams):
                decimal(0),
                0.00001),
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
-               instanceofOrNone(float)
+               instanceof(float),
+               0.001 # default in tf.train.AdamOptimizer
            )
         )
     def __init__(self, initVals):
@@ -312,7 +313,7 @@ def make_hyper(initVals):
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
     HYPER = Im2LatexModelParams(initVals).updated({'D_RNN':(CALSTM_1,)}).freeze()
-    
+
 #    print 'Hyper Params = '
 #    print HYPER
     return HYPER
