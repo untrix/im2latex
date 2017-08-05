@@ -160,7 +160,7 @@ def train(num_steps, print_steps, num_epochs,
                         valid_start_time = time.time()
                         ## session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time.append(time.time() - valid_start_time)
-                        print 'Time for %d steps, elapsed = %f, training time % = %f, validation time % = %f'%(gstep,
+                        print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(gstep,
                                                                            time.time()-start_time,
                                                                            np.mean(train_time) * 100. / hyper.B,
                                                                            np.mean(valid_time) * 100. / hyper.B  )
