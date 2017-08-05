@@ -26,6 +26,7 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 
+import logging
 import numpy as np
 import tensorflow as tf
 import dl_commons as dlc
@@ -145,7 +146,10 @@ class GlobalParams(dlc.HyperParams):
            True),
         PD('input_queue_capacity', 'Capacity of input queue.',
            integer(),
-           5)
+           5),
+        PD('logger', 'Python logger object for logging.',
+            instanceof(logging.Logger)
+            )
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)

@@ -26,6 +26,7 @@ Tested on python 2.7
 """
 import os
 import time
+import logging
 import argparse as arg
 import numpy as np
 import tensorflow as tf
@@ -110,7 +111,7 @@ def train(num_steps, print_steps, num_epochs,
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
                 enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
-            trainable_vars_n = num_trainable_vars()
+            trainable_vars_n = num_trainable_vars() # 8544670
 
         ## Validation Graph
         with tf.name_scope('DecodingGraph'):
@@ -118,11 +119,12 @@ def train(num_steps, print_steps, num_epochs,
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
             valid_ops = model_predict.beamsearch()
-            with tf.variable_scope('InputQueue'):
-                enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
+            # with tf.variable_scope('InputQueue'):
+            #     enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
             assert(num_trainable_vars() == trainable_vars_n)
 
-        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
+        # qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
+        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
         coord = tf.train.Coordinator()
 
         printVars()
@@ -146,33 +148,42 @@ def train(num_steps, print_steps, num_epochs,
                 while not coord.should_stop():
                     step_start_time = time.time()
                     feed_dict={hyper.dropout.keep_prob: keep_prob}
-                    _, ll, ctc, cost, gstep, penalty, sai, sai2, msl = session.run((train_ops.train, 
-                                    train_ops.log_likelihood,
-                                    train_ops.ctc_loss,
-                                    train_ops.cost,
-                                    train_ops.global_step,
-                                    train_ops.alpha_penalty,
-                                    train_ops.mean_sum_alpha_i, train_ops.mean_sum_alpha_i2,
-                                    train_ops.mean_seq_len), feed_dict=feed_dict)
+                    _, ll, ctc, cost, gstep, penalty, sai, sai2, msl, logs = session.run(
+                        (
+                            train_ops.train, 
+                            train_ops.log_likelihood,
+                            train_ops.ctc_loss,
+                            train_ops.cost,
+                            train_ops.global_step,
+                            train_ops.alpha_penalty,
+                            train_ops.mean_sum_alpha_i, train_ops.mean_sum_alpha_i2,
+                            train_ops.mean_seq_len,
+                            train_ops.tb_logs
+                        ),
+                        feed_dict=feed_dict)
                     step += 1
                     train_time.append(time.time()-step_start_time)
                     if step % print_steps == 0:
                         valid_start_time = time.time()
                         ## session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time.append(time.time() - valid_start_time)
-                        print 'Time for %d steps, elapsed = %f, training time % = %f, validation time % = %f'%(gstep,
-                                                                           time.time()-start_time,
-                                                                           np.mean(train_time) * 100. / hyper.B,
-                                                                           np.mean(valid_time) * 100. / hyper.B  )
-                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, mean_sum_alpha %f, mean_sum_alpha2 %f, mean_seq_len %f'%(step,
-                                                                                              ll[()],
-                                                                                              ctc[()],
-                                                                                              penalty[()],
-                                                                                              cost[()],
-                                                                                              sai[()],
-                                                                                              sai2[()],
-                                                                                              msl[()]
-                                                                                              )
+                        print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
+                            gstep,
+                            time.time()-start_time,
+                            np.mean(train_time) * 100. / hyper.B,
+                            np.mean(valid_time) * 100. / hyper.B )
+                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, mean_sum_alpha %f, mean_sum_alpha2 %f, mean_seq_len %f'%(
+                            step,
+                            ll[()],
+                            ctc[()],
+                            penalty[()],
+                            cost[()],
+                            sai[()],
+                            sai2[()],
+                            msl[()]
+                            )
+                        tf_sw.add_summary(logs, global_step=gstep)
+                        tf_sw.flush()
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
             except Exception as e:
@@ -218,6 +229,9 @@ def main():
     parser.add_argument("--queue-capacity", "-q", dest="queue_capacity", type=int,
                         help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.",
                         default=None)
+    parser.add_argument("--logging-level", "-l", dest="logging_level", type=int,
+                        help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
+                        default=3)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -236,7 +250,12 @@ def main():
     else:
         vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
 
-    globalParams = dlc.Properties({'keep_prob': args.keep_prob})
+    logger = logging.getLogger()
+    logging_level = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
+    logger.setLevel(logging_level[args.logging_level - 1])
+    logger.addHandler(logging.StreamHandler())
+
+    globalParams = dlc.Properties({'keep_prob': args.keep_prob, 'logger': logger})
     
     if args.batch_size is not None:
         globalParams.B = args.batch_size
@@ -244,6 +263,7 @@ def main():
         globalParams.assert_whole_batch = False
     if args.queue_capacity is not None:
         globalParams.input_queue_capacity = args.queue_capacity
+
 
     train(args.num_steps, args.print_steps, args.num_epochs,
           raw_data_folder=raw_data_folder,
