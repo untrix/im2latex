@@ -51,7 +51,7 @@ class GlobalParams(dlc.HyperParams):
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing.',
            integer(1),
-           64
+           96
            ),
         PD('K',
            'Vocabulary size including zero',

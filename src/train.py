@@ -142,8 +142,7 @@ def train(num_steps, print_steps, num_epochs,
             enqueue_threads = qr.create_threads(session, coord=coord, start=True)
 
             start_time = time.time()
-            train_time = []
-            valid_time = []
+            train_time = []; ctc_losses = []; logs = []
             step = 0
             try:
                 while not coord.should_stop():
@@ -152,41 +151,35 @@ def train(num_steps, print_steps, num_epochs,
                     #     feed_dict={hyper.dropout.keep_prob: keep_prob}
                     # else:
                     #     feed_dict=None
-                    _, ll, ctc, cost, gstep, penalty, sai, sai2, msl, logs = session.run(
+                    _, ctc_loss, log = session.run(
                         (
                             train_ops.train, 
-                            train_ops.log_likelihood,
                             train_ops.ctc_loss,
-                            train_ops.cost,
-                            train_ops.global_step,
-                            train_ops.alpha_penalty,
-                            train_ops.mean_sum_alpha_i, train_ops.mean_sum_alpha_i2,
-                            train_ops.mean_seq_len,
                             train_ops.tb_logs
                         ))
-                    step += 1
+                    ctc_losses.append(ctc_loss[()])
+                    logs.append(log)
                     train_time.append(time.time()-step_start_time)
-                    if step % print_steps == 0:
+                    step += 1
+
+                    if (step % print_steps == 0) or (step == 1):
                         valid_start_time = time.time()
                         ## session.run((valid_ops.outputs, valid_ops.seq_lens))
-                        valid_time.append(time.time() - valid_start_time)
+                        valid_time = (time.time() - valid_start_time)
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
-                            gstep,
+                            step,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
-                            np.mean(valid_time) * 100. / hyper.B )
-                        print 'Step %d, Log Perplexity %f, ctc_loss %f, penalty %f, cost %f, mean_sum_alpha %f, mean_sum_alpha2 %f, mean_seq_len %f'%(
+                            valid_time * 100. / hyper.B )
+                        print 'Step %d, ctc_loss %f'%(
                             step,
-                            ll[()],
-                            ctc[()],
-                            penalty[()],
-                            cost[()],
-                            sai[()],
-                            sai2[()],
-                            msl[()]
+                            min(ctc_losses)
                             )
-                        tf_sw.add_summary(logs, global_step=gstep)
+                        ## emit metrics of the batch with minimum loss
+                        tf_sw.add_summary(logs[np.argmin(ctc_losses)], global_step=step)
                         tf_sw.flush()
+                        ## reset metrics
+                        train_time = []; ctc_losses = []; logs = []
 
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
