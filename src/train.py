@@ -171,12 +171,26 @@ def train(num_steps, print_steps, num_epochs,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
                             valid_time * 100. / hyper.B )
-                        print 'Step %d, ctc_loss %f'%(
+                        print 'Step %d, ctc_loss min = %f, max=%f'%(
                             step,
-                            min(ctc_losses)
+                            min(ctc_losses),
+                            max(ctc_losses)
                             )
-                        ## emit metrics of the batch with minimum loss
-                        tf_sw.add_summary(logs[np.argmin(ctc_losses)], global_step=step)
+                        ## emit metrics of the minimum and maximum loss batches
+                        i_min = np.argmin(ctc_losses)
+                        i_max = np.argmax(ctc_losses)
+                        if i_min < i_max:
+                            tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
+                            tf_sw.add_summary(logs[i_max], global_step= (step+i_max+1 - print_steps))
+                        elif i_min > i_max:
+                            tf_sw.add_summary(logs[i_max], global_step= (step+i_max+1 - print_steps))
+                            tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
+                        else:
+                            if step == 1:
+                                tf_sw.add_summary(logs[i_min], global_step=1)
+                            else:
+                                tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
+                            
                         tf_sw.flush()
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
