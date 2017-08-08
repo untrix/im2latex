@@ -96,7 +96,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
                     self._a = inp_tup.im
 
-            ## Fix tensor shapes
+            ## Set tensor shapes because they get forgotten by the queue
             self._a.set_shape((self.C.B, self.C.L, self.C.D))
             self._y_s.set_shape((self.C.B, None))
             self._seq_len.set_shape((self.C.B,))
@@ -503,16 +503,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                self._init_state_model,
                                                                beam_width=self.BeamWidth)
                 final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
-                                                                        decoder,
-                                                                        maximum_iterations=self.C.Max_Seq_Len + 10,
-                                                                        swap_memory=True)
-
+                                                                decoder,
+                                                                #impute_finished=True,
+                                                                maximum_iterations=self.C.Max_Seq_Len+10,
+                                                                swap_memory=True)
+                assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
+                assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
+                assert K.int_shape(final_sequence_lengths) == (self.C.B, self.BeamWidth)
+                print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
+                #ids = tf.not_equal(final_outputs.predicted_ids, 0)
                 return dlc.Properties({
                         'inp_q':self._inp_q,
-                        'outputs': final_outputs,
-                        'seq_lens': final_sequence_lengths
+                        'outputs': (final_outputs),
+                        'seq_lens': (final_sequence_lengths)
                         })
-        return final_outputs, final_state, final_sequence_lengths
-
-
-

@@ -36,6 +36,8 @@ from keras import backend as K
 import hyper_params
 from data_reader import BatchContextIterator
 import dl_commons as dlc
+import nltk
+from nltk.util import ngrams
 
 def num_trainable_vars():
     total_n = 0
@@ -105,27 +107,32 @@ def train(num_steps, print_steps, num_epochs,
                                               hyper,
                                               num_steps,
                                               num_epochs)
+        batch_iterator2 = BatchContextIterator(raw_data_folder,
+                                              vgg16_folder,
+                                              hyper,
+                                              num_steps,
+                                              num_epochs)
 
         ## Training Graph
         with tf.name_scope('TrainingGraph'):
             model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
-                enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
+                enqueue_op = train_ops.inp_q.enqueue(batch_iterator2.get_pyfunc(), name='enqueue')
             trainable_vars_n = num_trainable_vars() # 8544670
 
         ## Validation Graph
         with tf.name_scope('DecodingGraph'):
-            beamwidth=1
+            beamwidth=10
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
             valid_ops = model_predict.beamsearch()
-            # with tf.variable_scope('InputQueue'):
-            #     enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
+            with tf.variable_scope('InputQueue'):
+                enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
             assert(num_trainable_vars() == trainable_vars_n)
 
-        # qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
-        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
+        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
+        # qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
         coord = tf.train.Coordinator()
 
         printVars()
@@ -164,8 +171,18 @@ def train(num_steps, print_steps, num_epochs,
 
                     if (step % print_steps == 0) or (step == 1):
                         valid_start_time = time.time()
-                        ## session.run((valid_ops.outputs, valid_ops.seq_lens))
+                        o, l = session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time = (time.time() - valid_start_time)
+                        print 'shape of predicted_ids = ', o.predicted_ids.shape
+                        print 'shape of sequence_lens= ', l.shape
+                        print 'sequence_lens= ', l
+                        for b in range(l.shape[0]):
+                            for m in range(l.shape[1]):
+                                if l[b,m] < 161:
+                                    print 'seq_len=%d'%l[b,m]
+                                    print 'predicted_ids=%s'%o.predicted_ids[b,:,m]
+                                    print 'predicted scores=%s'%o.beam_search_decoder_output.scores[b,:,m]
+
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
                             time.time()-start_time,
