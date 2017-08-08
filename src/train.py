@@ -169,7 +169,7 @@ def train(num_steps, print_steps, num_epochs,
                     train_time.append(time.time()-step_start_time)
                     step += 1
 
-                    if (step % print_steps == 0) or (step == 1):
+                    if (step % print_steps == 0): # or (step == 1):
                         valid_start_time = time.time()
                         o, l = session.run((valid_ops.outputs, valid_ops.seq_lens))
                         valid_time = (time.time() - valid_start_time)
@@ -178,10 +178,10 @@ def train(num_steps, print_steps, num_epochs,
                         print 'sequence_lens= ', l
                         for b in range(l.shape[0]):
                             for m in range(l.shape[1]):
-                                if l[b,m] < 161:
+                                if True: # l[b,m] < 161:
                                     print 'seq_len=%d'%l[b,m]
                                     print 'predicted_ids=%s'%o.predicted_ids[b,:,m]
-                                    print 'predicted scores=%s'%o.beam_search_decoder_output.scores[b,:,m]
+                                    # print 'predicted scores=%s'%o.beam_search_decoder_output.scores[b,:,m]
 
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
