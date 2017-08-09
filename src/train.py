@@ -124,7 +124,7 @@ def train(num_steps, print_steps, num_epochs,
 
         ## Validation Graph
         with tf.name_scope('DecodingGraph'):
-            beamwidth=10
+            beamwidth=globalParams.beam_width
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
             valid_ops = model_predict.test()
@@ -263,6 +263,9 @@ def main():
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
+    parser.add_argument("--beam-width", "-w", dest="beam_width", type=int,
+                        help="Beamwidth. If unspecified, defaults to 100",
+                        default=100)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 50 if unspecified",
                         default=50)
@@ -315,7 +318,7 @@ def main():
     logger.setLevel(logging_level[args.logging_level - 1])
     logger.addHandler(logging.StreamHandler())
 
-    globalParams = dlc.Properties({'logger': logger})
+    globalParams = dlc.Properties({'logger': logger, 'beam_width':args.beam_width})
     
     if args.batch_size is not None:
         globalParams.B = args.batch_size

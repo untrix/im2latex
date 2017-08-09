@@ -106,3 +106,4 @@ ShowAndTellSrc/
 tb_metrics/
 *.out
 .vscode/
+*.py~
