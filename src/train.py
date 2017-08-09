@@ -174,7 +174,7 @@ def train(num_steps, print_steps, num_epochs,
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
                         valid_start_time = time.time()
-                        ids, l, s, b, bs, bids, bl,  = session.run((
+                        ids, l, s, b, bis, bids, bl,  = session.run((
                                             valid_ops.predicted_ids, 
                                             valid_ops.predicted_lens,
                                             valid_ops.predicted_scores,
@@ -196,16 +196,16 @@ def train(num_steps, print_steps, num_epochs,
                                 print 'predicted len=%d'%l[i]; 
                                 print 'predicted_ids=%s'%ids[i]
                                 print 'predicted score=%s'%s[i]
-                                print 'predicted id scores=%s'%bs[i, b[i]]
+                                print 'predicted id scores=%s'%bis[i, b[i]]
                                 print 'all beam ids=%s'%bids[i]
-                                print 'all beam id scores = %s'%bs[i]
+                                print 'all beam id scores = %s'%bis[i]
                                 print 'all beam lens = %s'%bl[i]
                                 assert l[i] == bl[i, beam]
                                 try:
-                                    assert np.sum(bs[i, beam]) - s[i] < 0.00001
+                                    assert np.sum(bis[i, beam]) - s[i] < 0.00001
                                 except:
-                                    hyper.logger.critical('BEAM SCORES DO NOT MATCH: %f vs %f'%(np.sum(bs[i, beam]),s[i]) )
-                                assert np.argmax(bs[i]) == beam
+                                    hyper.logger.critical('BEAM SCORES DO NOT MATCH: %f vs %f'%(np.sum(bis[i, beam]),s[i]) )
+                                assert np.argmax(np.sum(bis[i], axis=-1)) == beam
                                 assert np.all(ids[i] == bids[i,beam])
                                 print '###################################\n'
 
