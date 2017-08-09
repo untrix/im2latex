@@ -34,6 +34,7 @@ from keras import backend as K
 from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
+BeamSearchDecoder = tf.contrib.seq2seq.BeamSearchDecoder
 
 def build_image_context(params, image_batch):
     ## Conv-net
@@ -495,8 +496,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):
 #                with tf.variable_scope('BeamSearch'):
                 begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
+                class BeamSearchDecoder2(BeamSearchDecoder):
+                    def initialize(self, name=None):
+                        finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
+                        return tf.expand_dims(finished, axis=2), start_inputs, initial_state
 
-                decoder = tf.contrib.seq2seq.BeamSearchDecoder(self,
+                decoder =                    BeamSearchDecoder(self,
                                                                self._embedding_lookup,
                                                                begin_tokens,
                                                                0,
@@ -504,7 +509,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                beam_width=self.BeamWidth)
                 final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                 decoder,
-                                                                #impute_finished=True,
+                                                                impute_finished=False,
                                                                 maximum_iterations=self.C.Max_Seq_Len+10,
                                                                 swap_memory=True)
                 assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
@@ -513,7 +518,47 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
                 #ids = tf.not_equal(final_outputs.predicted_ids, 0)
                 return dlc.Properties({
-                        'inp_q':self._inp_q,
-                        'outputs': (final_outputs),
-                        'seq_lens': (final_sequence_lengths)
+                        'ids': final_outputs.predicted_ids,
+                        'scores': final_outputs.beam_search_decoder_output.scores,
+                        'seq_lens': final_sequence_lengths
                         })
+    def test(self):
+        """ Test one batch of input """
+        outputs = self.beamsearch()
+        scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
+        scores = tf.reshape(scores, shape=(self.C.B*self.BeamWidth, -1)) # (B*BeamWidth, T)
+        ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
+        ids = tf.reshape(ids, shape=(self.C.B*self.BeamWidth, -1)) # B*BeamWidth, T)
+        seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
+        mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
+        # scores = log-probabilities are negative values
+        # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
+        # Hence they will have no effect on the sequence probabilities
+        scores = scores * tf.to_float(mask) # (B*BeamWidth, T)
+        ## Also zero out tokens after EOS because we set impute_finished = False and as a result we noticed
+        ## ID values = -1 after EOS tokens.
+        ## Conveniently, zero is also the EOS token.
+        ids = ids*mask
+        ## Sum of log-probabilities == Product of probabilities
+        seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
+        seq_scores = tf.reshape(seq_scores, shape=(self.C.B, self.BeamWidth))
+        top_seq_scores, top_beams = tf.nn.top_k(seq_scores, k=1) # (B, 1)
+        b = tf.reshape(tf.range(self.C.B), shape=(self.C.B,1)) # (B, 1)
+        top_beam_indices = tf.concat((b, top_beams),axis=1) # (B, 2)
+        ids = tf.reshape(ids, shape=(self.C.B, self.BeamWidth, -1)) # (B, BeamWidth, T)
+        top_sequences = tf.gather_nd(ids, top_beam_indices) # (B,T)
+#        top_sequences = tf.reshape(top_sequences, shape=(self.C.B, -1)) # (B, T)
+        seq_lens = tf.reshape(seq_lens, shape=(self.C.B, self.BeamWidth)) #(B, BeamWidth)
+        top_seq_lens = tf.gather_nd(seq_lens, top_beam_indices) # (B,)
+
+        return dlc.Properties({
+            'predicted_ids': top_sequences,
+            'predicted_scores': top_seq_scores,
+            'predicted_lens': top_seq_lens,
+            'top_beams': top_beams, # (B, 1)
+            'all_ids': ids, # (B, BeamWidth, T),
+            'all_id_scores': tf.reshape(scores, shape=(self.C.B, self.BeamWidth, -1)), # (B, BeamWidth, T)
+            'all_seq_lens': outputs.seq_lens,
+            'inp_q': self._inp_q
+            })        
+

@@ -289,10 +289,10 @@ class Im2LatexModelParams(dlc.HyperParams):
               True),
             PD('pLambda', 'Lambda value for alpha penalty',
                decimal(0),
-               0.00001),
+               0.0005), # default in the paper is 00001
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
                instanceof(float),
-               0.001 # default in tf.train.AdamOptimizer
+               0.0001 # default in tf.train.AdamOptimizer is 0.001
            )
         )
     def __init__(self, initVals):

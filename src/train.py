@@ -118,7 +118,8 @@ def train(num_steps, print_steps, num_epochs,
             model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
-                enqueue_op = train_ops.inp_q.enqueue(batch_iterator2.get_pyfunc(), name='enqueue')
+                enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
+                close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
             trainable_vars_n = num_trainable_vars() # 8544670
 
         ## Validation Graph
@@ -126,13 +127,14 @@ def train(num_steps, print_steps, num_epochs,
             beamwidth=10
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
-            valid_ops = model_predict.beamsearch()
+            valid_ops = model_predict.test()
             with tf.variable_scope('InputQueue'):
-                enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
+                enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator2.get_pyfunc(), name='enqueue')
+                close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
             assert(num_trainable_vars() == trainable_vars_n)
 
-        qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op, enqueue_op2])
-        # qr = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op])
+        qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
+        qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
         coord = tf.train.Coordinator()
 
         printVars()
@@ -146,7 +148,8 @@ def train(num_steps, print_steps, num_epochs,
             tf_sw.flush()
             tf.global_variables_initializer().run()
 
-            enqueue_threads = qr.create_threads(session, coord=coord, start=True)
+            enqueue_threads = qr1.create_threads(session, coord=coord, start=True)
+            enqueue_threads.extend(qr2.create_threads(session, coord=coord, start=True))
 
             start_time = time.time()
             train_time = []; ctc_losses = []; logs = []
@@ -169,19 +172,42 @@ def train(num_steps, print_steps, num_epochs,
                     train_time.append(time.time()-step_start_time)
                     step += 1
 
-                    if (step % print_steps == 0): # or (step == 1):
+                    if (step % print_steps == 0) or (step == batch_iterator.max_steps):
                         valid_start_time = time.time()
-                        o, l = session.run((valid_ops.outputs, valid_ops.seq_lens))
+                        ids, l, s, b, bs, bids, bl,  = session.run((
+                                            valid_ops.predicted_ids, 
+                                            valid_ops.predicted_lens,
+                                            valid_ops.predicted_scores,
+                                            valid_ops.top_beams,
+                                            valid_ops.all_id_scores,
+                                            valid_ops.all_ids,
+                                            valid_ops.all_seq_lens))
                         valid_time = (time.time() - valid_start_time)
-                        print 'shape of predicted_ids = ', o.predicted_ids.shape
+                        print 'shape of predicted_ids = ', ids.shape
                         print 'shape of sequence_lens= ', l.shape
+                        print 'shape of predicted scores= ', s.shape
+                        print 'shape of predicted beams= ', b.shape
                         print 'sequence_lens= ', l
-                        for b in range(l.shape[0]):
-                            for m in range(l.shape[1]):
-                                if True: # l[b,m] < 161:
-                                    print 'seq_len=%d'%l[b,m]
-                                    print 'predicted_ids=%s'%o.predicted_ids[b,:,m]
-                                    # print 'predicted scores=%s'%o.beam_search_decoder_output.scores[b,:,m]
+                        for i in range(hyper.B):
+                            if i == 0:
+                                print '############ SAMPLE %d ############'%i
+                                beam = b[i]
+                                print 'predicted beam=%s'%beam
+                                print 'predicted len=%d'%l[i]; 
+                                print 'predicted_ids=%s'%ids[i]
+                                print 'predicted score=%s'%s[i]
+                                print 'predicted id scores=%s'%bs[i, b[i]]
+                                print 'all beam ids=%s'%bids[i]
+                                print 'all beam id scores = %s'%bs[i]
+                                print 'all beam lens = %s'%bl[i]
+                                assert l[i] == bl[i, beam]
+                                try:
+                                    assert np.sum(bs[i, beam]) - s[i] < 0.00001
+                                except:
+                                    hyper.logger.critical('BEAM SCORES DO NOT MATCH: %f vs %f'%(np.sum(bs[i, beam]),s[i]) )
+                                assert np.argmax(bs[i]) == beam
+                                assert np.all(ids[i] == bids[i,beam])
+                                print '###################################\n'
 
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
@@ -212,13 +238,16 @@ def train(num_steps, print_steps, num_epochs,
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
 
-            except tf.errors.OutOfRangeError:
+            except tf.errors.OutOfRangeError, StopIteration:
                 print('Done training -- epoch limit reached')
             except Exception as e:
+                print 'Exiting with exception: %s'%e
                 coord.request_stop(e)
             finally:
                 print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
                 coord.request_stop()
+                # close_queue1.run()
+                # close_queue2.run()
                 coord.join(enqueue_threads)
 
 def main():
