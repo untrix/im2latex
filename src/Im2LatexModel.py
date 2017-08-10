@@ -522,6 +522,27 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'scores': final_outputs.beam_search_decoder_output.scores,
                         'seq_lens': final_sequence_lengths
                         })
+
+    def ctc_loss(self, yLogits, logits_lens):
+        B = self.C.B
+        ctc_len = self._ctc_len
+        y_ctc = self._y_ctc
+
+        assert K.int_shape(yLogits) == (self.C.B, None, self.C.K)
+        assert K.int_shape(logits_lens) == (self.C.B,)
+        ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+        assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+        y_idx =    tf.where(ctc_mask)
+        y_vals =   tf.gather_nd(y_ctc, y_idx)
+        y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
+        ctc_losses = tf.nn.ctc_loss(y_sparse,
+                                    yLogits,
+                                    logits_lens,
+                                    ctc_merge_repeated=False,
+                                    time_major=False)
+        assert K.int_shape(ctc_losses) == (B, )
+        return ctc_losses
+
     def test(self):
         """ Test one batch of input """
         outputs = self.beamsearch()
@@ -542,23 +563,57 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         ## Sum of log-probabilities == Product of probabilities
         seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
         seq_scores = tf.reshape(seq_scores, shape=(self.C.B, self.BeamWidth))
-        top_seq_scores, top_beams = tf.nn.top_k(seq_scores, k=1) # (B, 1)
+
+        # ## Select the top scoring beam
+        # top_seq_scores, top_beams = tf.nn.top_k(seq_scores, k=1) # (B, 1)
+        # b = tf.reshape(tf.range(self.C.B), shape=(self.C.B,1)) # (B, 1)
+        # top_beam_indices = tf.concat((b, top_beams),axis=1) # (B, 1)
+        # ids = tf.reshape(ids, shape=(self.C.B, self.BeamWidth, -1)) # (B, BeamWidth, T)
+        # top_ids = tf.gather_nd(ids, top_beam_indices) # (B,T)
+        # seq_lens = tf.reshape(seq_lens, shape=(self.C.B, self.BeamWidth)) #(B, BeamWidth)
+        # top_seq_lens = tf.gather_nd(seq_lens, top_beam_indices) # (B,)
+        ## Select the top scoring beams
+        k = 3
+        top_seq_scores, top_beams = tf.nn.top_k(seq_scores, k=k) # (B, k)
+        top_beams = tf.reshape(top_beams, shape=(self.C.B*k, 1)) # (B*k, 1)
         b = tf.reshape(tf.range(self.C.B), shape=(self.C.B,1)) # (B, 1)
-        top_beam_indices = tf.concat((b, top_beams),axis=1) # (B, 2)
+        b = tf.tile(b, [1,k]) # (B, k)
+        b = tf.reshape(b, shape=(self.C.B*k, 1)) #(B*k,1)
+        top_beam_indices = tf.concat((b, top_beams), axis=1) # (B*k, 2)
         ids = tf.reshape(ids, shape=(self.C.B, self.BeamWidth, -1)) # (B, BeamWidth, T)
-        top_sequences = tf.gather_nd(ids, top_beam_indices) # (B,T)
-#        top_sequences = tf.reshape(top_sequences, shape=(self.C.B, -1)) # (B, T)
+        top_ids = tf.gather_nd(ids, top_beam_indices) # (B*k,T)
+        assert K.int_shape(top_ids) == (self.C.B*k, None)
+        top_ids = tf.reshape(top_ids, shape=(self.C.B, k, -1)) # (B, k, T)
         seq_lens = tf.reshape(seq_lens, shape=(self.C.B, self.BeamWidth)) #(B, BeamWidth)
-        top_seq_lens = tf.gather_nd(seq_lens, top_beam_indices) # (B,)
+        top_seq_lens = tf.gather_nd(seq_lens, top_beam_indices) # (B*k,)
+        assert K.int_shape(top_seq_lens) == (self.C.B*k,)
+        top_seq_lens = tf.reshape(top_seq_lens, shape=(self.C.B, k)) # (B,k)
+
+        ## CTC accuracy metric - i.e. comparison of squashed output and target sequences
+        assert not self.C.dtype.is_unsigned
+        ## locate all logit mass on predicted IDs
+        ctc_accuracy = []; pseudo_probs = []
+        top_ids_logits = tf.one_hot(top_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
+        for j in range(k):
+            losses = self.ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j]) #(B,)
+            ## pseudo_prob should be == 1 for matching sequences and 0 for non matching
+            pseudo_prob = tf.exp(-1*losses)  # (B,)
+            accuracy = tf.reduce_mean(pseudo_prob) # scalar
+            pseudo_probs.append(pseudo_prob)
+            ctc_accuracy.append(accuracy)
+        top_k_ctc_accuracy = tf.reduce_mean(tf.stack(ctc_accuracy)) # scalar
 
         return dlc.Properties({
-            'predicted_ids': top_sequences,
-            'predicted_scores': top_seq_scores,
-            'predicted_lens': top_seq_lens,
-            'top_beams': top_beams, # (B, 1)
+            'predicted_ids': top_ids, # (B, k, T)
+            'predicted_scores': top_seq_scores, # (B, k)
+            'predicted_lens': top_seq_lens, # (B,k)
+            'top_beams': tf.reshape(top_beams, shape=(self.C.B, k)), # (B, k)
             'all_ids': ids, # (B, BeamWidth, T),
             'all_id_scores': tf.reshape(scores, shape=(self.C.B, self.BeamWidth, -1)), # (B, BeamWidth, T)
-            'all_seq_lens': outputs.seq_lens,
+            'all_seq_lens': outputs.seq_lens,# (B, BeamWidth)
+            'top_1_ctc_accuracy': ctc_accuracy[0], # scalar
+            'top_k_ctc_accuracy': top_k_ctc_accuracy, # scalar
+            'accuracy_probs': pseudo_probs,
             'inp_q': self._inp_q
             })        
 

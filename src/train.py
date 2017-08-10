@@ -174,39 +174,45 @@ def train(num_steps, print_steps, num_epochs,
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
                         valid_start_time = time.time()
-                        ids, l, s, b, bis, bids, bl,  = session.run((
+                        ids, l, s, b, bis, bids, bl, top_1_accuracy, top_k_accuracy = session.run((
                                             valid_ops.predicted_ids, 
                                             valid_ops.predicted_lens,
                                             valid_ops.predicted_scores,
                                             valid_ops.top_beams,
                                             valid_ops.all_id_scores,
                                             valid_ops.all_ids,
-                                            valid_ops.all_seq_lens))
+                                            valid_ops.all_seq_lens,
+                                            valid_ops.top_1_ctc_accuracy,
+                                            valid_ops.top_k_ctc_accuracy))
                         valid_time = (time.time() - valid_start_time)
                         print 'shape of predicted_ids = ', ids.shape
                         print 'shape of sequence_lens= ', l.shape
                         print 'shape of predicted scores= ', s.shape
                         print 'shape of predicted beams= ', b.shape
-                        print 'sequence_lens= ', l
+                        print 'predicted sequence_lens= ', l
                         for i in range(hyper.B):
                             if i == 0:
                                 print '############ SAMPLE %d ############'%i
-                                beam = b[i]
-                                print 'predicted beam=%s'%beam
-                                print 'predicted len=%d'%l[i]; 
-                                print 'predicted_ids=%s'%ids[i]
-                                print 'predicted score=%s'%s[i]
-                                print 'predicted id scores=%s'%bis[i, b[i]]
-                                print 'all beam ids=%s'%bids[i]
-                                print 'all beam id scores = %s'%bis[i]
+                                beam = b[i,0]
+                                print 'predicted beams=%s'%b[i]
+                                print 'predicted lens=%s'%l[i]
+                                print 'predicted token sequences=%s'%ids[i]
+                                print 'predicted sequence scores=%s'%s[i]
+                                print 'predicted token scores=%s'%bis[i, b[i]]
+                                print 'all beam sequences=%s'%bids[i]
+                                print 'all beam token scores = %s'%bis[i]
                                 print 'all beam lens = %s'%bl[i]
-                                assert l[i] == bl[i, beam]
-                                try:
-                                    assert np.sum(bis[i, beam]) - s[i] < 0.00001
-                                except:
-                                    hyper.logger.critical('BEAM SCORES DO NOT MATCH: %f vs %f'%(np.sum(bis[i, beam]),s[i]) )
+                                for k in range(l[i].shape[0]):
+                                    assert l[i, k] == bl[i, b[i, k]]
+                                for k in range(l[i].shape[0]):
+                                    try:
+                                        sum_scores = np.sum(bis[i, b[i,k]])
+                                        reported_score = s[i,k]
+                                        assert sum_scores -  reported_score < 0.00001
+                                    except:
+                                        hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
                                 assert np.argmax(np.sum(bis[i], axis=-1)) == beam
-                                assert np.all(ids[i] == bids[i,beam])
+                                assert np.all(ids[i,0] == bids[i,beam])
                                 print '###################################\n'
 
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
@@ -214,10 +220,12 @@ def train(num_steps, print_steps, num_epochs,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
                             valid_time * 100. / hyper.B )
-                        print 'Step %d, ctc_loss min = %f, max=%f'%(
+                        print 'Step %d, ctc_loss min = %f, max=%f, top_1_accuracy=%f, top_k_accuracy=%f'%(
                             step,
                             min(ctc_losses),
-                            max(ctc_losses)
+                            max(ctc_losses),
+                            top_1_accuracy,
+                            top_k_accuracy
                             )
                         ## emit metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
@@ -233,7 +241,7 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=1)
                             else:
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
-                            
+                        
                         tf_sw.flush()
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
