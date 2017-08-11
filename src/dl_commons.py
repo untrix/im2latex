@@ -564,7 +564,27 @@ class _anyok(_ParamValidator):
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
 
+import numpy as np
+
+def squashed_seq_list(np_seq_batch, seq_lens, remove_val):
+    assert seq_batch.ndim == 2
+    sq_batch = []
+
+    for i, np_seq in enumerate(np_seq_batch):
+        trunc = np_seq[:seq_lens[i]]
+        squashed = trunc[trunc != remove_val]
+        sq_batch.append(squashed.tolist())
+        
+        # sq_batch.append(np.pad(squashed, (0, T-squashed.shape[0]), mode='constant', constant_values=0))
+    return sq_batch
+
 import nltk
-def batch_bleu_score(predicted_ids, predicted_lens, target_ids):
-    pass
+def batch_bleu_score(predicted_ids, predicted_lens, target_ids, space_token):
+    scores = []
+    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token)
+    for i, predicted in enumerate(squashed_ids):
+        target_len = target_ids[i].shape[0]
+        scores.append(nltk.translate.bleu_score.sentence_bleu([target_ids[i]], predicted, weights=[1.0/target_len]*target_len))
+
+    return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)

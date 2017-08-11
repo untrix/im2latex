@@ -244,7 +244,7 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
                         ## validation graph metrics
                         tf_sw.add_summary(logs_v, global_step=step)
-                        bleu = dlc.bleu_score(top_ids[:,0,:], l[:,0])
+                        bleu = dlc.batch_bleu_score(top_ids[:,0,:], l[:,0])
                         log_bleu = session.run([valid_ops.log_bleu], feed_dict={valid_ops.ph_bleu : bleu})
                         tf_sw.add_summary(log_bleu, global_step=step)
                         tf_sw.flush()
