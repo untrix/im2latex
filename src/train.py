@@ -113,8 +113,8 @@ def train(num_steps, print_steps, num_epochs,
                                               num_steps,
                                               num_epochs)
 
-        ## Training Graph
-        with tf.name_scope('TrainingGraph'):
+        ##### Training Graph
+        with tf.name_scope('Training'):
             model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_train_graph()
             with tf.variable_scope('InputQueue'):
@@ -122,8 +122,8 @@ def train(num_steps, print_steps, num_epochs,
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
             trainable_vars_n = num_trainable_vars() # 8544670
 
-        ## Validation Graph
-        with tf.name_scope('DecodingGraph'):
+        ##### Validation Graph
+        with tf.name_scope('Validation'):
             beamwidth=globalParams.beam_width
             hyper_predict = hyper_params.make_hyper(globalParams.copy().updated({'dropout':None}))
             model_predict = Im2LatexModel(hyper_predict, beamwidth, reuse=True)
@@ -174,31 +174,32 @@ def train(num_steps, print_steps, num_epochs,
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
                         valid_start_time = time.time()
-                        ids, l, s, b, bis, bids, bl, top_1_accuracy, top_k_accuracy = session.run((
-                                            valid_ops.predicted_ids, 
-                                            valid_ops.predicted_lens,
-                                            valid_ops.predicted_scores,
+                        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v = session.run((
+                                            valid_ops.top_ids, 
+                                            valid_ops.top_lens,
+                                            valid_ops.top_scores,
                                             valid_ops.top_beams,
                                             valid_ops.all_id_scores,
                                             valid_ops.all_ids,
                                             valid_ops.all_seq_lens,
-                                            valid_ops.top_1_ctc_accuracy,
-                                            valid_ops.top_k_ctc_accuracy))
+                                            valid_ops.top_match_ctc_accuracy,
+                                            valid_ops.top_score_ctc_accuracy,
+                                            valid_ops.tb_logs))
                         valid_time = (time.time() - valid_start_time)
-                        print 'shape of predicted_ids = ', ids.shape
-                        print 'shape of sequence_lens= ', l.shape
-                        print 'shape of predicted scores= ', s.shape
-                        print 'shape of predicted beams= ', b.shape
-                        print 'predicted sequence_lens= ', l
+                        print 'shape of top_ids = ', ids.shape
+                        print 'shape of top sequence_lens= ', l.shape
+                        print 'shape of top scores= ', s.shape
+                        print 'shape of top beams= ', b.shape
+                        print 'top sequence_lens= ', l
                         for i in range(hyper.B):
                             if i == 0:
                                 print '############ SAMPLE %d ############'%i
                                 beam = b[i,0]
-                                print 'predicted beams=%s'%b[i]
-                                print 'predicted lens=%s'%l[i]
-                                print 'predicted token sequences=%s'%ids[i]
-                                print 'predicted sequence scores=%s'%s[i]
-                                print 'predicted token scores=%s'%bis[i, b[i]]
+                                print 'top beams=%s'%b[i]
+                                print 'top lens=%s'%l[i]
+                                print 'top token sequences=%s'%ids[i]
+                                print 'top sequence scores=%s'%s[i]
+                                print 'top token scores=%s'%bis[i, b[i]]
                                 print 'all beam sequences=%s'%bids[i]
                                 print 'all beam token scores = %s'%bis[i]
                                 print 'all beam lens = %s'%bl[i]
@@ -220,14 +221,14 @@ def train(num_steps, print_steps, num_epochs,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
                             valid_time * 100. / hyper.B )
-                        print 'Step %d, ctc_loss min = %f, max=%f, top_1_accuracy=%f, top_k_accuracy=%f'%(
+                        print 'Step %d, ctc_loss min = %f, max=%f, top_match_accuracy=%f, top_score_accuracy=%f'%(
                             step,
                             min(ctc_losses),
                             max(ctc_losses),
-                            top_1_accuracy,
-                            top_k_accuracy
+                            top_match_accuracy,
+                            top_score_accuracy
                             )
-                        ## emit metrics of the minimum and maximum loss batches
+                        ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
                         i_max = np.argmax(ctc_losses)
                         if i_min < i_max:
@@ -241,7 +242,11 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=1)
                             else:
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
-                        
+                        ## validation graph metrics
+                        tf_sw.add_summary(logs_v, global_step=step)
+                        bleu = dlc.bleu_score(top_ids[:,0,:], l[:,0])
+                        log_bleu = session.run([valid_ops.log_bleu], feed_dict={valid_ops.ph_bleu : bleu})
+                        tf_sw.add_summary(log_bleu, global_step=step)
                         tf_sw.flush()
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []

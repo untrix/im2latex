@@ -488,172 +488,183 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'mean_seq_len': mean_seq_len
                         })
 
-    def beamsearch(self):
+    def _beamsearch(self):
         """ Build the prediction graph of the model using beamsearch """
         with tf.variable_scope(self.outer_scope) as var_scope:
             assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
-#                with tf.variable_scope('BeamSearch'):
-                begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
-                class BeamSearchDecoder2(BeamSearchDecoder):
-                    def initialize(self, name=None):
-                        finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
-                        return tf.expand_dims(finished, axis=2), start_inputs, initial_state
+                with tf.variable_scope('BeamSearch'):
+                    begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
+                    class BeamSearchDecoder2(BeamSearchDecoder):
+                        def initialize(self, name=None):
+                            finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
+                            return tf.expand_dims(finished, axis=2), start_inputs, initial_state
 
-                decoder =                    BeamSearchDecoder(self,
-                                                               self._embedding_lookup,
-                                                               begin_tokens,
-                                                               0,
-                                                               self._init_state_model,
-                                                               beam_width=self.BeamWidth)
-                final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
-                                                                decoder,
-                                                                impute_finished=False,
-                                                                maximum_iterations=self.C.Max_Seq_Len+10,
-                                                                swap_memory=True)
-                assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
-                assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
-                assert K.int_shape(final_sequence_lengths) == (self.C.B, self.BeamWidth)
-                print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
-                #ids = tf.not_equal(final_outputs.predicted_ids, 0)
-                return dlc.Properties({
-                        'ids': final_outputs.predicted_ids,
-                        'scores': final_outputs.beam_search_decoder_output.scores,
-                        'seq_lens': final_sequence_lengths
-                        })
+                    decoder =                    BeamSearchDecoder(self,
+                                                                self._embedding_lookup,
+                                                                begin_tokens,
+                                                                0,
+                                                                self._init_state_model,
+                                                                beam_width=self.BeamWidth)
+                    final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
+                                                                    decoder,
+                                                                    impute_finished=False,
+                                                                    maximum_iterations=self.C.Max_Seq_Len+10,
+                                                                    swap_memory=True)
+                    assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
+                    assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
+                    assert K.int_shape(final_sequence_lengths) == (self.C.B, self.BeamWidth)
+                    print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
+                    #ids = tf.not_equal(final_outputs.predicted_ids, 0)
+                    return dlc.Properties({
+                            'ids': final_outputs.predicted_ids,
+                            'scores': final_outputs.beam_search_decoder_output.scores,
+                            'seq_lens': final_sequence_lengths
+                            })
 
-    def ctc_loss(self, yLogits, logits_lens):
+    def _ctc_loss(self, yLogits, logits_lens):
         B = self.C.B
         ctc_len = self._ctc_len
         y_ctc = self._y_ctc
 
-        assert K.int_shape(yLogits) == (self.C.B, None, self.C.K)
-        assert K.int_shape(logits_lens) == (self.C.B,)
-        ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
-        assert K.int_shape(ctc_mask) == (B,None) # (B,T)
-        y_idx =    tf.where(ctc_mask)
-        y_vals =   tf.gather_nd(y_ctc, y_idx)
-        y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
-        ctc_losses = tf.nn.ctc_loss(y_sparse,
-                                    yLogits,
-                                    logits_lens,
-                                    ctc_merge_repeated=False,
-                                    time_major=False)
-        assert K.int_shape(ctc_losses) == (B, )
-        return ctc_losses
+        with tf.variable_scope(self.outer_scope):
+            with tf.name_scope('CTC'):
+                assert K.int_shape(yLogits) == (self.C.B, None, self.C.K)
+                assert K.int_shape(logits_lens) == (self.C.B,)
+                ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+                assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+                y_idx =    tf.where(ctc_mask)
+                y_vals =   tf.gather_nd(y_ctc, y_idx)
+                y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
+                ctc_losses = tf.nn.ctc_loss(y_sparse,
+                                            yLogits,
+                                            logits_lens,
+                                            ctc_merge_repeated=False,
+                                            time_major=False)
+                assert K.int_shape(ctc_losses) == (B, )
+                return ctc_losses
 
-    @staticmethod
-    def _batch_top_k_2D(t, k):
-        B = K.int_shape(t)[0]
-        assert tf.rank(t) == 2 # (B, W)
-        assert tf.rank(k) == 0
-
-        t2, top_k_ids = tf.nn.top_k(t, k=k, sorted=True) # (B, k)
-        # Convert ids returned by tf.nn.top_k to indices appropriate for tf.gather_nd.
-        # Expand the id dimension from 1 to 2 while prefixing each id with the batch-index.
-        # Thus the indices will go from size (B,k) to (B*k, 2). These can then be used to 
-        # create a new tensor from the original tensor on which top_k was invoked originally.
-        # If that tensor was - for e.g. - of shape (B, W, T) then we'll now be able to slice
-        # it into a tensor of shape (B,k,T) using the top_k_ids.
-        reshaped_ids = tf.reshape(top_k_ids, shape=(B*k, 1)) # (B*k, 1)
-        b = tf.reshape(tf.range(B), shape=(B,1)) # (B, 1)
-        b = tf.tile(b, [1,k]) # (B, k)
-        b = tf.reshape(b, shape=(B*k, 1)) #(B*k,1)
-        indices = tf.concat((b, reshaped_ids), axis=1) # (B*k, 2)
-
-        return t2, indices
-
-    @staticmethod
-    def _batch_slice(t, indices):
-        assert tf.rank(t) >= 3
-        assert tf.rank(indices) == 2
-        shape_t = K.int_shape(t) # (B, W ,...)
-        shape_i = K.int_shape(indices) # (B*k, 2)
+    def _batch_top_k_2D(self, t, k):
+        """
+        Slice a tensor of size (B, W) to size (B, k) by taking the top k of W values of
+        each row. The rows in the returned tensor (B,k) are sorted in descending order
+        of values.
+        """
+        shape_t = K.int_shape(t)
+        assert len(shape_t) == 2 # (B, W)
         B = shape_t[0]
-        k = shape_i[0] / B
-        assert shape_i[0] % B == 0
 
-        t_slice = tf.gather_nd(t, indices) # (B*k ,...)
-        return tf.reshape(t_slice, shape=(B,k,-1)) # (B, k ,...)
+        with tf.variable_scope(self.outer_scope):
+            with tf.name_scope('Batch_Top_K'):
+                t2, top_k_ids = tf.nn.top_k(t, k=k, sorted=True) # (B, k)
+                # Convert ids returned by tf.nn.top_k to indices appropriate for tf.gather_nd.
+                # Expand the id dimension from 1 to 2 while prefixing each id with the batch-index.
+                # Thus the indices will go from size (B,k,1) to (B, k, 2). These can then be used to 
+                # create a new tensor from the original tensor on which top_k was invoked originally.
+                # If that tensor was - for e.g. - of shape (B, W, T) then we'll now be able to slice
+                # it into a tensor of shape (B,k,T) using the top_k_ids.
+                reshaped_ids = tf.reshape(top_k_ids, shape=(B, k, 1)) # (B, k, 1)
+                b = tf.reshape(tf.range(B), shape=(B,1)) # (B, 1)
+                b = tf.tile(b, [1,k]) # (B, k)
+                b = tf.reshape(b, shape=(B, k, 1)) #(B,k,1)
+                indices = tf.concat((b, reshaped_ids), axis=2) # (B, k, 2)
+                assert K.int_shape(indices) == (B, k, 2)
+                return t2, indices
+
+    def _batch_slice(self, t, indices):
+        with tf.variable_scope(self.outer_scope):
+            with tf.name_scope('Batch_Slice'):
+                shape_t = K.int_shape(t) # (B, W ,...)
+                shape_i = K.int_shape(indices) # (B, k, 2)
+                assert len(shape_t) >= 2
+                assert len(shape_i) == 3
+                assert shape_i[2] == 2
+                B = shape_t[0]
+                W = shape_t[1]
+                k = shape_i[1]
+                assert W >= k
+
+                t_slice = tf.gather_nd(t, indices) # (B, k ,...)
+                return t_slice
 
     def test(self):
         """ Test one batch of input """
-        outputs = self.beamsearch()
-        scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
-        scores = tf.reshape(scores, shape=(self.C.B*self.BeamWidth, -1)) # (B*BeamWidth, T)
-        ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
-        ids = tf.reshape(ids, shape=(self.C.B*self.BeamWidth, -1)) # B*BeamWidth, T)
-        seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
-        mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
-        # scores = log-probabilities are negative values
-        # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
-        # Hence they will have no effect on the sequence probabilities
-        scores = scores * tf.to_float(mask) # (B*BeamWidth, T)
-        ## Also zero out tokens after EOS because we set impute_finished = False and as a result we noticed
-        ## ID values = -1 after EOS tokens.
-        ## Conveniently, zero is also the EOS token.
-        ids = ids*mask
-        ## Sum of log-probabilities == Product of probabilities
-        seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
-        seq_scores = tf.reshape(seq_scores, shape=(self.C.B, self.BeamWidth))
+        B = self.C.B
 
-        ## Select the top scoring beams
-        ids = tf.reshape(ids, shape=(self.C.B, self.BeamWidth, -1)) # (B, BeamWidth, T)
-        seq_lens = tf.reshape(seq_lens, shape=(self.C.B, self.BeamWidth)) #(B, BeamWidth)
-        k = min([5, self.BeamWidth])
-        top_seq_scores, top_score_indices = self._batch_top_k_2D(seq_scores, k) # (B, k) and (B*k, 2) sorted
-        top_ids = self._batch_slice(ids, top_score_indices) # (B, k)
-        top_seq_lens = self._batch_slice(seq_lens, top_score_indices) # (B, k)
+        with tf.variable_scope(self.outer_scope) as var_scope:
+            assert var_scope.reuse == True
+            ## ugly, but only option to get proper tensorboard visuals
+            with tf.name_scope(self.outer_scope.original_name_scope):
+                outputs = self._beamsearch()
+                scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
+                scores = tf.reshape(scores, shape=(B*self.BeamWidth, -1)) # (B*BeamWidth, T)
+                ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
+                ids = tf.reshape(ids, shape=(B*self.BeamWidth, -1)) # B*BeamWidth, T)
+                seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
+                mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
+                # scores = log-probabilities are negative values
+                # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
+                # Hence they will have no effect on the sequence probabilities
+                scores = scores * tf.to_float(mask) # (B*BeamWidth, T)
+                ## Also zero out tokens after EOS because we set impute_finished = False and as a result we noticed
+                ## ID values = -1 after EOS tokens.
+                ## Conveniently, zero is also the EOS token.
+                ids = ids*mask
+                ## Sum of log-probabilities == Product of probabilities
+                seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
+                seq_scores = tf.reshape(seq_scores, shape=(B, self.BeamWidth))
 
-        tf.summary.scalar('validation/score_mean', tf.reduce_mean(top_seq_scores[:,0]))
-        tf.summary.scalar('validation/top_%d_score_mean'%k, tf.reduce_mean(top_seq_scores))
-        tf.summary.scalar('validation/top_score_seq_len_min', tf.reduce_min(top_seq_lens[:,0]))
-        tf.summary.scalar('validation/top_score_seq_len_max', tf.reduce_max(top_seq_lens[:,0]))
-        tf.summary.scalar('validation/top_score_seq_len_mean', tf.reduce_mean(top_seq_lens[:,0]))
-        tf.summary.scalar('validation/top_%d_score_seq_len_min'%k, tf.reduce_min(top_seq_lens))
-        tf.summary.scalar('validation/top_%d_score_seq_len_max'%k, tf.reduce_max(top_seq_lens))
-        tf.summary.scalar('validation/top_%d_score_seq_len_mean'%k, tf.reduce_mean(top_seq_lens))
+                ## Select the top scoring beams
+                ids = tf.reshape(ids, shape=(B, self.BeamWidth, -1)) # (B, BeamWidth, T)
+                seq_lens = tf.reshape(seq_lens, shape=(B, self.BeamWidth)) #(B, BeamWidth)
+                k = min([5, self.BeamWidth])
+                top_seq_scores, top_score_indices = self._batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
+                top_ids = self._batch_slice(ids, top_score_indices) # (B, k, T)
+                assert K.int_shape(top_ids) == (B, k, None)
+                top_seq_lens = self._batch_slice(seq_lens, top_score_indices) # (B, k)
+                assert K.int_shape(top_seq_lens) == (B, k)
 
-        ## CTC accuracy metric - i.e. comparison of squashed output and target sequences
-        assert not self.C.dtype.is_unsigned
-        ## Place all logit mass on predicted IDs
-        pseudo_probs = []
-        top_ids_logits = tf.one_hot(top_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
-        for j in range(k):
-            losses = self.ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j]) #(B,)
-            ## pseudo_prob should be == 1 for matching sequences and 0 for non matching
-            pseudo_prob = tf.exp(-1*losses)  # (B,)
-            # accuracy = tf.reduce_mean(pseudo_prob) # scalar
-            pseudo_probs.append(pseudo_prob)
-            # ctc_accuracy.append(accuracy)
-        match = tf.stack(pseudo_probs, axis=1) # (B, k)
-        top_match, top_match_indices = self._batch_top_k_2D(match, k=1) # (B,1), (B*1, 2)
-        top_1_ctc_accuracy = tf.reduce_mean(top_match)
-        top_k_ctc_accuracy = tf.reduce_mean(match) # scalar
-        top_match_lens = self._batch_slice(top_seq_lens, top_match_indices) # (B, 1)
+                tf.summary.histogram('validation/score/predicted/score/', top_seq_scores[:,0], collections=['validation'])
+                tf.summary.histogram('validation/score/predicted/seq_len/', top_seq_lens[:,0], collections=['validation'])
+                tf.summary.histogram('validation/score/top_%d/score/'%k, top_seq_scores, collections=['validation'])
+                tf.summary.histogram('validation/score/top_%d/seq_len/'%k, top_seq_lens, collections=['validation'])
 
-        tf.summary.scalar('validation/ctc_accuracy', top_1_ctc_accuracy)
-        tf.summary.scalar('validation/ctc_accuracy_top_%d'%k, top_k_ctc_accuracy)
-        tf.summary.scalar('validation/top_accuracy_seq_len_min', tf.reduce_min(top_match_lens[:,0]))
-        tf.summary.scalar('validation/top_accuracy_seq_len_max', tf.reduce_max(top_match_lens[:,0]))
-        tf.summary.scalar('validation/top_accuracy_seq_len_mean', tf.reduce_mean(top_match_lens[:,0]))
-        tf.summary.scalar('validation/top_%d_accuracy_seq_len_min'%k, tf.reduce_min(top_match_lens))
-        tf.summary.scalar('validation/top_%d_accuracy_seq_len_max'%k, tf.reduce_max(top_match_lens))
-        tf.summary.scalar('validation/top_%d_accuracy_seq_len_mean'%k, tf.reduce_mean(top_match_lens))
+                ## CTC accuracy metric - i.e. comparison of squashed output and target sequences
+                with tf.name_scope('ctc_accuracy'):
+                    assert not self.C.dtype.is_unsigned
+                    ## Place all logit mass on predicted IDs
+                    pseudo_probs = []
+                    top_ids_logits = tf.one_hot(top_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
+                    for j in range(k):
+                        losses = self._ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j]) #(B,)
+                        ## pseudo_prob should be == 1 for matching sequences and 0 for non matching
+                        pseudo_prob = tf.exp(-1*losses)  # (B,)
+                        # accuracy = tf.reduce_mean(pseudo_prob) # scalar
+                        pseudo_probs.append(pseudo_prob)
+                        # ctc_accuracy.append(accuracy)
+                    match = tf.stack(pseudo_probs, axis=1) # (B, k)
+                    top_score_ctc_accuracy = tf.reduce_mean(match[:,0]*100.)
+                    top_match, top_match_indices = self._batch_top_k_2D(match, k=1) # (B,1), (B*1, 2)
+                    top_match_ctc_accuracy = tf.reduce_mean(top_match*100.)
+                    top_match_lens = self._batch_slice(top_seq_lens, top_match_indices) # (B, 1)
 
-        return dlc.Properties({
-            'predicted_ids': top_ids, # (B, k, T)
-            'predicted_scores': top_seq_scores, # (B, k)
-            'predicted_lens': top_seq_lens, # (B,k)
-            'top_beams': top_beams, # (B, k)
-            'all_ids': ids, # (B, BeamWidth, T),
-            'all_id_scores': tf.reshape(scores, shape=(self.C.B, self.BeamWidth, -1)), # (B, BeamWidth, T)
-            'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
-            'top_1_ctc_accuracy': top_1_ctc_accuracy, # scalar
-            'top_k_ctc_accuracy': top_k_ctc_accuracy, # scalar
-            'accuracy_probs': pseudo_probs,
-            'inp_q': self._inp_q,
-            'tb_logs': tf.summary.merge_all()
-            })        
+                    tf.summary.scalar('validation/accuracy/predicted/ctc_accuracy/', top_match_ctc_accuracy, collections=['validation'])
+                    tf.summary.histogram('validation/accuracy/predicted/seq_len/', top_match_lens[:,0], collections=['validation'])
+                    tf.summary.histogram('validation/accuracy/top_%d/seq_len/'%k, (top_match_lens), collections=['validation'])
+                    tf.summary.scalar('validation/score/top_%d/ctc_accuracy/'%k, top_score_ctc_accuracy, collections=['validation'])
 
+                return dlc.Properties({
+                    'top_ids': top_ids, # (B, k, T)
+                    'top_scores': top_seq_scores, # (B, k)
+                    'top_lens': top_seq_lens, # (B,k)
+                    'top_beams': top_score_indices[:,:,1], # (B, k)
+                    'all_ids': ids, # (B, BeamWidth, T),
+                    'all_id_scores': tf.reshape(scores, shape=(B, self.BeamWidth, -1)), # (B, BeamWidth, T)
+                    'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
+                    'top_match_ctc_accuracy': top_match_ctc_accuracy, # scalar
+                    'top_score_ctc_accuracy': top_score_ctc_accuracy, # scalar
+                    'accuracy_probs': pseudo_probs,
+                    'inp_q': self._inp_q,
+                    'tb_logs': tf.summary.merge_all(key='validation')
+                    })

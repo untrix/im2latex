@@ -563,3 +563,8 @@ class _anyok(_ParamValidator):
 # Helpful validator objects
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
+
+import nltk
+def batch_bleu_score(predicted_ids, predicted_lens, target_ids):
+    pass
+# nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)
