@@ -653,6 +653,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.histogram('validation/accuracy/predicted/seq_len/', top_match_lens[:,0], collections=['validation'])
                     tf.summary.histogram('validation/accuracy/top_%d/seq_len/'%k, (top_match_lens), collections=['validation'])
                     tf.summary.scalar('validation/score/top_%d/ctc_accuracy/'%k, top_score_ctc_accuracy, collections=['validation'])
+                    logs_v = tf.summary.merge_all(key='validation')
+
+                ## BLEU scores
+                with tf.name_scope('BLEU'):
+                    ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
+                    ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
+                    tf.summary.histogram('validation/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
+                    tf.summary.scalar('validation/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                    logs_b = tf.summary.merge_all(key='bleu')
 
                 return dlc.Properties({
                     'top_ids': top_ids, # (B, k, T)
@@ -666,5 +675,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top_score_ctc_accuracy': top_score_ctc_accuracy, # scalar
                     'accuracy_probs': pseudo_probs,
                     'inp_q': self._inp_q,
-                    'tb_logs': tf.summary.merge_all(key='validation')
+                    'ph_bleu': ph_bleu,
+                    'logs_v': logs_v,
+                    'logs_b': logs_b,
+                    'y_ctc': self._y_ctc,
+                    'ctc_len': self._ctc_len
                     })

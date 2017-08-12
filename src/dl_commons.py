@@ -349,8 +349,8 @@ class Params(Properties):
         except KeyError:
             return None
 
-    """ Polymorphic override of _get_val_. Be careful of recursion. """
     def _get_val_(self, name):
+        """ Polymorphic override of _get_val_. Be careful of recursion. """
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
         else:
@@ -566,25 +566,59 @@ boolean = instanceof(bool, False)
 
 import numpy as np
 
-def squashed_seq_list(np_seq_batch, seq_lens, remove_val):
-    assert seq_batch.ndim == 2
+def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
+    assert np_seq_batch.ndim == 2
+    assert EOSToken == 0
+    assert remove_val != EOSToken
     sq_batch = []
 
     for i, np_seq in enumerate(np_seq_batch):
-        trunc = np_seq[:seq_lens[i]]
+        seq_len = seq_lens[i]
+        trunc = np_seq[:seq_len]
+        if trunc[-1] != 0:
+            trunc = np.append(trunc, [0])
+            print 'WARNING: No EOS tokens in sequence of length %d'%seq_len
+        elif trunc[-2] == 0:
+            trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
+            print 'WARNING: More than one EOS tokens in sequence of length %d'%seq_len
+
         squashed = trunc[trunc != remove_val]
         sq_batch.append(squashed.tolist())
-        
         # sq_batch.append(np.pad(squashed, (0, T-squashed.shape[0]), mode='constant', constant_values=0))
     return sq_batch
 
+def get_bleu_weights(max_len=200, frac=0.8):
+    weights = [None]
+    for i in range(1, max_len+1):
+        o = int(np.ceil([i*(1.-frac)])[0])
+        w = np.ones(o, dtype=float) / o
+        z = np.zeros(i-o, dtype=float)
+        weights.append( np.concatenate((z, w)) )
+    return weights
+BLEU_WEIGHTS = get_bleu_weights()
+
 import nltk
-def batch_bleu_score(predicted_ids, predicted_lens, target_ids, space_token):
+def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token):
+    """
+    Removes space-tokens from predicted_ids and then computes the bleu scores of a batch of
+    sequences.
+    Args:
+        predicted_ids: Numpy array of predicted sequence tokens - (B, T)
+        predicted_lens: Numpy array of predicted sequence lengths - (B,)
+        target_ids: Numpy array of reference sequence tokens - (B, T')
+        target_lens: Numpy array of reference sequence lengths - (B,)
+        space_token: (token-type) Space/Blank token to remove from predicted_ids
+    """
     scores = []
     squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token)
-    for i, predicted in enumerate(squashed_ids):
-        target_len = target_ids[i].shape[0]
-        scores.append(nltk.translate.bleu_score.sentence_bleu([target_ids[i]], predicted, weights=[1.0/target_len]*target_len))
+    for i, predicted_seq in enumerate(squashed_ids):
+        target_len = target_lens[i]
+        scores.append(nltk.translate.bleu_score.sentence_bleu([target_ids[i][:target_len]], 
+                                                              predicted_seq,
+                                                              weights=BLEU_WEIGHTS[target_len]))
+        print 'BLEU Score = %f'%scores[-1]
+        print 'Target = %s'%target_ids[i]
+        print 'Predicted = %s'%predicted_seq
 
     return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)

@@ -58,6 +58,17 @@ class GlobalParams(dlc.HyperParams):
            xrange(500,1000),
            557 #get_vocab_size(data_folder)
            ),
+        PD('CTCBlankTokenID', 'ID of the space/blank token',
+           integer(),
+           ## By CTC requirement, blank token should be == K-1
+           ## In our case blank token == whitespace
+           LambdaVal(lambda _, p: p.K-1)
+           ),
+        PD('NullTokenID',
+           'ID of the EOS token = Null Token',
+           (0,),
+           0
+           ),
         PD('n',
            "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
            "The paper uses a value of 1000.",

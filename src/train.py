@@ -174,7 +174,7 @@ def train(num_steps, print_steps, num_epochs,
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
                         valid_start_time = time.time()
-                        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v = session.run((
+                        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v, y_ctc, ctc_len = session.run((
                                             valid_ops.top_ids, 
                                             valid_ops.top_lens,
                                             valid_ops.top_scores,
@@ -184,7 +184,9 @@ def train(num_steps, print_steps, num_epochs,
                                             valid_ops.all_seq_lens,
                                             valid_ops.top_match_ctc_accuracy,
                                             valid_ops.top_score_ctc_accuracy,
-                                            valid_ops.tb_logs))
+                                            valid_ops.logs_v,
+                                            valid_ops.y_ctc,
+                                            valid_ops.ctc_len))
                         valid_time = (time.time() - valid_start_time)
                         print 'shape of top_ids = ', ids.shape
                         print 'shape of top sequence_lens= ', l.shape
@@ -200,9 +202,9 @@ def train(num_steps, print_steps, num_epochs,
                                 print 'top token sequences=%s'%ids[i]
                                 print 'top sequence scores=%s'%s[i]
                                 print 'top token scores=%s'%bis[i, b[i]]
-                                print 'all beam sequences=%s'%bids[i]
-                                print 'all beam token scores = %s'%bis[i]
-                                print 'all beam lens = %s'%bl[i]
+                                # print 'all beam sequences=%s'%bids[i]
+                                # print 'all beam token scores = %s'%bis[i]
+                                # print 'all beam lens = %s'%bl[i]
                                 for k in range(l[i].shape[0]):
                                     assert l[i, k] == bl[i, b[i, k]]
                                 for k in range(l[i].shape[0]):
@@ -215,7 +217,7 @@ def train(num_steps, print_steps, num_epochs,
                                 assert np.argmax(np.sum(bis[i], axis=-1)) == beam
                                 assert np.all(ids[i,0] == bids[i,beam])
                                 print '###################################\n'
-
+                        assert np.all(bl <= (hyper.Max_Seq_Len + 10))
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
                             time.time()-start_time,
@@ -244,8 +246,8 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
                         ## validation graph metrics
                         tf_sw.add_summary(logs_v, global_step=step)
-                        bleu = dlc.batch_bleu_score(top_ids[:,0,:], l[:,0])
-                        log_bleu = session.run([valid_ops.log_bleu], feed_dict={valid_ops.ph_bleu : bleu})
+                        bleu = dlc.squashed_bleu_scores(ids[:,0,:], l[:,0], y_ctc, ctc_len, hyper.CTCBlankTokenID)
+                        (log_bleu,) = session.run([valid_ops.logs_b], feed_dict={valid_ops.ph_bleu : bleu})
                         tf_sw.add_summary(log_bleu, global_step=step)
                         tf_sw.flush()
                         ## reset metrics
