@@ -64,6 +64,10 @@ class GlobalParams(dlc.HyperParams):
            ## In our case blank token == whitespace
            LambdaVal(lambda _, p: p.K-1)
            ),
+        PD('SpaceTokenID', 'Synonym of CTCBlankTokenID',
+           integer(),
+           equalto('CTCBlankTokenID')
+           ),
         PD('NullTokenID',
            'ID of the EOS token = Null Token',
            (0,),

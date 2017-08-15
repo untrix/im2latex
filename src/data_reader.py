@@ -97,7 +97,10 @@ class VGGProcessor(object):
         return pd.read_pickle(pkl_file)
 
 def make_batch_list(df_, batch_size_, assert_whole_batch=True):
-    ## Make a list of batches
+    ## Shuffle the dataframe
+    df_ = df_.sample(frac=1)
+
+    ## Make a list of batches indices
     bin_lens = sorted(df_.bin_len.unique())
     bin_counts = [df_[df_.bin_len==l].shape[0] for l in bin_lens]
     batch_list = []
@@ -111,6 +114,7 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
             assert (bin_counts[i] % batch_size_) == 0
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
+    ## Shuffle the bin-batch list
     np.random.shuffle(batch_list)
     return batch_list
 
@@ -163,7 +167,7 @@ class ShuffleIterator(object):
 
     def next(self):
         with self.lock:
-            if self._step >= self.max_steps:
+            if (self.max_steps >= 0) and (self._step >= self.max_steps):
                 raise StopIteration('Max steps executed (%d)'%self._step)
 
             if self._next_pos >= self._num_items:
@@ -171,7 +175,8 @@ class ShuffleIterator(object):
                 self._df = self._df.sample(frac=1)
                 ## Reshuffle the bin-batch list
                 np.random.shuffle(self._batch_list)
-                ## self._batch_list = make_batch_list(self._df, batch_size_, hyper.assert_whole_batch)
+                ## Shuffle the bin composition too
+                self._df = self._df.sample(frac=1)
                 self._next_pos = 0
                 print 'ShuffleIterator finished epoch %d'%self._epoch
                 self._epoch += 1
@@ -261,6 +266,7 @@ class BatchImageIterator2(ShuffleIterator):
 InpTup = collections.namedtuple('InpTup', ('y_s', 'seq_len', 'y_ctc', 'ctc_len', 'im'))
 class BatchContextIterator(ShuffleIterator):
     def __init__(self,
+                 df,
                  raw_data_dir_,
                  image_feature_dir_,
                  hyper,
@@ -273,7 +279,6 @@ class BatchContextIterator(ShuffleIterator):
         self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_sq_train.pkl'))
-        df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
     def next(self):
@@ -310,3 +315,69 @@ class BatchContextIterator(ShuffleIterator):
         int_type = self._hyper.int_type
         return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
 
+def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=None, validation_size=None):
+    if validation_frac is None and validation_size is None:
+        raise ValueError('Either validation_frac or validation_size must be specified.')
+    elif validation_frac is not None and validation_size is not None:
+        raise ValueError('Either validation_frac or validation_size must be specified, but not both.')
+    elif validation_frac is not None:
+        assert validation_frac <1.0 and validation_frac >0
+        validation_size = df_.shape[0] * validation_frac
+    num_val_batches = validation_size // batch_size_
+    validation_size = num_val_batches * batch_size_
+    assert num_val_batches >= 1
+
+    ## Shuffle the dataframe
+    df_ = df_.sample(frac=1)
+
+    ## Make overall list of batches
+    batch_list = make_batch_list(df_, batch_size_, assert_whole_batch)
+    val_batches = np.random.choice(batch_list, size=num_val_batches, replace=False)
+    for batch in val_batches:
+        batch_list.remove(batch)
+
+    def get_bin_counts(batch_list):
+        bin_counts = {}
+        for batch_idx in batch_list:
+            if batch_idx[0] in bin_counts:
+                bin_counts[batch_idx[0]] += 1
+            else:
+                bin_counts[batch_idx[0]] = 1
+        return bin_counts
+
+    ## Separate out the training and validation samples
+    df_train = df_
+    df_val = None
+    val_bin_counts = get_bin_counts(val_batches)
+    for bin_len, num_batches in val_bin_counts.iteritems():
+        df_val_bin = df_[df_.bin_len == bin_len].iloc[:num_batches*batch_size_]
+        df_val = df_val_bin if df_val is None else df_val.append(df_val_bin)
+
+    df_train = df_train.drop(df_val.index)
+    assert df_train.shape[0] + df_val.shape[0] == df_.shape[0]
+
+    return df_train, df_val
+
+def create_context_iterators(raw_data_dir_,
+                             image_feature_dir_,
+                             hyper,
+                             num_steps=-1,
+                             num_epochs=-1,
+                             image_processor_=None):
+    df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    df_train, df_valid = split_dataset(df, hyper.B, hyper.assert_whole_batch, validation_frac=None, validation_size=4608)
+    batch_iterator_train = BatchContextIterator(df_train,
+                                                raw_data_dir_,
+                                                image_feature_dir_,
+                                                hyper,
+                                                num_steps,
+                                                num_epochs,
+                                                image_processor_)
+    batch_iterator_valid = BatchContextIterator(df_valid,
+                                                raw_data_dir_,
+                                                image_feature_dir_,
+                                                hyper,
+                                                num_steps=-1,
+                                                num_epochs=-1,
+                                                image_processor_=image_processor_)
+    return batch_iterator_train, batch_iterator_valid

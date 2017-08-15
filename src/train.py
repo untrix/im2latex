@@ -102,12 +102,7 @@ def train(num_steps, print_steps, num_epochs,
         hyper = hyper_params.make_hyper(globalParams)
         print '\n#########################  Hyper-params: #########################\n%s'%(hyper,)
         print('##################################################################\n')
-        batch_iterator = BatchContextIterator(raw_data_folder,
-                                              vgg16_folder,
-                                              hyper,
-                                              num_steps,
-                                              num_epochs)
-        batch_iterator2 = BatchContextIterator(raw_data_folder,
+        batch_iterator, batch_iterator2 = create_context_iterators(raw_data_folder,
                                               vgg16_folder,
                                               hyper,
                                               num_steps,
@@ -173,62 +168,18 @@ def train(num_steps, print_steps, num_epochs,
                     step += 1
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
-                        valid_start_time = time.time()
-                        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v, y_ctc, ctc_len = session.run((
-                                            valid_ops.top_ids, 
-                                            valid_ops.top_lens,
-                                            valid_ops.top_scores,
-                                            valid_ops.top_beams,
-                                            valid_ops.all_id_scores,
-                                            valid_ops.all_ids,
-                                            valid_ops.all_seq_lens,
-                                            valid_ops.top_match_ctc_accuracy,
-                                            valid_ops.top_score_ctc_accuracy,
-                                            valid_ops.logs_v,
-                                            valid_ops.y_ctc,
-                                            valid_ops.ctc_len))
-                        valid_time = (time.time() - valid_start_time)
-                        print 'shape of top_ids = ', ids.shape
-                        print 'shape of top sequence_lens= ', l.shape
-                        print 'shape of top scores= ', s.shape
-                        print 'shape of top beams= ', b.shape
-                        print 'top sequence_lens= ', l
-                        for i in range(hyper.B):
-                            if i == 0:
-                                print '############ SAMPLE %d ############'%i
-                                beam = b[i,0]
-                                print 'top beams=%s'%b[i]
-                                print 'top lens=%s'%l[i]
-                                print 'top token sequences=%s'%ids[i]
-                                print 'top sequence scores=%s'%s[i]
-                                print 'top token scores=%s'%bis[i, b[i]]
-                                # print 'all beam sequences=%s'%bids[i]
-                                # print 'all beam token scores = %s'%bis[i]
-                                # print 'all beam lens = %s'%bl[i]
-                                for k in range(l[i].shape[0]):
-                                    assert l[i, k] == bl[i, b[i, k]]
-                                for k in range(l[i].shape[0]):
-                                    try:
-                                        sum_scores = np.sum(bis[i, b[i,k]])
-                                        reported_score = s[i,k]
-                                        assert sum_scores -  reported_score < 0.00001
-                                    except:
-                                        hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
-                                assert np.argmax(np.sum(bis[i], axis=-1)) == beam
-                                assert np.all(ids[i,0] == bids[i,beam])
-                                print '###################################\n'
-                        assert np.all(bl <= (hyper.Max_Seq_Len + 10))
+                        valid_res = validation(valid_ops)
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
-                            valid_time * 100. / hyper.B )
+                            valid_res.valid_time * 100. / hyper.B )
                         print 'Step %d, ctc_loss min = %f, max=%f, top_match_accuracy=%f, top_score_accuracy=%f'%(
                             step,
                             min(ctc_losses),
                             max(ctc_losses),
-                            top_match_accuracy,
-                            top_score_accuracy
+                            valid_res.top_match_accuracy,
+                            valid_res.top_score_accuracy
                             )
                         ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
@@ -244,11 +195,6 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=1)
                             else:
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
-                        ## validation graph metrics
-                        tf_sw.add_summary(logs_v, global_step=step)
-                        bleu = dlc.squashed_bleu_scores(ids[:,0,:], l[:,0], y_ctc, ctc_len, hyper.CTCBlankTokenID)
-                        (log_bleu,) = session.run([valid_ops.logs_b], feed_dict={valid_ops.ph_bleu : bleu})
-                        tf_sw.add_summary(log_bleu, global_step=step)
                         tf_sw.flush()
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
@@ -264,6 +210,63 @@ def train(num_steps, print_steps, num_epochs,
                 # close_queue1.run()
                 # close_queue2.run()
                 coord.join(enqueue_threads)
+
+def validation(valid_ops, epoch_size, batch_size):
+    valid_start_time = time.time()
+    n = 0
+    print_batch = np.random.randint(0,epoch_size)    
+    while n < epoch_size:
+        n += 1
+        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v, logs_ed = session.run((
+                            valid_ops.top_ids, 
+                            valid_ops.top_lens,
+                            valid_ops.top_scores,
+                            valid_ops.top_beams,
+                            valid_ops.all_id_scores,
+                            valid_ops.all_ids,
+                            valid_ops.all_seq_lens,
+                            valid_ops.top_match_ctc_accuracy,
+                            valid_ops.top_score_ctc_accuracy,
+                            valid_ops.logs_v,
+                            valid_ops.logs_ed))
+        # print 'shape of top_ids = ', ids.shape
+        # print 'shape of top sequence_lens= ', l.shape
+        # print 'shape of top scores= ', s.shape
+        # print 'shape of top beams= ', b.shape
+        # print 'top sequence_lens= ', l
+        if n == print_batch:
+            i = np.random.randint(0, high=hyper.B)
+            print '############ VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
+            beam = b[i,0]
+            print 'top k beams=%s'%b[i]
+            print 'top k lens=%s'%l[i]
+            print 'top 1 token sequence=%s'%ids[i,0]
+            print 'top k sequence scores=%s'%s[i]
+            # print 'top token scores=%s'%bis[i, b[i]]
+            # print 'all beam sequences=%s'%bids[i]
+            # print 'all beam token scores = %s'%bis[i]
+            # print 'all beam lens = %s'%bl[i]
+            for k in range(l[i].shape[0]):
+                assert l[i, k] == bl[i, b[i, k]]
+            for k in range(l[i].shape[0]):
+                try:
+                    sum_scores = np.sum(bis[i, b[i,k]])
+                    reported_score = s[i,k]
+                    assert sum_scores -  reported_score < 0.00001
+                except:
+                    hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
+            assert np.argmax(np.sum(bis[i], axis=-1)) == beam
+            assert np.all(ids[i,0] == bids[i,beam])
+            print '###################################\n'
+            assert np.all(bl <= (hyper.Max_Seq_Len + 10))
+        ## validation graph metrics
+        tf_sw.add_summary(logs_v, global_step=step)
+        tf_sw.add_summary(logs_ed, global_step=step)
+        # bleu = dlc.squashed_bleu_scores(ids[:,0,:], l[:,0], y_ctc, ctc_len, hyper.CTCBlankTokenID)
+        # (log_bleu,) = session.run([valid_ops.logs_b], feed_dict={valid_ops.ph_bleu : bleu})
+        # tf_sw.add_summary(log_bleu, global_step=step)
+        tf_sw.flush()
+    valid_time = (time.time() - valid_start_time)
 
 def main():
     _data_folder = '../data/generated2'

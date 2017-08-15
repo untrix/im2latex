@@ -587,10 +587,12 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
         # sq_batch.append(np.pad(squashed, (0, T-squashed.shape[0]), mode='constant', constant_values=0))
     return sq_batch
 
-def get_bleu_weights(max_len=200, frac=0.8):
+def get_bleu_weights(max_len=200, frac=1.0):
     weights = [None]
     for i in range(1, max_len+1):
         o = int(np.ceil([i*(1.-frac)])[0])
+        if o == 0:
+            o = 1
         w = np.ones(o, dtype=float) / o
         z = np.zeros(i-o, dtype=float)
         weights.append( np.concatenate((z, w)) )
@@ -613,12 +615,15 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
     squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token)
     for i, predicted_seq in enumerate(squashed_ids):
         target_len = target_lens[i]
-        scores.append(nltk.translate.bleu_score.sentence_bleu([target_ids[i][:target_len]], 
-                                                              predicted_seq,
-                                                              weights=BLEU_WEIGHTS[target_len]))
-        print 'BLEU Score = %f'%scores[-1]
-        print 'Target = %s'%target_ids[i]
+        target = target_ids[i][:target_len]
+        score = nltk.translate.bleu_score.sentence_bleu([target], 
+                                                        predicted_seq,
+                                                        weights=BLEU_WEIGHTS[target_len])
+        scores.append(score)
+        print 'BLEU Score = %f'%score
+        print 'Target = %s'%target
         print 'Predicted = %s'%predicted_seq
+        print 'BLEU Weights = %s'%BLEU_WEIGHTS[target_len]
 
     return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)

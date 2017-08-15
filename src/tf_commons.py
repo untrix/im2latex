@@ -568,3 +568,108 @@ def printVars(name, coll):
         print var.name, K.int_shape(var), 'num_params = ', n
     print '\nTotal number of variables = ', total_n
     return total_n
+
+def k_edit_distance(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+    with tf.name_scope('edit_distance'):
+        p_shape = K.int_shape(predicted_ids)
+        assert len(p_shape) == 3
+        assert p_shape[0] == B
+        assert k == p_shape[1]
+        assert K.int_shape(predicted_lens) == (B, k)
+        t_shape = K.int_shape(target_ids)
+        assert len(t_shape) == 3
+        assert (t_shape[0],t_shape[1]) == (B, k)
+        assert K.int_shape(target_lens) == (B, k)
+        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token)
+        ## blank tokens should not be present in target_ids
+        target_sparse = dense_to_sparse3D(B, target_ids, target_lens)
+        d = tf.edit_distance(predicted_sparse, target_sparse)
+        # assert K.int_shape(d) == K.int_shape(predicted_lens)
+        d.set_shape(predicted_lens.shape)
+        return d
+
+def dense_to_sparse2D(m, lens, blank_token=None):
+    with tf.name_scope('dense_to_sparse2D'):
+        assert len(K.int_shape(m)) == 2
+        assert len(K.int_shape(lens)) == 1
+        mask = tf.sequence_mask(lens, maxlen=tf.shape(m)[1])
+        if blank_token is not None:
+            mask = tf.logical_and(mask, tf.not_equal(m, blank_token))
+        idx = tf.where(mask)
+        vals = tf.gather_nd(m, idx)
+        return tf.SparseTensor(idx, vals, tf.shape(m, out_type=tf.int64))
+
+def dense_to_sparse3D(B, t, lens, blank_token=None):
+    with tf.name_scope('dense_to_sparse3D'):
+        assert K.int_shape(t)[0] == B
+        assert len(K.int_shape(t)) == 3
+        assert len(K.int_shape(lens)) == 2
+        mask = tf.stack([tf.sequence_mask(lens[i], maxlen=tf.shape(t)[2]) for i in range(B)])
+        if blank_token is not None:
+            mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
+        idx = tf.where(mask)
+        vals = tf.gather_nd(t, idx)
+        return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))
+
+def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
+    # B = self.C.B
+    # ctc_len = self._ctc_len
+    # y_ctc = self._y_ctc
+
+    with tf.name_scope('_ctc_loss'):
+        assert K.int_shape(yLogits) == (B, None, Kv)
+        assert K.int_shape(logits_lens) == (B,)
+        ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+        assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+        y_idx =    tf.where(ctc_mask)
+        y_vals =   tf.gather_nd(y_ctc, y_idx)
+        y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
+        ctc_losses = tf.nn.ctc_loss(y_sparse,
+                                    yLogits,
+                                    logits_lens,
+                                    ctc_merge_repeated=False,
+                                    time_major=False)
+        assert K.int_shape(ctc_losses) == (B, )
+        return ctc_losses
+
+def batch_top_k_2D(t, k):
+    """
+    Slice a tensor of size (B, W) to size (B, k) by taking the top k of W values of
+    each row. The rows in the returned tensor (B,k) are sorted in descending order
+    of values.
+    """
+    shape_t = K.int_shape(t)
+    assert len(shape_t) == 2 # (B, W)
+    B = shape_t[0]
+
+    with tf.name_scope('_batch_top_k'):
+        t2, top_k_ids = tf.nn.top_k(t, k=k, sorted=True) # (B, k)
+        # Convert ids returned by tf.nn.top_k to indices appropriate for tf.gather_nd.
+        # Expand the id dimension from 1 to 2 while prefixing each id with the batch-index.
+        # Thus the indices will go from size (B,k,1) to (B, k, 2). These can then be used to 
+        # create a new tensor from the original tensor on which top_k was invoked originally.
+        # If that tensor was - for e.g. - of shape (B, W, T) then we'll now be able to slice
+        # it into a tensor of shape (B,k,T) using the top_k_ids.
+        reshaped_ids = tf.reshape(top_k_ids, shape=(B, k, 1)) # (B, k, 1)
+        b = tf.reshape(tf.range(B), shape=(B,1)) # (B, 1)
+        b = tf.tile(b, [1,k]) # (B, k)
+        b = tf.reshape(b, shape=(B, k, 1)) #(B,k,1)
+        indices = tf.concat((b, reshaped_ids), axis=2) # (B, k, 2)
+        assert K.int_shape(indices) == (B, k, 2)
+        return t2, indices
+
+def batch_slice(t, indices):
+    with tf.name_scope('_batch_slice'):
+        shape_t = K.int_shape(t) # (B, W ,...)
+        shape_i = K.int_shape(indices) # (B, k, 2)
+        assert len(shape_t) >= 2
+        assert len(shape_i) == 3
+        assert shape_i[2] == 2
+        B = shape_t[0]
+        W = shape_t[1]
+        k = shape_i[1]
+        assert W >= k
+
+        t_slice = tf.gather_nd(t, indices) # (B, k ,...)
+        return t_slice
+

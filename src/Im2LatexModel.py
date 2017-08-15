@@ -523,74 +523,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             'seq_lens': final_sequence_lengths
                             })
 
-    def _ctc_loss(self, yLogits, logits_lens):
-        B = self.C.B
-        ctc_len = self._ctc_len
-        y_ctc = self._y_ctc
-
-        with tf.variable_scope(self.outer_scope):
-            with tf.name_scope('CTC'):
-                assert K.int_shape(yLogits) == (self.C.B, None, self.C.K)
-                assert K.int_shape(logits_lens) == (self.C.B,)
-                ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
-                assert K.int_shape(ctc_mask) == (B,None) # (B,T)
-                y_idx =    tf.where(ctc_mask)
-                y_vals =   tf.gather_nd(y_ctc, y_idx)
-                y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
-                ctc_losses = tf.nn.ctc_loss(y_sparse,
-                                            yLogits,
-                                            logits_lens,
-                                            ctc_merge_repeated=False,
-                                            time_major=False)
-                assert K.int_shape(ctc_losses) == (B, )
-                return ctc_losses
-
-    def _batch_top_k_2D(self, t, k):
-        """
-        Slice a tensor of size (B, W) to size (B, k) by taking the top k of W values of
-        each row. The rows in the returned tensor (B,k) are sorted in descending order
-        of values.
-        """
-        shape_t = K.int_shape(t)
-        assert len(shape_t) == 2 # (B, W)
-        B = shape_t[0]
-
-        with tf.variable_scope(self.outer_scope):
-            with tf.name_scope('Batch_Top_K'):
-                t2, top_k_ids = tf.nn.top_k(t, k=k, sorted=True) # (B, k)
-                # Convert ids returned by tf.nn.top_k to indices appropriate for tf.gather_nd.
-                # Expand the id dimension from 1 to 2 while prefixing each id with the batch-index.
-                # Thus the indices will go from size (B,k,1) to (B, k, 2). These can then be used to 
-                # create a new tensor from the original tensor on which top_k was invoked originally.
-                # If that tensor was - for e.g. - of shape (B, W, T) then we'll now be able to slice
-                # it into a tensor of shape (B,k,T) using the top_k_ids.
-                reshaped_ids = tf.reshape(top_k_ids, shape=(B, k, 1)) # (B, k, 1)
-                b = tf.reshape(tf.range(B), shape=(B,1)) # (B, 1)
-                b = tf.tile(b, [1,k]) # (B, k)
-                b = tf.reshape(b, shape=(B, k, 1)) #(B,k,1)
-                indices = tf.concat((b, reshaped_ids), axis=2) # (B, k, 2)
-                assert K.int_shape(indices) == (B, k, 2)
-                return t2, indices
-
-    def _batch_slice(self, t, indices):
-        with tf.variable_scope(self.outer_scope):
-            with tf.name_scope('Batch_Slice'):
-                shape_t = K.int_shape(t) # (B, W ,...)
-                shape_i = K.int_shape(indices) # (B, k, 2)
-                assert len(shape_t) >= 2
-                assert len(shape_i) == 3
-                assert shape_i[2] == 2
-                B = shape_t[0]
-                W = shape_t[1]
-                k = shape_i[1]
-                assert W >= k
-
-                t_slice = tf.gather_nd(t, indices) # (B, k ,...)
-                return t_slice
-
     def test(self):
         """ Test one batch of input """
         B = self.C.B
+        BW = self.BeamWidth
 
         with tf.variable_scope(self.outer_scope) as var_scope:
             assert var_scope.reuse == True
@@ -598,9 +534,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
                 scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
-                scores = tf.reshape(scores, shape=(B*self.BeamWidth, -1)) # (B*BeamWidth, T)
+                scores = tf.reshape(scores, shape=(B*BW, -1)) # (B*BeamWidth, T)
                 ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
-                ids = tf.reshape(ids, shape=(B*self.BeamWidth, -1)) # B*BeamWidth, T)
+                ids = tf.reshape(ids, shape=(B*BW, -1)) # B*BeamWidth, T)
                 seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
                 mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
                 # scores = log-probabilities are negative values
@@ -613,16 +549,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ids = ids*mask
                 ## Sum of log-probabilities == Product of probabilities
                 seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
-                seq_scores = tf.reshape(seq_scores, shape=(B, self.BeamWidth))
+                seq_scores = tf.reshape(seq_scores, shape=(B, BW))
 
                 ## Select the top scoring beams
-                ids = tf.reshape(ids, shape=(B, self.BeamWidth, -1)) # (B, BeamWidth, T)
-                seq_lens = tf.reshape(seq_lens, shape=(B, self.BeamWidth)) #(B, BeamWidth)
-                k = min([5, self.BeamWidth])
-                top_seq_scores, top_score_indices = self._batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
-                top_ids = self._batch_slice(ids, top_score_indices) # (B, k, T)
+                ids = tf.reshape(ids, shape=(B, BW, -1)) # (B, BeamWidth, T)
+                seq_lens = tf.reshape(seq_lens, shape=(B, BW)) #(B, BeamWidth)
+                k = min([5, BW])
+                top_seq_scores, top_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
+                top_ids = tfc.batch_slice(ids, top_score_indices) # (B, k, T)
                 assert K.int_shape(top_ids) == (B, k, None)
-                top_seq_lens = self._batch_slice(seq_lens, top_score_indices) # (B, k)
+                top_seq_lens = tfc.batch_slice(seq_lens, top_score_indices) # (B, k)
                 assert K.int_shape(top_seq_lens) == (B, k)
 
                 tf.summary.histogram('validation/score/predicted/score/', top_seq_scores[:,0], collections=['validation'])
@@ -637,17 +573,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     pseudo_probs = []
                     top_ids_logits = tf.one_hot(top_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
                     for j in range(k):
-                        losses = self._ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j]) #(B,)
+                        losses = tfc.ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j], self._y_ctc, self._ctc_len, B, self.C.K) #(B,)
                         ## pseudo_prob should be == 1 for matching sequences and 0 for non matching
                         pseudo_prob = tf.exp(-1*losses)  # (B,)
-                        # accuracy = tf.reduce_mean(pseudo_prob) # scalar
                         pseudo_probs.append(pseudo_prob)
-                        # ctc_accuracy.append(accuracy)
                     match = tf.stack(pseudo_probs, axis=1) # (B, k)
                     top_score_ctc_accuracy = tf.reduce_mean(match[:,0]*100.)
-                    top_match, top_match_indices = self._batch_top_k_2D(match, k=1) # (B,1), (B*1, 2)
+                    top_match, top_match_indices = tfc.batch_top_k_2D(match, k=1) # (B,1), (B*1, 2)
                     top_match_ctc_accuracy = tf.reduce_mean(top_match*100.)
-                    top_match_lens = self._batch_slice(top_seq_lens, top_match_indices) # (B, 1)
+                    top_match_lens = tfc.batch_slice(top_seq_lens, top_match_indices) # (B, 1)
 
                     tf.summary.scalar('validation/accuracy/predicted/ctc_accuracy/', top_match_ctc_accuracy, collections=['validation'])
                     tf.summary.histogram('validation/accuracy/predicted/seq_len/', top_match_lens[:,0], collections=['validation'])
@@ -656,12 +590,22 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     logs_v = tf.summary.merge_all(key='validation')
 
                 ## BLEU scores
-                with tf.name_scope('BLEU'):
-                    ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
-                    ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                    tf.summary.histogram('validation/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
-                    tf.summary.scalar('validation/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
-                    logs_b = tf.summary.merge_all(key='bleu')
+                # with tf.name_scope('BLEU'):
+                #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
+                #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
+                #     tf.summary.histogram('validation/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
+                #     tf.summary.scalar('validation/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                #     logs_b = tf.summary.merge_all(key='bleu')
+
+                ## Edit/Levenshtein distance scores
+                y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
+                ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
+                ed = tfc.k_edit_distance(B, k, top_ids, top_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID)
+                ed_predicted = tf.reduce_mean(ed[:,0])
+                ed_top_k = tf.reduce_mean(tf.reduce_min(ed, axis=1))
+                tf.summary.scalar('validation/accuracy/predicted/edit_distance/', ed_predicted, collections=['edit_distance'])
+                tf.summary.scalar('validation/accuracy/top_%d/edit_distance/'%k, ed_top_k, collections=['edit_distance'])
+                logs_ed = tf.summary.merge_all(key='edit_distance')
 
                 return dlc.Properties({
                     'top_ids': top_ids, # (B, k, T)
@@ -669,15 +613,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top_lens': top_seq_lens, # (B,k)
                     'top_beams': top_score_indices[:,:,1], # (B, k)
                     'all_ids': ids, # (B, BeamWidth, T),
-                    'all_id_scores': tf.reshape(scores, shape=(B, self.BeamWidth, -1)), # (B, BeamWidth, T)
+                    'all_id_scores': tf.reshape(scores, shape=(B, BW, -1)), # (B, BeamWidth, T)
                     'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
                     'top_match_ctc_accuracy': top_match_ctc_accuracy, # scalar
                     'top_score_ctc_accuracy': top_score_ctc_accuracy, # scalar
                     'accuracy_probs': pseudo_probs,
-                    'inp_q': self._inp_q,
-                    'ph_bleu': ph_bleu,
                     'logs_v': logs_v,
-                    'logs_b': logs_b,
-                    'y_ctc': self._y_ctc,
-                    'ctc_len': self._ctc_len
+                    'inp_q': self._inp_q,
+                    'ed_predicted': ed_predicted,
+                    'ed_top_k': ed_top_k,
+                    'logs_ed': logs_ed
+                    # 'ph_bleu': ph_bleu,
+                    # 'logs_b': logs_b,
+                    # 'y_ctc': self._y_ctc,
+                    # 'ctc_len': self._ctc_len
                     })
