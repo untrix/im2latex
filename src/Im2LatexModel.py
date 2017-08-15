@@ -533,98 +533,123 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
-                scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
-                scores = tf.reshape(scores, shape=(B*BW, -1)) # (B*BeamWidth, T)
-                ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
-                ids = tf.reshape(ids, shape=(B*BW, -1)) # B*BeamWidth, T)
-                seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
-                mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
-                # scores = log-probabilities are negative values
-                # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
-                # Hence they will have no effect on the sequence probabilities
-                scores = scores * tf.to_float(mask) # (B*BeamWidth, T)
-                ## Also zero out tokens after EOS because we set impute_finished = False and as a result we noticed
-                ## ID values = -1 after EOS tokens.
-                ## Conveniently, zero is also the EOS token.
-                ids = ids*mask
-                ## Sum of log-probabilities == Product of probabilities
-                seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
-                seq_scores = tf.reshape(seq_scores, shape=(B, BW))
+                with tf.name_scope('BeamSearch_Results'):
+                    scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
+                    scores = tf.reshape(scores, shape=(B*BW, -1)) # (B*BeamWidth, T)
+                    ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
+                    ids = tf.reshape(ids, shape=(B*BW, -1)) # B*BeamWidth, T)
+                    seq_lens = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
+                    mask = tf.sequence_mask(seq_lens, maxlen=tf.shape(scores)[1], dtype=tf.int32) # (B*BeamWidth, T)
+                    # scores = log-probabilities are negative values
+                    # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
+                    # Hence they will have no effect on the sequence probabilities
+                    scores = scores * tf.to_float(mask) # (B*BeamWidth, T)
+                    ## Also zero out tokens after EOS because we set impute_finished = False and as a result we noticed
+                    ## ID values = -1 after EOS tokens.
+                    ## Conveniently, zero is also the EOS token.
+                    ids = ids*mask
+                    ## Sum of log-probabilities == Product of probabilities
+                    seq_scores = tf.reduce_sum(scores, axis=1) # (B*BeamWidth,)
+                    seq_scores = tf.reshape(seq_scores, shape=(B, BW))
 
                 ## Select the top scoring beams
-                ids = tf.reshape(ids, shape=(B, BW, -1)) # (B, BeamWidth, T)
-                seq_lens = tf.reshape(seq_lens, shape=(B, BW)) #(B, BeamWidth)
-                k = min([5, BW])
-                top_seq_scores, top_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
-                top_ids = tfc.batch_slice(ids, top_score_indices) # (B, k, T)
-                assert K.int_shape(top_ids) == (B, k, None)
-                top_seq_lens = tfc.batch_slice(seq_lens, top_score_indices) # (B, k)
-                assert K.int_shape(top_seq_lens) == (B, k)
+                with tf.name_scope('SelectTopK'):
+                    ids = tf.reshape(ids, shape=(B, BW, -1)) # (B, BeamWidth, T)
+                    seq_lens = tf.reshape(seq_lens, shape=(B, BW)) #(B, BeamWidth)
+                    k = min([5, BW])
+                    topK_seq_scores, topK_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
+                    topK_ids = tfc.batch_slice(ids, topK_score_indices) # (B, k, T)
+                    assert K.int_shape(topK_ids) == (B, k, None)
+                    topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
+                    assert K.int_shape(topK_seq_lens) == (B, k)
 
-                tf.summary.histogram('validation/score/predicted/score/', top_seq_scores[:,0], collections=['validation'])
-                tf.summary.histogram('validation/score/predicted/seq_len/', top_seq_lens[:,0], collections=['validation'])
-                tf.summary.histogram('validation/score/top_%d/score/'%k, top_seq_scores, collections=['validation'])
-                tf.summary.histogram('validation/score/top_%d/seq_len/'%k, top_seq_lens, collections=['validation'])
+                with tf.name_scope('Instrumentation'):
+                    tf.summary.histogram( 'prediction/score/predicted/score/', topK_seq_scores[:,0], collections=['validation'])
+                    tf.summary.histogram( 'prediction/score/predicted/seq_len/', topK_seq_lens[:,0], collections=['validation'])
+                    tf.summary.histogram( 'prediction/score/top_%d/score/'%k, topK_seq_scores, collections=['validation'])
+                    tf.summary.histogram( 'prediction/score/top_%d/seq_len/'%k, topK_seq_lens, collections=['validation'])
 
                 ## CTC accuracy metric - i.e. comparison of squashed output and target sequences
                 with tf.name_scope('ctc_accuracy'):
                     assert not self.C.dtype.is_unsigned
                     ## Place all logit mass on predicted IDs
                     pseudo_probs = []
-                    top_ids_logits = tf.one_hot(top_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
+                    topK_ids_logits = tf.one_hot(topK_ids, depth=self.C.K, on_value=self.C.dtype.max, off_value=self.C.dtype.min)#(B,k,T,K)
                     for j in range(k):
-                        losses = tfc.ctc_loss(top_ids_logits[:,j], top_seq_lens[:,j], self._y_ctc, self._ctc_len, B, self.C.K) #(B,)
+                        losses = tfc.ctc_loss(topK_ids_logits[:,j], topK_seq_lens[:,j], self._y_ctc, self._ctc_len, B, self.C.K) #(B,)
                         ## pseudo_prob should be == 1 for matching sequences and 0 for non matching
                         pseudo_prob = tf.exp(-1*losses)  # (B,)
                         pseudo_probs.append(pseudo_prob)
-                    match = tf.stack(pseudo_probs, axis=1) # (B, k)
-                    top_score_ctc_accuracy = tf.reduce_mean(match[:,0]*100.)
-                    top_match, top_match_indices = tfc.batch_top_k_2D(match, k=1) # (B,1), (B*1, 2)
-                    top_match_ctc_accuracy = tf.reduce_mean(top_match*100.)
-                    top_match_lens = tfc.batch_slice(top_seq_lens, top_match_indices) # (B, 1)
+                    topK_match = tf.stack(pseudo_probs, axis=1) # (B, k)
+                    top1_score_ctc_accuracy = tf.reduce_mean(topK_match[:,0]*100.)
+                    best_of_topK, best_of_topK_indices = tfc.batch_top_k_2D(topK_match, k=1) # (B,1), (B*1, 2)
+                    best_of_topK_ctc_accuracy = tf.reduce_mean(best_of_topK*100.)
+                    best_of_topK_lens = tfc.batch_slice(topK_seq_lens, best_of_topK_indices) # (B, 1)
 
-                    tf.summary.scalar('validation/accuracy/predicted/ctc_accuracy/', top_match_ctc_accuracy, collections=['validation'])
-                    tf.summary.histogram('validation/accuracy/predicted/seq_len/', top_match_lens[:,0], collections=['validation'])
-                    tf.summary.histogram('validation/accuracy/top_%d/seq_len/'%k, (top_match_lens), collections=['validation'])
-                    tf.summary.scalar('validation/score/top_%d/ctc_accuracy/'%k, top_score_ctc_accuracy, collections=['validation'])
-                    logs_v = tf.summary.merge_all(key='validation')
+                    with tf.name_scope('Instrumentation'):
+                        tf.summary.scalar( 'prediction/accuracy/predicted/ctc_accuracy/', best_of_topK_ctc_accuracy, collections=['validation'])
+                        tf.summary.histogram( 'prediction/accuracy/predicted/seq_len/', best_of_topK_lens[:,0], collections=['validation'])
+                        tf.summary.histogram( 'prediction/accuracy/top_%d/seq_len/'%k, (best_of_topK_lens), collections=['validation'])
+                        tf.summary.scalar( 'prediction/score/top_%d/ctc_accuracy/'%k, top1_score_ctc_accuracy, collections=['validation'])
+                logs_v = tf.summary.merge_all(key='validation')
 
                 ## BLEU scores
                 # with tf.name_scope('BLEU'):
                 #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                #     tf.summary.histogram('validation/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
-                #     tf.summary.scalar('validation/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                #     tf.summary.histogram( 'prediction/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
+                #     tf.summary.scalar( 'prediction/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
                 #     logs_b = tf.summary.merge_all(key='bleu')
 
                 ## Edit/Levenshtein distance scores
-                y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
-                ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
-                ed = tfc.k_edit_distance(B, k, top_ids, top_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID)
-                ed_predicted = tf.reduce_mean(ed[:,0])
-                ed_top_k = tf.reduce_mean(tf.reduce_min(ed, axis=1))
-                tf.summary.scalar('validation/accuracy/predicted/edit_distance/', ed_predicted, collections=['edit_distance'])
-                tf.summary.scalar('validation/accuracy/top_%d/edit_distance/'%k, ed_top_k, collections=['edit_distance'])
-                logs_ed = tf.summary.merge_all(key='edit_distance')
+                with tf.name_scope('LevenshteinDistance'):
+                    y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
+                    ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
+                    ed = tfc.k_edit_distance(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID)
+                    top1_score_ed = tf.reduce_mean(ed[:,0])
+                    ## Best of top_k
+                    best_of_topK_ed = tf.reduce_mean(tf.reduce_min(ed, axis=1))
+                    with tf.name_scope('Instrumentation'):
+                        tf.summary.scalar( 'prediction/accuracy/predicted/edit_distance/', top1_score_ed, collections=['edit_distance'])
+                        tf.summary.scalar( 'prediction/accuracy/top_%d/edit_distance/'%k, best_of_topK_ed, collections=['edit_distance'])
+                        logs_ed = tf.summary.merge_all(key='edit_distance')
+
+                with tf.name_scope('AggregateMetrics'):
+                    ph_seq_lens = tf.placeholder(self.C.dtype)
+                    ph_edit_distance = tf.placeholder(self.C.dtype)
+                    ph_BoK_distance =  tf.placeholder(self.C.dtype)
+                    ph_ctc_accuracy =  tf.placeholder(self.C.dtype)
+                    ph_BoK_ctc_accuracy =  tf.placeholder(self.C.dtype)
+                    ph_valid_time =  tf.placeholder(self.C.dtype)
+                    tf.summary.histogram( 'prediction/aggregate/seq_lens/', ph_seq_lens, collections=['aggregate'])
+                    tf.summary.scalar( 'prediction/aggregate/predicted/edit_distance/', ph_edit_distance, collections=['aggregate'])
+                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/edit_distance/'%k, ph_BoK_distance, collections=['aggregate'])
+                    tf.summary.scalar( 'prediction/aggregate/predicted/ctc_accuracy/', ph_ctc_accuracy, collections=['aggregate'])
+                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/ctc_accuracy/'%k, ph_BoK_ctc_accuracy, collections=['aggregate'])
+                    tf.summary.scalar( 'prediction/aggregate/time_per100/', ph_valid_time, collections=['aggregate'])
+                    logs_aggregate = tf.summary.merge_all(key='aggregate')
 
                 return dlc.Properties({
-                    'top_ids': top_ids, # (B, k, T)
-                    'top_scores': top_seq_scores, # (B, k)
-                    'top_lens': top_seq_lens, # (B,k)
-                    'top_beams': top_score_indices[:,:,1], # (B, k)
+                    'topK_ids': topK_ids, # (B, k, T)
+                    'topK_scores': topK_seq_scores, # (B, k)
+                    'topK_lens': topK_seq_lens, # (B,k)
+                    'topK_beams': topK_score_indices[:,:,1], # (B, k)
                     'all_ids': ids, # (B, BeamWidth, T),
                     'all_id_scores': tf.reshape(scores, shape=(B, BW, -1)), # (B, BeamWidth, T)
                     'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
-                    'top_match_ctc_accuracy': top_match_ctc_accuracy, # scalar
-                    'top_score_ctc_accuracy': top_score_ctc_accuracy, # scalar
+                    'best_of_topK_ctc_accuracy': best_of_topK_ctc_accuracy, # scalar
+                    'top1_score_ctc_accuracy': top1_score_ctc_accuracy, # scalar
                     'accuracy_probs': pseudo_probs,
-                    'logs_v': logs_v,
                     'inp_q': self._inp_q,
-                    'ed_predicted': ed_predicted,
-                    'ed_top_k': ed_top_k,
-                    'logs_ed': logs_ed
-                    # 'ph_bleu': ph_bleu,
-                    # 'logs_b': logs_b,
-                    # 'y_ctc': self._y_ctc,
-                    # 'ctc_len': self._ctc_len
+                    'top1_score_ed': top1_score_ed,
+                    'best_of_topK_ed': best_of_topK_ed,
+                    'logs_v': logs_v,
+                    'logs_ed': logs_ed,
+                    'logs_aggregate': logs_aggregate,
+                    'ph_seq_lens': ph_seq_lens,
+                    'ph_edit_distance': ph_edit_distance,
+                    'ph_BoK_distance': ph_BoK_distance,
+                    'ph_ctc_accuracy': ph_ctc_accuracy,
+                    'ph_BoK_ctc_accuracy': ph_BoK_ctc_accuracy,
+                    'ph_valid_time': ph_valid_time
                     })

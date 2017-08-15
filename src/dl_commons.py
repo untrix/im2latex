@@ -97,6 +97,14 @@ class Properties(dict):
         dict.update(self, other)
         return self
 
+    def str_items(self):
+        """
+        Same as dict.items() except that it converts each key and value to a
+        string type. Returns a list of list of strings.
+        """
+        items = self.items()
+        return [[ str(item[0]), str(item[1]) ] for item in items]
+
     def __getattr__(self, key):
         return self._get_val_(key)
 

@@ -659,6 +659,13 @@ def batch_top_k_2D(t, k):
         return t2, indices
 
 def batch_slice(t, indices):
+    """
+    Apply slice-indices returned by batch_top_k_2D (B, k, 2) to a tensor
+    t (B, W, ...) and return the resulting tensor of shape (B, k, ...).
+    Used for cases where the top_k values are sliced off from a tensor
+    containing one metric (say score) and then applied to a tensor having
+    another metric (say accuracy).
+    """
     with tf.name_scope('_batch_slice'):
         shape_t = K.int_shape(t) # (B, W ,...)
         shape_i = K.int_shape(indices) # (B, k, 2)

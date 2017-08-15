@@ -119,7 +119,7 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
     return batch_list
 
 class ShuffleIterator(object):
-    def __init__(self, df_, hyper, num_steps, num_epochs):
+    def __init__(self, df_, hyper, num_steps, num_epochs, name='ShuffleIterator'):
         self._df = df_.sample(frac=1)
         self._batch_size = hyper.B
         self._batch_list = make_batch_list(self._df, self._batch_size, hyper.assert_whole_batch)
@@ -130,12 +130,17 @@ class ShuffleIterator(object):
         self._max_steps = self.num_steps_to_run(num_steps, num_epochs, self._num_items)
         self.lock = threading.RLock()
         self._hyper =  hyper
+        self._name = name
 
-        print 'ShuffleIterator initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d'%(self._batch_size,
+        print '%s initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d'%(self._name,
+                                                                                        self._batch_size,
                                                                                         self._num_items,
                                                                                         self._max_steps)
     def __iter__(self):
         return self
+    @property
+    def name(self):
+        return self._name
     @property
     def batch_size(self):
         return self._batch_size
@@ -178,7 +183,7 @@ class ShuffleIterator(object):
                 ## Shuffle the bin composition too
                 self._df = self._df.sample(frac=1)
                 self._next_pos = 0
-                print 'ShuffleIterator finished epoch %d'%self._epoch
+                print '%s finished epoch %d'%(self._name, self._epoch)
                 self._epoch += 1
             curr_pos = self._next_pos
             self._next_pos += 1 # value for next iteration
@@ -187,7 +192,7 @@ class ShuffleIterator(object):
             curr_step = self._step
 
         batch = self._batch_list[curr_pos]
-        self._hyper.logger.debug('ShuffleIterator epoch %d, step %d, bin-batch idx %s', self._epoch, self._step, batch)
+        self._hyper.logger.debug('%s epoch %d, step %d, bin-batch idx %s', self._name, self._epoch, self._step, batch)
         df_bin = self._df[self._df.bin_len == batch[0]]
         assert df_bin.bin_len.iloc[batch[1]*self._batch_size] == batch[0]
         assert df_bin.bin_len.iloc[(batch[1]+1)*self._batch_size-1] == batch[0]
@@ -272,14 +277,15 @@ class BatchContextIterator(ShuffleIterator):
                  hyper,
                  num_steps=-1,
                  num_epochs=-1,
-                 image_processor_=None):
+                 image_processor_=None,
+                 name='BatchContextIterator'):
         self._hyper = hyper
         self._raw_data_dir = raw_data_dir_
         self._image_feature_dir = image_feature_dir_
         self._image_processor = image_processor_ or VGGProcessor(image_feature_dir_)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_sq_train.pkl'))
-        ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
+        ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs, name)
 
     def next(self):
         nxt = ShuffleIterator.next(self)
@@ -322,7 +328,7 @@ def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=Non
         raise ValueError('Either validation_frac or validation_size must be specified, but not both.')
     elif validation_frac is not None:
         assert validation_frac <1.0 and validation_frac >0
-        validation_size = df_.shape[0] * validation_frac
+        validation_size = int(df_.shape[0] * validation_frac)
     num_val_batches = validation_size // batch_size_
     validation_size = num_val_batches * batch_size_
     assert num_val_batches >= 1
@@ -332,9 +338,9 @@ def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=Non
 
     ## Make overall list of batches
     batch_list = make_batch_list(df_, batch_size_, assert_whole_batch)
-    val_batches = np.random.choice(batch_list, size=num_val_batches, replace=False)
-    for batch in val_batches:
-        batch_list.remove(batch)
+    ## Since batch_list is already randomized, just take num_batch_list
+    ## values from it.
+    val_batches = batch_list[:num_val_batches]
 
     def get_bin_counts(batch_list):
         bin_counts = {}
@@ -365,19 +371,24 @@ def create_context_iterators(raw_data_dir_,
                              num_epochs=-1,
                              image_processor_=None):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-    df_train, df_valid = split_dataset(df, hyper.B, hyper.assert_whole_batch, validation_frac=None, validation_size=4608)
+    df_train, df_valid = split_dataset(df, 
+                                       hyper.B, 
+                                       hyper.assert_whole_batch,
+                                       validation_frac=0.0526)
     batch_iterator_train = BatchContextIterator(df_train,
                                                 raw_data_dir_,
                                                 image_feature_dir_,
                                                 hyper,
                                                 num_steps,
                                                 num_epochs,
-                                                image_processor_)
+                                                image_processor_,
+                                                'TrainingIterator')
     batch_iterator_valid = BatchContextIterator(df_valid,
                                                 raw_data_dir_,
                                                 image_feature_dir_,
                                                 hyper,
                                                 num_steps=-1,
                                                 num_epochs=-1,
-                                                image_processor_=image_processor_)
+                                                image_processor_=image_processor_,
+                                                name='ValidationIterator')
     return batch_iterator_train, batch_iterator_valid

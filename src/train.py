@@ -34,7 +34,7 @@ import tf_commons as tfc
 from Im2LatexModel import Im2LatexModel
 from keras import backend as K
 import hyper_params
-from data_reader import BatchContextIterator
+from data_reader import create_context_iterators
 import dl_commons as dlc
 import nltk
 from nltk.util import ngrams
@@ -127,6 +127,8 @@ def train(num_steps, print_steps, num_epochs,
                 enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator2.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
             assert(num_trainable_vars() == trainable_vars_n)
+            ph_text = tf.placeholder(tf.string)
+            text_log = tf.summary.text('validation/', ph_text)
 
         qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
         qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
@@ -168,18 +170,20 @@ def train(num_steps, print_steps, num_epochs,
                     step += 1
 
                     if (step % print_steps == 0) or (step == batch_iterator.max_steps):
-                        valid_res = validation(valid_ops)
+                        valid_res = validation(session, valid_ops, batch_iterator2, hyper, step, tf_sw)
                         print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
                             step,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
-                            valid_res.valid_time * 100. / hyper.B )
-                        print 'Step %d, ctc_loss min = %f, max=%f, top_match_accuracy=%f, top_score_accuracy=%f'%(
+                            valid_res.valid_time_per100)
+                        print 'Step %d, ctc_loss min=%f, max=%f, ctc_accuracy=%f, best_ctc_accuracy=%f, edit_distance=%f, best_edit_distance=%f'%(
                             step,
                             min(ctc_losses),
                             max(ctc_losses),
-                            valid_res.top_match_accuracy,
-                            valid_res.top_score_accuracy
+                            valid_res.ctc_accuracy,
+                            valid_res.BoK_ctc_accuracy,
+                            valid_res.edit_distance,
+                            valid_res.BoK_distance
                             )
                         ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
@@ -202,7 +206,7 @@ def train(num_steps, print_steps, num_epochs,
             except tf.errors.OutOfRangeError, StopIteration:
                 print('Done training -- epoch limit reached')
             except Exception as e:
-                print 'Exiting with exception: %s'%e
+                print '***************** Exiting with exception: *****************\n%s'%e
                 coord.request_stop(e)
             finally:
                 print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
@@ -211,32 +215,57 @@ def train(num_steps, print_steps, num_epochs,
                 # close_queue2.run()
                 coord.join(enqueue_threads)
 
-def validation(valid_ops, epoch_size, batch_size):
+def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
     valid_start_time = time.time()
+    epoch_size = batch_iterator.epoch_size
+    batch_size = batch_iterator.batch_size
     n = 0
-    print_batch = np.random.randint(0,epoch_size)    
+    ## Print a batch randomly
+    print_batch = np.random.randint(0,epoch_size)
+    eds = []; best_eds = []
+    ctc_accuracies = []; best_ctc_accuracies = []
+    lens = []
     while n < epoch_size:
         n += 1
-        ids, l, s, b, bis, bids, bl, top_match_accuracy, top_score_accuracy, logs_v, logs_ed = session.run((
-                            valid_ops.top_ids, 
-                            valid_ops.top_lens,
-                            valid_ops.top_scores,
-                            valid_ops.top_beams,
-                            valid_ops.all_id_scores,
-                            valid_ops.all_ids,
-                            valid_ops.all_seq_lens,
-                            valid_ops.top_match_ctc_accuracy,
-                            valid_ops.top_score_ctc_accuracy,
-                            valid_ops.logs_v,
-                            valid_ops.logs_ed))
+        ids = l = s = b = bis = bids = bl = best_ctc_accuracy = ctc_accuracy = ed = best_ed = None
+
+        if n != print_batch:
+            l, best_ctc_accuracy, ctc_accuracy, ed, best_ed = session.run((
+                                valid_ops.topK_lens,
+                                valid_ops.best_of_topK_ctc_accuracy,
+                                valid_ops.top1_score_ctc_accuracy,
+                                valid_ops.top1_score_ed,
+                                valid_ops.best_of_topK_ed)
+                                )
+        else:
+            ids, l, s, b, bis, bids, bl, best_ctc_accuracy, ctc_accuracy, ed, best_ed = session.run((
+                                valid_ops.topK_ids, 
+                                valid_ops.topK_lens,
+                                valid_ops.topK_scores,
+                                valid_ops.topK_beams,
+                                valid_ops.all_id_scores,
+                                valid_ops.all_ids,
+                                valid_ops.all_seq_lens,
+                                valid_ops.best_of_topK_ctc_accuracy,
+                                valid_ops.top1_score_ctc_accuracy,
+                                valid_ops.top1_score_ed,
+                                valid_ops.best_of_topK_ed)
+                                )
+
+        lens.append(l)
+        eds.append(ed)
+        best_eds.append(best_ed)
+        ctc_accuracies.append(ctc_accuracy)
+        best_ctc_accuracies.append(best_ctc_accuracy)
+
         # print 'shape of top_ids = ', ids.shape
         # print 'shape of top sequence_lens= ', l.shape
         # print 'shape of top scores= ', s.shape
         # print 'shape of top beams= ', b.shape
         # print 'top sequence_lens= ', l
         if n == print_batch:
-            i = np.random.randint(0, high=hyper.B)
-            print '############ VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
+            i = np.random.randint(0, batch_iterator.batch_size)
+            print '############ RANDOM VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
             beam = b[i,0]
             print 'top k beams=%s'%b[i]
             print 'top k lens=%s'%l[i]
@@ -260,13 +289,33 @@ def validation(valid_ops, epoch_size, batch_size):
             print '###################################\n'
             assert np.all(bl <= (hyper.Max_Seq_Len + 10))
         ## validation graph metrics
-        tf_sw.add_summary(logs_v, global_step=step)
-        tf_sw.add_summary(logs_ed, global_step=step)
+        # tf_sw.add_summary(logs_v, global_step=step)
+        # tf_sw.add_summary(logs_ed, global_step=step)
         # bleu = dlc.squashed_bleu_scores(ids[:,0,:], l[:,0], y_ctc, ctc_len, hyper.CTCBlankTokenID)
         # (log_bleu,) = session.run([valid_ops.logs_b], feed_dict={valid_ops.ph_bleu : bleu})
         # tf_sw.add_summary(log_bleu, global_step=step)
-        tf_sw.flush()
-    valid_time = (time.time() - valid_start_time)
+
+    metrics = dlc.Properties({
+        'len': np.mean(lens),
+        'edit_distance': np.mean(eds),
+        'BoK_distance': np.mean(best_eds),
+        'ctc_accuracy': np.mean(ctc_accuracies),
+        'BoK_ctc_accuracy': np.mean(best_ctc_accuracies),
+        'valid_time_per100': (time.time() - valid_start_time) * 100. / epoch_size
+    })
+
+    logs_aggregate = session.run(valid_ops.logs_aggregate,
+                                feed_dict={
+                                    valid_ops.ph_seq_lens: lens,
+                                    valid_ops.ph_edit_distance: metrics.edit_distance,
+                                    valid_ops.ph_BoK_distance: metrics.BoK_distance,
+                                    valid_ops.ph_ctc_accuracy: metrics.ctc_accuracy,
+                                    valid_ops.ph_BoK_ctc_accuracy: metrics.BoK_ctc_accuracy,
+                                    valid_ops.ph_valid_time: metrics.valid_time_per100
+                                })
+    tf_sw.add_summary(logs_aggregate, global_step)
+    tf_sw.flush()
+    return metrics
 
 def main():
     _data_folder = '../data/generated2'
