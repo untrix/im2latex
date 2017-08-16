@@ -363,9 +363,9 @@ def main():
     parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
                         help="Fraction of samples to use for validation. Defaults to 0.01",
                         default=0.01)
-    parser.add_argument("--valid-steps", "-v", dest="valid_steps", type=int,
-                        help="Number of training steps after which to run validation cycle. Defaults to 500 if unspecified",
-                        default=500)
+    parser.add_argument("--valid-epochs", "-v", dest="valid_epochs", type=int,
+                        help="Number of training epochs after which to run a full validation cycle. Defaults to 1 if unspecified",
+                        default=1)
 
     args = parser.parse_args()
     data_folder = args.data_folder

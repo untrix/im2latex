@@ -564,10 +564,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(topK_seq_lens) == (B, k)
 
                 with tf.name_scope('Instrumentation'):
-                    tf.summary.histogram( 'prediction/score/predicted/score/', topK_seq_scores[:,0], collections=['validation'])
-                    tf.summary.histogram( 'prediction/score/predicted/seq_len/', topK_seq_lens[:,0], collections=['validation'])
-                    tf.summary.histogram( 'prediction/score/top_%d/score/'%k, topK_seq_scores, collections=['validation'])
-                    tf.summary.histogram( 'prediction/score/top_%d/seq_len/'%k, topK_seq_lens, collections=['validation'])
+                    tf.summary.histogram( 'training/score/predicted/score/', topK_seq_scores[:,0], collections=['validation'])
+                    tf.summary.histogram( 'training/score/predicted/seq_len/', topK_seq_lens[:,0], collections=['validation'])
+                    tf.summary.histogram( 'training/score/top_%d/score/'%k, topK_seq_scores, collections=['validation'])
+                    tf.summary.histogram( 'training/score/top_%d/seq_len/'%k, topK_seq_lens, collections=['validation'])
 
                 ## CTC accuracy metric - i.e. comparison of squashed output and target sequences
                 with tf.name_scope('ctc_accuracy'):
@@ -587,18 +587,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     best_of_topK_lens = tfc.batch_slice(topK_seq_lens, best_of_topK_indices) # (B, 1)
 
                     with tf.name_scope('Instrumentation'):
-                        tf.summary.scalar( 'prediction/accuracy/predicted/ctc_accuracy/', best_of_topK_ctc_accuracy, collections=['validation'])
-                        tf.summary.histogram( 'prediction/accuracy/predicted/seq_len/', best_of_topK_lens[:,0], collections=['validation'])
-                        tf.summary.histogram( 'prediction/accuracy/top_%d/seq_len/'%k, (best_of_topK_lens), collections=['validation'])
-                        tf.summary.scalar( 'prediction/score/top_%d/ctc_accuracy/'%k, top1_score_ctc_accuracy, collections=['validation'])
+                        tf.summary.scalar( 'training/accuracy/predicted/ctc_accuracy/', best_of_topK_ctc_accuracy, collections=['validation'])
+                        tf.summary.histogram( 'training/accuracy/predicted/seq_len/', best_of_topK_lens[:,0], collections=['validation'])
+                        tf.summary.histogram( 'training/accuracy/top_%d/seq_len/'%k, (best_of_topK_lens), collections=['validation'])
+                        tf.summary.scalar( 'training/score/top_%d/ctc_accuracy/'%k, top1_score_ctc_accuracy, collections=['validation'])
                 logs_v = tf.summary.merge_all(key='validation')
 
                 ## BLEU scores
                 # with tf.name_scope('BLEU'):
                 #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                #     tf.summary.histogram( 'prediction/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
-                #     tf.summary.scalar( 'prediction/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                #     tf.summary.histogram( 'training/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
+                #     tf.summary.scalar( 'training/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
                 #     logs_b = tf.summary.merge_all(key='bleu')
 
                 ## Edit/Levenshtein distance scores
@@ -610,8 +610,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Best of top_k
                     best_of_topK_ed = tf.reduce_mean(tf.reduce_min(ed, axis=1))
                     with tf.name_scope('Instrumentation'):
-                        tf.summary.scalar( 'prediction/accuracy/predicted/edit_distance/', top1_score_ed, collections=['edit_distance'])
-                        tf.summary.scalar( 'prediction/accuracy/top_%d/edit_distance/'%k, best_of_topK_ed, collections=['edit_distance'])
+                        tf.summary.scalar( 'training/accuracy/predicted/edit_distance/', top1_score_ed, collections=['edit_distance'])
+                        tf.summary.scalar( 'training/accuracy/top_%d/edit_distance/'%k, best_of_topK_ed, collections=['edit_distance'])
                         logs_ed = tf.summary.merge_all(key='edit_distance')
 
                 with tf.name_scope('AggregateMetrics'):
