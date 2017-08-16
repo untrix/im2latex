@@ -360,6 +360,12 @@ def main():
     parser.add_argument("--logging-level", "-l", dest="logging_level", type=int,
                         help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
                         default=3)
+    parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
+                        help="Fraction of samples to use for validation. Defaults to 0.01",
+                        default=0.01)
+    parser.add_argument("--valid-steps", "-v", dest="valid_steps", type=int,
+                        help="Number of training steps after which to run validation cycle. Defaults to 500 if unspecified",
+                        default=500)
 
     args = parser.parse_args()
     data_folder = args.data_folder
