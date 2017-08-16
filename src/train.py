@@ -176,12 +176,13 @@ def train(num_steps, print_steps, num_epochs,
                             time.time()-start_time,
                             np.mean(train_time) * 100. / hyper.B,
                             valid_res.valid_time_per100)
-                        print 'Step %d, ctc_loss min=%f, max=%f, ctc_accuracy=%f, best_ctc_accuracy=%f, edit_distance=%f, best_edit_distance=%f'%(
+#                        print 'Step %d, ctc_loss min=%f, max=%f, ctc_accuracy=%f, best_ctc_accuracy=%f, edit_distance=%f, best_edit_distance=%f'%(
+                        print 'Step %d, ctc_loss min=%f, max=%f, edit_distance=%f, best_edit_distance=%f'%(
                             step,
                             min(ctc_losses),
                             max(ctc_losses),
-                            valid_res.ctc_accuracy,
-                            valid_res.BoK_ctc_accuracy,
+                            #valid_res.ctc_accuracy,
+                            #valid_res.BoK_ctc_accuracy,
                             valid_res.edit_distance,
                             valid_res.BoK_distance
                             )
@@ -216,6 +217,7 @@ def train(num_steps, print_steps, num_epochs,
                 coord.join(enqueue_threads)
 
 def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
+    print 'validation cycle starting'
     valid_start_time = time.time()
     epoch_size = batch_iterator.epoch_size
     batch_size = batch_iterator.batch_size
@@ -230,15 +232,15 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
         ids = l = s = b = bis = bids = bl = best_ctc_accuracy = ctc_accuracy = ed = best_ed = None
 
         if n != print_batch:
-            l, best_ctc_accuracy, ctc_accuracy, ed, best_ed = session.run((
+            l, ed, best_ed = session.run((
                                 valid_ops.topK_lens,
-                                valid_ops.best_of_topK_ctc_accuracy,
-                                valid_ops.top1_score_ctc_accuracy,
+#                                valid_ops.best_of_topK_ctc_accuracy,
+#                                valid_ops.top1_score_ctc_accuracy,
                                 valid_ops.top1_score_ed,
                                 valid_ops.best_of_topK_ed)
                                 )
         else:
-            ids, l, s, b, bis, bids, bl, best_ctc_accuracy, ctc_accuracy, ed, best_ed = session.run((
+            ids, l, s, b, bis, bids, bl, ed, best_ed = session.run((
                                 valid_ops.topK_ids, 
                                 valid_ops.topK_lens,
                                 valid_ops.topK_scores,
@@ -246,8 +248,6 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
                                 valid_ops.all_id_scores,
                                 valid_ops.all_ids,
                                 valid_ops.all_seq_lens,
-                                valid_ops.best_of_topK_ctc_accuracy,
-                                valid_ops.top1_score_ctc_accuracy,
                                 valid_ops.top1_score_ed,
                                 valid_ops.best_of_topK_ed)
                                 )
@@ -255,8 +255,8 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
         lens.append(l)
         eds.append(ed)
         best_eds.append(best_ed)
-        ctc_accuracies.append(ctc_accuracy)
-        best_ctc_accuracies.append(best_ctc_accuracy)
+#        ctc_accuracies.append(ctc_accuracy)
+#        best_ctc_accuracies.append(best_ctc_accuracy)
 
         # print 'shape of top_ids = ', ids.shape
         # print 'shape of top sequence_lens= ', l.shape
@@ -299,8 +299,8 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
         'len': np.mean(lens),
         'edit_distance': np.mean(eds),
         'BoK_distance': np.mean(best_eds),
-        'ctc_accuracy': np.mean(ctc_accuracies),
-        'BoK_ctc_accuracy': np.mean(best_ctc_accuracies),
+#        'ctc_accuracy': np.mean(ctc_accuracies),
+#        'BoK_ctc_accuracy': np.mean(best_ctc_accuracies),
         'valid_time_per100': (time.time() - valid_start_time) * 100. / epoch_size
     })
 
@@ -309,8 +309,8 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
                                     valid_ops.ph_seq_lens: lens,
                                     valid_ops.ph_edit_distance: metrics.edit_distance,
                                     valid_ops.ph_BoK_distance: metrics.BoK_distance,
-                                    valid_ops.ph_ctc_accuracy: metrics.ctc_accuracy,
-                                    valid_ops.ph_BoK_ctc_accuracy: metrics.BoK_ctc_accuracy,
+#                                    valid_ops.ph_ctc_accuracy: metrics.ctc_accuracy,
+#                                    valid_ops.ph_BoK_ctc_accuracy: metrics.BoK_ctc_accuracy,
                                     valid_ops.ph_valid_time: metrics.valid_time_per100
                                 })
     tf_sw.add_summary(logs_aggregate, global_step)

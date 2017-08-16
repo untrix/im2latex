@@ -624,8 +624,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.histogram( 'prediction/aggregate/seq_lens/', ph_seq_lens, collections=['aggregate'])
                     tf.summary.scalar( 'prediction/aggregate/predicted/edit_distance/', ph_edit_distance, collections=['aggregate'])
                     tf.summary.scalar( 'prediction/aggregate/bestof_%d/edit_distance/'%k, ph_BoK_distance, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/predicted/ctc_accuracy/', ph_ctc_accuracy, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/ctc_accuracy/'%k, ph_BoK_ctc_accuracy, collections=['aggregate'])
+                    #tf.summary.scalar( 'prediction/aggregate/predicted/ctc_accuracy/', ph_ctc_accuracy, collections=['aggregate'])
+                    #tf.summary.scalar( 'prediction/aggregate/bestof_%d/ctc_accuracy/'%k, ph_BoK_ctc_accuracy, collections=['aggregate'])
                     tf.summary.scalar( 'prediction/aggregate/time_per100/', ph_valid_time, collections=['aggregate'])
                     logs_aggregate = tf.summary.merge_all(key='aggregate')
 
