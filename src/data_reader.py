@@ -374,7 +374,7 @@ def create_context_iterators(raw_data_dir_,
     df_train, df_valid = split_dataset(df, 
                                        hyper.B, 
                                        hyper.assert_whole_batch,
-                                       validation_frac=0.0526)
+                                       validation_frac=0.01)
     batch_iterator_train = BatchContextIterator(df_train,
                                                 raw_data_dir_,
                                                 image_feature_dir_,

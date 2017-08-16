@@ -127,8 +127,6 @@ def train(num_steps, print_steps, num_epochs,
                 enqueue_op2 = valid_ops.inp_q.enqueue(batch_iterator2.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
             assert(num_trainable_vars() == trainable_vars_n)
-            ph_text = tf.placeholder(tf.string)
-            text_log = tf.summary.text('validation/', ph_text)
 
         qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
         qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
