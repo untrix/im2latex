@@ -46,7 +46,7 @@ def num_trainable_vars():
         total_n += n
     return total_n
 
-def printVars():
+def printVars(logger):
     total_n = 0
     total_vggnet = 0
     total_init = 0
@@ -54,7 +54,7 @@ def printVars():
     total_output = 0
     total_embedding = 0
 
-    print 'Trainable Variables'
+    logger.warn( 'Trainable Variables')
     for var in tf.trainable_variables():
         n = tfc.sizeofVar(var)
         total_n += n
@@ -70,14 +70,14 @@ def printVars():
             total_embedding += n
         else:
             assert False
-        print var.name, K.int_shape(var), 'num_params = ', n
+        logger.warn('%s %s num_params = %d'%(var.name, K.int_shape(var),n) )
 
-    print '\nTotal number of trainable params = ', total_n
-    print 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n)
-    print 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n)
-    print 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n)
-    print 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n)
-    print 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n)
+    logger.warn( '\nTotal number of trainable params = %d'%total_n)
+    logger.warn( 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n))
+    logger.warn( 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n))
+    logger.warn( 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n))
+    logger.warn( 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n))
+    logger.warn( 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n))
 
 def train(num_steps, print_steps, num_epochs,
           raw_data_folder=None,
@@ -87,6 +87,7 @@ def train(num_steps, print_steps, num_epochs,
     """
     Start training the model. All kwargs with default values==None must be supplied.
     """
+    logger = globalParams.logger
     graph = tf.Graph()
     with graph.as_default():
         globalParams.update({'build_image_context':False,
@@ -95,11 +96,11 @@ def train(num_steps, print_steps, num_epochs,
                              'pLambda': 0.0005,
                              'MeanSumAlphaEquals1': False
                             })
-        print('\n#################### Default Param Overrides: ####################\n%s'%(globalParams,))
-        print('##################################################################\n')
+        logger.warn('\n#################### Default Param Overrides: ####################\n%s'%(globalParams,))
+        logger.warn('##################################################################\n')
         hyper = hyper_params.make_hyper(globalParams)
-        print '\n#########################  Hyper-params: #########################\n%s'%(hyper,)
-        print('##################################################################\n')
+        logger.warn( '\n#########################  Hyper-params: #########################\n%s'%(hyper,))
+        logger.warn('##################################################################\n')
         batch_iterator, batch_iterator2 = create_context_iterators(raw_data_folder,
                                               vgg16_folder,
                                               hyper,
@@ -130,13 +131,13 @@ def train(num_steps, print_steps, num_epochs,
         qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
         coord = tf.train.Coordinator()
 
-        printVars()
+        printVars(logger)
 
         config=tf.ConfigProto(log_device_placement=False)
         config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as session:
-            print 'Flushing graph to disk'
+            logger.warn( 'Flushing graph to disk')
             tf_sw = tf.summary.FileWriter(tfc.makeTBDir(hyper.tb), graph=graph)
             tf_sw.flush()
             tf.global_variables_initializer().run()
@@ -167,14 +168,14 @@ def train(num_steps, print_steps, num_epochs,
 
                     do_log, num_valid_batches = get_logging_steps(step, globalParams, batch_iterator, batch_iterator2)
                     if do_log:
-                        print 'Step %d'%(step)
-                        train_time_per100 = np.mean(train_time) * 100
+                        logger.warn( 'Step %d'%(step))
+                        train_time_per100 = np.mean(train_time) * 100. / hyper.B
                         valid_res = validation_cycle(session, valid_ops, batch_iterator2, hyper, globalParams, step, tf_sw, num_valid_batches)
-                        print 'Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
+                        logger.warn('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
                             step,
                             time.time()-start_time,
                             train_time_per100,
-                            valid_res.valid_time_per100)
+                            valid_res.valid_time_per100))
                         ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
                         i_max = np.argmax(ctc_losses)
@@ -197,12 +198,12 @@ def train(num_steps, print_steps, num_epochs,
                         train_time = []; ctc_losses = []; logs = []
 
             except tf.errors.OutOfRangeError, StopIteration:
-                print('Done training -- epoch limit reached')
+                logger.warn('Done training -- epoch limit reached')
             except Exception as e:
-                print '***************** Exiting with exception: *****************\n%s'%e
+                logger.warn( '***************** Exiting with exception: *****************\n%s'%e)
                 coord.request_stop(e)
             finally:
-                print 'Elapsed time for %d steps = %f'%(step, time.time()-start_time)
+                logger.warn( 'Elapsed time for %d steps = %f'%(step, time.time()-start_time))
                 coord.request_stop()
                 # close_queue1.run()
                 # close_queue2.run()
@@ -218,7 +219,6 @@ def get_logging_steps(step, args, train_it, valid_it):
 
 
 def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_sw, max_steps):
-    hyper.logger.info('validation cycle starting')
     valid_start_time = time.time()
     batch_size = batch_iterator.batch_size
     epoch_size = batch_iterator.epoch_size
@@ -228,6 +228,7 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
     accuracies = []; best_accuracies = []
     lens = []
     n = 0
+    hyper.logger.warn('validation cycle starting for %d steps'%max_steps)
     while n < max_steps:
         n += 1
         ids = l = s = b = bis = bids = bl = best_accuracy = accuracy = ed = best_ed = None
@@ -263,11 +264,11 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
             best_accuracies.append(best_accuracy)
 
             i = np.random.randint(0, batch_iterator.batch_size)
-            print '############ RANDOM VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
+            logger.warn( '############ RANDOM VALIDATION BATCH %d SAMPLE %d ############'%(n, i))
             beam = 0
-            print 'top k lens=%s'%l[i]
-            print 'top k sequence scores=%s'%s[i]
-            print 'top 1 token sequence=%s'%ids[i,0]
+            logger.warn( 'top k lens=%s'%l[i])
+            logger.warn( 'top k sequence scores=%s'%s[i])
+            logger.warn( 'top 1 token sequence=%s'%ids[i,0])
             # print 'top token scores=%s'%bis[i, 0]
             # print 'all beam sequences=%s'%bids[i]
             # print 'all beam token scores = %s'%bis[i]
@@ -283,7 +284,7 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
             #         hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
             assert np.argmax(np.sum(bis[i], axis=-1)) == beam
             # assert np.all(ids[i,0] == bids[i,beam])
-            print '###################################\n'
+            logger.warn( '###################################\n')
             assert np.all(bl <= (hyper.Max_Seq_Len + 10))
 
     metrics = dlc.Properties({
@@ -292,7 +293,7 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
         'BoK_distance': best_eds,
         'accuracy': accuracies,
         'bok_accuracy': best_accuracies,
-        'valid_time_per100': (time.time() - valid_start_time) * 100. / max_steps
+        'valid_time_per100': (time.time() - valid_start_time) * 100. / (max_steps * hyper.B)
     })
 
     logs_aggregate = session.run(valid_ops.logs_aggregate,
@@ -306,7 +307,7 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
                                 })
     tf_sw.add_summary(logs_aggregate, step)
     tf_sw.flush()
-    hyper.logger.info('validation cycle finished')
+    hyper.logger.warn('validation cycle finished')
     return metrics
 
 def main():
