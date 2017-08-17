@@ -572,32 +572,92 @@ def printVars(name, coll):
 def k_edit_distance(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
     with tf.name_scope('edit_distance'):
         p_shape = K.int_shape(predicted_ids)
-        assert len(p_shape) == 3
-        assert p_shape[0] == B
-        assert k == p_shape[1]
-        assert K.int_shape(predicted_lens) == (B, k)
         t_shape = K.int_shape(target_ids)
-        assert len(t_shape) == 3
-        assert (t_shape[0],t_shape[1]) == (B, k)
-        assert K.int_shape(target_lens) == (B, k)
-        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token)
-        ## blank tokens should not be present in target_ids
-        target_sparse = dense_to_sparse3D(B, target_ids, target_lens)
+        if k > 1:
+            assert len(p_shape) == 3
+            assert p_shape[:2] == (B, k)
+            assert K.int_shape(predicted_lens) == (B, k)
+            assert len(t_shape) == 3
+            assert t_shape[:2] == (B, k)
+            assert K.int_shape(target_lens) == (B, k)
+            predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token)
+            ## blank tokens should not be present in target_ids
+            target_sparse = dense_to_sparse3D(B, target_ids, target_lens)
+        else:
+            assert len(p_shape) == 2
+            assert p_shape[0] == B
+            assert K.int_shape(predicted_lens) == (B,)
+            assert len(t_shape) == 2
+            assert t_shape[0] == B
+            assert K.int_shape(target_lens) == (B,)
+            predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
+            ## blank tokens should not be present in target_ids
+            target_sparse = dense_to_sparse2D(target_ids, target_lens)
+
         d = tf.edit_distance(predicted_sparse, target_sparse)
         # assert K.int_shape(d) == K.int_shape(predicted_lens)
-        d.set_shape(predicted_lens.shape)
+        d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
-def dense_to_sparse2D(m, lens, blank_token=None):
-    with tf.name_scope('dense_to_sparse2D'):
+def edit_distance(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+    return k_edit_distance(B, 1, predicted_ids, predicted_lens, target_ids, target_lens, blank_token)
+
+def squash_2d(B, m, lens, blank_token, padding_token=0):
+    """
+    Takes in a matrix shaped (B, T), from each row removes blank_tokens and appends
+    an equal number of padding_tokens at the end. Returns the resulting (B, T) shaped tensor and
+    a tensor carrying sequence_lengths, shaped (B,).
+    """
+    with tf.name_scope('squash_2d'):
         assert len(K.int_shape(m)) == 2
-        assert len(K.int_shape(lens)) == 1
-        mask = tf.sequence_mask(lens, maxlen=tf.shape(m)[1])
+        assert K.int_shape(lens) == (B,)
+        assert K.int_shape(m)[0] == B
+        T = tf.shape(m)[1]
+        squashed = []
+        squashed_lens = []
+        seq_mask = tf.sequence_mask(lens, maxlen=T)
+        for i in range(B):
+            m_i = m[i]
+            mask_i = tf.logical_and( seq_mask[i], tf.not_equal(m_i, blank_token)) #(T,)
+            idx_i = tf.where(mask_i) # (N, 1)
+            vals_i = tf.gather_nd(m_i, idx_i) # (N, )
+            len_i = tf.shape(vals_i)[0]
+            paddings = [(0, T - len_i)] # (1, 2)
+            squashed.append(tf.pad(vals_i, paddings, mode="CONSTANT", name=None, constant_values=padding_token))
+            squashed_lens.append(len_i)
+        return tf.stack(squashed), tf.stack(squashed_lens)
+
+def squash_3d(B, k, m, lens, blank_token, padding_token=0):
+    """
+    Takes in a matrix shaped (B, k, T), from each sequence of length T removes blank_tokens and appends
+    an equal number of padding_tokens at the end. Returns the resulting (B, k, T) shaped tensor and
+    a tensor carrying sequence_lengths, shaped (B, k).
+    """
+    with tf.name_scope('squash_3d'):
+        assert len(K.int_shape(m)) == 3
+        assert K.int_shape(m)[:2] == (B,k)
+        assert K.int_shape(lens) == (B,k)
+        squashed = []
+        squashed_lens = []
+        for i in range(B):
+            s_m, s_l = squash_2d(k, m[i], lens[i], blank_token, padding_token)
+            squashed.append(s_m)
+            squashed_lens.append(s_l)
+        return tf.stack(squashed), tf.stack(squashed_lens)
+
+def _dense_to_sparse(t, mask, blank_token=None):
         if blank_token is not None:
-            mask = tf.logical_and(mask, tf.not_equal(m, blank_token))
+            mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
         idx = tf.where(mask)
-        vals = tf.gather_nd(m, idx)
-        return tf.SparseTensor(idx, vals, tf.shape(m, out_type=tf.int64))
+        vals = tf.gather_nd(t, idx)
+        return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))    
+
+def dense_to_sparse2D(t, lens, blank_token=None):
+    with tf.name_scope('dense_to_sparse2D'):
+        assert len(K.int_shape(t)) == 2
+        assert len(K.int_shape(lens)) == 1
+        mask = tf.sequence_mask(lens, maxlen=tf.shape(t)[1])
+        return _dense_to_sparse(t, mask, blank_token)
 
 def dense_to_sparse3D(B, t, lens, blank_token=None):
     with tf.name_scope('dense_to_sparse3D'):
@@ -605,11 +665,7 @@ def dense_to_sparse3D(B, t, lens, blank_token=None):
         assert len(K.int_shape(t)) == 3
         assert len(K.int_shape(lens)) == 2
         mask = tf.stack([tf.sequence_mask(lens[i], maxlen=tf.shape(t)[2]) for i in range(B)])
-        if blank_token is not None:
-            mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
-        idx = tf.where(mask)
-        vals = tf.gather_nd(t, idx)
-        return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))
+        return _dense_to_sparse(t, mask, blank_token)
 
 def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
     # B = self.C.B

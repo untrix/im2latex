@@ -129,7 +129,7 @@ class ShuffleIterator(object):
         self._epoch = 1
         self._max_steps = self.num_steps_to_run(num_steps, num_epochs, self._num_items)
         self.lock = threading.RLock()
-        self._hyper =  hyper
+        self._hyper = hyper
         self._name = name
 
         print '%s initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d'%(self._name,
@@ -183,7 +183,7 @@ class ShuffleIterator(object):
                 ## Shuffle the bin composition too
                 self._df = self._df.sample(frac=1)
                 self._next_pos = 0
-                print '%s finished epoch %d'%(self._name, self._epoch)
+                self._hyper.logger.info('%s finished epoch %d'%(self._name, self._epoch))
                 self._epoch += 1
             curr_pos = self._next_pos
             self._next_pos += 1 # value for next iteration
@@ -367,20 +367,19 @@ def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=Non
 def create_context_iterators(raw_data_dir_,
                              image_feature_dir_,
                              hyper,
-                             num_steps=-1,
-                             num_epochs=-1,
+                             args,
                              image_processor_=None):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
                                        hyper.B, 
                                        hyper.assert_whole_batch,
-                                       validation_frac=0.01)
+                                       validation_frac=args.valid_frac)
     batch_iterator_train = BatchContextIterator(df_train,
                                                 raw_data_dir_,
                                                 image_feature_dir_,
                                                 hyper,
-                                                num_steps,
-                                                num_epochs,
+                                                args.num_steps,
+                                                args.num_epochs,
                                                 image_processor_,
                                                 'TrainingIterator')
     batch_iterator_valid = BatchContextIterator(df_valid,

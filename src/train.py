@@ -91,9 +91,7 @@ def train(num_steps, print_steps, num_epochs,
     with graph.as_default():
         globalParams.update({'build_image_context':False,
                              'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
-                            #  'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': tf.placeholder(tf.float32,
-                            #                                                              name="KeepProb")}),
-                             #'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': keep_prob}),
+                             'dropout': None if keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': keep_prob}),
                              'pLambda': 0.0005,
                              'MeanSumAlphaEquals1': False
                             })
@@ -105,8 +103,7 @@ def train(num_steps, print_steps, num_epochs,
         batch_iterator, batch_iterator2 = create_context_iterators(raw_data_folder,
                                               vgg16_folder,
                                               hyper,
-                                              num_steps,
-                                              num_epochs)
+                                              globalParams)
 
         ##### Training Graph
         with tf.name_scope('Training'):
@@ -116,6 +113,7 @@ def train(num_steps, print_steps, num_epochs,
                 enqueue_op = train_ops.inp_q.enqueue(batch_iterator.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
             trainable_vars_n = num_trainable_vars() # 8544670
+            assert 8544670 == trainable_vars_n
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
@@ -167,23 +165,16 @@ def train(num_steps, print_steps, num_epochs,
                     train_time.append(time.time()-step_start_time)
                     step += 1
 
-                    if (step % print_steps == 0) or (step == batch_iterator.max_steps):
-                        valid_res = validation(session, valid_ops, batch_iterator2, hyper, step, tf_sw)
-                        print 'Time for %d steps, elapsed = %f, training time %% = %f, validation time %% = %f'%(
+                    do_log, num_valid_batches = get_logging_steps(step, globalParams, batch_iterator, batch_iterator2)
+                    if do_log:
+                        print 'Step %d'%(step)
+                        train_time_per100 = np.mean(train_time) * 100
+                        valid_res = validation_cycle(session, valid_ops, batch_iterator2, hyper, globalParams, step, tf_sw, num_valid_batches)
+                        print 'Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
                             step,
                             time.time()-start_time,
-                            np.mean(train_time) * 100. / hyper.B,
+                            train_time_per100,
                             valid_res.valid_time_per100)
-#                        print 'Step %d, ctc_loss min=%f, max=%f, ctc_accuracy=%f, best_ctc_accuracy=%f, edit_distance=%f, best_edit_distance=%f'%(
-                        print 'Step %d, ctc_loss min=%f, max=%f, edit_distance=%f, best_edit_distance=%f'%(
-                            step,
-                            min(ctc_losses),
-                            max(ctc_losses),
-                            #valid_res.ctc_accuracy,
-                            #valid_res.BoK_ctc_accuracy,
-                            valid_res.edit_distance,
-                            valid_res.BoK_distance
-                            )
                         ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
                         i_max = np.argmax(ctc_losses)
@@ -198,6 +189,9 @@ def train(num_steps, print_steps, num_epochs,
                                 tf_sw.add_summary(logs[i_min], global_step=1)
                             else:
                                 tf_sw.add_summary(logs[i_min], global_step=(step+i_min+1 - print_steps))
+
+                        log_time = session.run(train_ops.log_time, feed_dict={train_ops.ph_train_time: train_time_per100})
+                        tf_sw.add_summary(log_time, global_step=step)
                         tf_sw.flush()
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
@@ -214,92 +208,88 @@ def train(num_steps, print_steps, num_epochs,
                 # close_queue2.run()
                 coord.join(enqueue_threads)
 
-def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
-    print 'validation cycle starting'
+def get_logging_steps(step, args, train_it, valid_it):
+    valid_epochs = args.valid_epochs if (args.valid_epochs is not None) else 1
+    valid_steps = int(valid_epochs * train_it.epoch_size)
+    do_log = (step % args.print_steps == 0) or (step % valid_steps == 0) or (step == train_it.max_steps)
+    num_valid_batches = valid_it.epoch_size if (step % valid_steps == 0) or (step == train_it.max_steps) else 1
+
+    return do_log, num_valid_batches
+
+
+def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_sw, max_steps):
+    hyper.logger.info('validation cycle starting')
     valid_start_time = time.time()
-    epoch_size = batch_iterator.epoch_size
     batch_size = batch_iterator.batch_size
     n = 0
+    epoch_size = batch_iterator.epoch_size
     ## Print a batch randomly
-    print_batch = np.random.randint(0,epoch_size)
+    print_batch = np.random.randint(0, epoch_size)
     eds = []; best_eds = []
-    ctc_accuracies = []; best_ctc_accuracies = []
+    accuracies = []; best_accuracies = []
     lens = []
-    while n < epoch_size:
+    while n < max_steps:
         n += 1
-        ids = l = s = b = bis = bids = bl = best_ctc_accuracy = ctc_accuracy = ed = best_ed = None
+        ids = l = s = b = bis = bids = bl = best_accuracy = accuracy = ed = best_ed = None
 
-        if n != print_batch:
-            l, ed, best_ed = session.run((
-                                valid_ops.topK_lens,
-#                                valid_ops.best_of_topK_ctc_accuracy,
-#                                valid_ops.top1_score_ctc_accuracy,
-                                valid_ops.top1_score_ed,
-                                valid_ops.best_of_topK_ed)
-                                )
+        if (not args.print_batch) or (n != print_batch):
+            ed, best_ed, accuracy, best_accuracy = session.run((
+                                valid_ops.top1_mean_ed,
+                                valid_ops.bok_mean_ed,
+                                valid_ops.top1_accuracy,
+                                valid_ops.bok_accuracy
+                                ))
         else:
-            ids, l, s, b, bis, bids, bl, ed, best_ed = session.run((
+            ids, l, s, bis, bids, bl, ed, best_ed, accuracy, best_accuracy = session.run((
                                 valid_ops.topK_ids, 
                                 valid_ops.topK_lens,
                                 valid_ops.topK_scores,
-                                valid_ops.topK_beams,
                                 valid_ops.all_id_scores,
                                 valid_ops.all_ids,
                                 valid_ops.all_seq_lens,
-                                valid_ops.top1_score_ed,
-                                valid_ops.best_of_topK_ed)
-                                )
+                                valid_ops.top1_mean_ed,
+                                valid_ops.bok_mean_ed,
+                                valid_ops.top1_accuracy,
+                                valid_ops.bok_accuracy
+                                ))
 
-        lens.append(l)
         eds.append(ed)
         best_eds.append(best_ed)
-#        ctc_accuracies.append(ctc_accuracy)
-#        best_ctc_accuracies.append(best_ctc_accuracy)
+        accuracies.append(accuracy)
+        best_accuracies.append(best_accuracy)
 
-        # print 'shape of top_ids = ', ids.shape
-        # print 'shape of top sequence_lens= ', l.shape
-        # print 'shape of top scores= ', s.shape
-        # print 'shape of top beams= ', b.shape
-        # print 'top sequence_lens= ', l
         if n == print_batch:
             i = np.random.randint(0, batch_iterator.batch_size)
             print '############ RANDOM VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
-            beam = b[i,0]
-            print 'top k beams=%s'%b[i]
+            beam = 0
             print 'top k lens=%s'%l[i]
-            print 'top 1 token sequence=%s'%ids[i,0]
             print 'top k sequence scores=%s'%s[i]
-            # print 'top token scores=%s'%bis[i, b[i]]
+            print 'top 1 token sequence=%s'%ids[i,0]
+            # print 'top token scores=%s'%bis[i, 0]
             # print 'all beam sequences=%s'%bids[i]
             # print 'all beam token scores = %s'%bis[i]
             # print 'all beam lens = %s'%bl[i]
-            for k in range(l[i].shape[0]):
-                assert l[i, k] == bl[i, b[i, k]]
-            for k in range(l[i].shape[0]):
-                try:
-                    sum_scores = np.sum(bis[i, b[i,k]])
-                    reported_score = s[i,k]
-                    assert sum_scores -  reported_score < 0.00001
-                except:
-                    hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
+            # for k in range(l[i].shape[0]):
+            #     assert l[i, k] == bl[i, k]
+            # for k in range(l[i].shape[0]):
+            #     try:
+            #         sum_scores = np.sum(bis[i, k])
+            #         reported_score = s[i,k]
+            #         assert sum_scores -  reported_score < 0.00001
+            #     except:
+            #         hyper.logger.critical('\nBEAM SCORES DO NOT MATCH: %f vs %f\n'%(sum_scores,reported_score))
             assert np.argmax(np.sum(bis[i], axis=-1)) == beam
-            assert np.all(ids[i,0] == bids[i,beam])
+            # assert np.all(ids[i,0] == bids[i,beam])
             print '###################################\n'
             assert np.all(bl <= (hyper.Max_Seq_Len + 10))
-        ## validation graph metrics
-        # tf_sw.add_summary(logs_v, global_step=step)
-        # tf_sw.add_summary(logs_ed, global_step=step)
-        # bleu = dlc.squashed_bleu_scores(ids[:,0,:], l[:,0], y_ctc, ctc_len, hyper.CTCBlankTokenID)
-        # (log_bleu,) = session.run([valid_ops.logs_b], feed_dict={valid_ops.ph_bleu : bleu})
-        # tf_sw.add_summary(log_bleu, global_step=step)
 
     metrics = dlc.Properties({
-        'len': np.mean(lens),
-        'edit_distance': np.mean(eds),
-        'BoK_distance': np.mean(best_eds),
-#        'ctc_accuracy': np.mean(ctc_accuracies),
-#        'BoK_ctc_accuracy': np.mean(best_ctc_accuracies),
-        'valid_time_per100': (time.time() - valid_start_time) * 100. / epoch_size
+        'len': lens,
+        'edit_distance': eds,
+        'BoK_distance': best_eds,
+        'accuracy': accuracies,
+        'bok_accuracy': best_accuracies,
+        'valid_time_per100': (time.time() - valid_start_time) * 100. / max_steps
     })
 
     logs_aggregate = session.run(valid_ops.logs_aggregate,
@@ -307,12 +297,13 @@ def validation(session, valid_ops, batch_iterator, hyper, global_step, tf_sw):
                                     valid_ops.ph_seq_lens: lens,
                                     valid_ops.ph_edit_distance: metrics.edit_distance,
                                     valid_ops.ph_BoK_distance: metrics.BoK_distance,
-#                                    valid_ops.ph_ctc_accuracy: metrics.ctc_accuracy,
-#                                    valid_ops.ph_BoK_ctc_accuracy: metrics.BoK_ctc_accuracy,
-                                    valid_ops.ph_valid_time: metrics.valid_time_per100
+                                    valid_ops.ph_accuracy: metrics.accuracy,
+                                    valid_ops.ph_BoK_accuracy: metrics.bok_accuracy,
+                                    valid_ops.ph_valid_time : metrics.valid_time_per100
                                 })
-    tf_sw.add_summary(logs_aggregate, global_step)
+    tf_sw.add_summary(logs_aggregate, step)
     tf_sw.flush()
+    hyper.logger.info('validation cycle finished')
     return metrics
 
 def main():
@@ -362,10 +353,13 @@ def main():
                         default=3)
     parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
                         help="Fraction of samples to use for validation. Defaults to 0.01",
-                        default=0.01)
-    parser.add_argument("--valid-epochs", "-v", dest="valid_epochs", type=int,
-                        help="Number of training epochs after which to run a full validation cycle. Defaults to 1 if unspecified",
-                        default=1)
+                        default=0.05)
+    parser.add_argument("--validation-epochs", "-v", dest="valid_epochs", type=float,
+                        help="Number (and fraction) of epochs after which to run a full validation cycle. Defaults to 1.",
+                        default=1.)
+    parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
+                        help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to False.",
+                        default=False)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -389,7 +383,16 @@ def main():
     logger.setLevel(logging_level[args.logging_level - 1])
     logger.addHandler(logging.StreamHandler())
 
-    globalParams = dlc.Properties({'logger': logger, 'beam_width':args.beam_width})
+    globalParams = dlc.Properties({
+                                    'print_steps': args.print_steps,
+                                    'num_steps': args.num_steps,
+                                    'num_epochs': args.num_epochs,
+                                    'logger': logger,
+                                    'beam_width':args.beam_width,
+                                    'valid_frac': args.valid_frac,
+                                    'valid_epochs': args.valid_epochs,
+                                    'print_batch': args.print_batch
+                                    })
     
     if args.batch_size is not None:
         globalParams.B = args.batch_size
