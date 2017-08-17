@@ -614,12 +614,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
                     with tf.name_scope('predicted'):
-                        top1_ed = tfc.edit_distance(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
+                        top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_accuracy = tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0))) # scalar
 
                     with tf.name_scope('top_k'):
-                        ed = tfc.k_edit_distance(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
+                        ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
                         ## Best of top_k
                         bok_ed = tf.reduce_min(ed, axis=1) # (B, 1)
                         bok_mean_ed = tf.reduce_mean(bok_ed)
