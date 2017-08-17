@@ -132,10 +132,11 @@ class ShuffleIterator(object):
         self._hyper = hyper
         self._name = name
 
-        print '%s initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d'%(self._name,
-                                                                                        self._batch_size,
-                                                                                        self._num_items,
-                                                                                        self._max_steps)
+        self._hyper.logger.info('%s initialized with batch_size = %d, steps-per-epoch = %d, max-steps = %d', 
+                                self._name,
+                                self._batch_size,
+                                self._num_items,
+                                self._max_steps)
     def __iter__(self):
         return self
     @property
@@ -183,7 +184,7 @@ class ShuffleIterator(object):
                 ## Shuffle the bin composition too
                 self._df = self._df.sample(frac=1)
                 self._next_pos = 0
-                self._hyper.logger.info('%s finished epoch %d'%(self._name, self._epoch))
+                self._hyper.logger.debug('%s finished epoch %d'%(self._name, self._epoch))
                 self._epoch += 1
             curr_pos = self._next_pos
             self._next_pos += 1 # value for next iteration
@@ -382,6 +383,14 @@ def create_context_iterators(raw_data_dir_,
                                                 args.num_epochs,
                                                 image_processor_,
                                                 'TrainingIterator')
+    batch_iterator_tr_acc = BatchContextIterator(df_train,
+                                                raw_data_dir_,
+                                                image_feature_dir_,
+                                                hyper,
+                                                num_steps=-1,
+                                                num_epochs=-1,
+                                                image_processor_=image_processor_,
+                                                name='TrainingAccuracyIterator')
     batch_iterator_valid = BatchContextIterator(df_valid,
                                                 raw_data_dir_,
                                                 image_feature_dir_,
@@ -390,4 +399,4 @@ def create_context_iterators(raw_data_dir_,
                                                 num_epochs=-1,
                                                 image_processor_=image_processor_,
                                                 name='ValidationIterator')
-    return batch_iterator_train, batch_iterator_valid
+    return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc

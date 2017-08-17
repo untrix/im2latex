@@ -595,17 +595,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(topK_ids) == (B, k, None)
 
                     with tf.name_scope('Instrumentation'):
-                        tf.summary.histogram( 'training/score/predicted/score/', top1_seq_scores, collections=['prediction'])
-                        tf.summary.histogram( 'training/score/predicted/seq_len/', top1_seq_lens, collections=['prediction'])
-                        tf.summary.histogram( 'training/score/top_%d/score/'%k, topK_seq_scores, collections=['top_k'])
-                        tf.summary.histogram( 'training/score/top_%d/seq_len/'%k, topK_seq_lens, collections=['top_k'])
+                        tf.summary.histogram( 'training/score/predicted/score', top1_seq_scores, collections=['top1'])
+                        tf.summary.histogram( 'training/score/predicted/seq_len', top1_seq_lens, collections=['top1'])
+                        tf.summary.histogram( 'training/score/top_%d/score'%k, topK_seq_scores, collections=['top_k'])
+                        tf.summary.histogram( 'training/score/top_%d/seq_len'%k, topK_seq_lens, collections=['top_k'])
 
                 ## BLEU scores
                 # with tf.name_scope('BLEU'):
                 #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                #     tf.summary.histogram( 'training/accuracy/predicted/bleu/', ph_bleu, collections=['bleu'])
-                #     tf.summary.scalar( 'training/accuracy/predicted/bleuH/', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                #     tf.summary.histogram( 'training/accuracy/predicted/bleu', ph_bleu, collections=['bleu'])
+                #     tf.summary.scalar( 'training/accuracy/predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
                 #     logs_b = tf.summary.merge_all(key='bleu')
 
                 ## Levenshtein Distance metric
@@ -626,33 +626,38 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         bok_accuracy = tf.reduce_mean(tf.to_float(tf.equal(bok_ed, 0)))
 
                     with tf.name_scope('Instrumentation'):
-                        tf.summary.scalar( 'training/accuracy/predicted/edit_distance/', top1_mean_ed, collections=['prediction'])
-                        tf.summary.scalar( 'training/accuracy/predicted/accuracy/', top1_accuracy, collections=['prediction'])
-                        tf.summary.scalar( 'training/accuracy/top_%d/accuracy/'%k, bok_accuracy, collections=['top_k'])
-                        tf.summary.scalar( 'training/accuracy/top_%d/edit_distance/'%k, bok_mean_ed, collections=['top_k'])
+                        tf.summary.scalar( 'training/accuracy/predicted/edit_distance', top1_mean_ed, collections=['top1'])
+                        tf.summary.scalar( 'training/accuracy/predicted/accuracy', top1_accuracy, collections=['top1'])
+                        tf.summary.scalar( 'training/accuracy/top_%d/edit_distance'%k, bok_mean_ed, collections=['top_k'])
+                        tf.summary.scalar( 'training/accuracy/top_%d/accuracy'%k, bok_accuracy, collections=['top_k'])
 
-                logs_prediction = tf.summary.merge_all(key='prediction')
-                logs_top_k = tf.summary.merge_all(key='top_k')
+                logs_tr_acc_top1 = tf.summary.merge_all(key='top1')
+                logs_tr_acc_topK = tf.summary.merge_all(key='top_k')
 
                 ## Aggregate metrics injected into the graph from outside
                 with tf.name_scope('AggregateMetrics'):
-                    ph_seq_lens = tf.placeholder(self.C.dtype)
+                    ph_top1_seq_lens = tf.placeholder(self.C.dtype)
                     ph_edit_distance = tf.placeholder(self.C.dtype)
-                    ph_BoK_distance =  tf.placeholder(self.C.dtype)
                     ph_accuracy =  tf.placeholder(self.C.dtype)
-                    ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
                     ph_valid_time =  tf.placeholder(self.C.dtype)
+
+                    ph_BoK_distance =  tf.placeholder(self.C.dtype)
+                    ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
+
                     agg_accuracy = tf.reduce_mean(ph_accuracy)
                     agg_ed = tf.reduce_mean(ph_edit_distance)
                     agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
                     agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
-                    tf.summary.histogram( 'prediction/aggregate/seq_lens/', ph_seq_lens, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/predicted/edit_distance/', agg_ed, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/edit_distance/'%k, agg_bok_ed, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/predicted/accuracy/', agg_accuracy, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/accuracy/'%k, agg_bok_accuracy, collections=['aggregate'])
-                    tf.summary.scalar( 'prediction/aggregate/time_per100/', ph_valid_time, collections=['aggregate'])
-                    logs_aggregate = tf.summary.merge_all(key='aggregate')
+
+                    tf.summary.histogram( 'prediction/aggregate/predicted/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'prediction/aggregate/predicted/edit_distance', agg_ed, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'prediction/aggregate/predicted/accuracy', agg_accuracy, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'prediction/aggregate/time_per100', ph_valid_time, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
+                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
+
+                    logs_agg_top1 = tf.summary.merge_all(key='aggregate_top1')
+                    logs_agg_bok = tf.summary.merge_all(key='aggregate_bok')
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
@@ -667,12 +672,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
                     'top1_accuracy': top1_accuracy, # scalar
                     'bok_accuracy': bok_accuracy, # scalar
-                    'top1_mean_ed': top1_mean_ed,
-                    'bok_mean_ed': bok_mean_ed,
-                    'logs_prediction': logs_prediction,
-                    'logs_top_k': logs_top_k,
-                    'logs_aggregate': logs_aggregate,
-                    'ph_seq_lens': ph_seq_lens,
+                    'top1_mean_ed': top1_mean_ed, # scalar
+                    'bok_mean_ed': bok_mean_ed, # scalar
+                    'logs_tr_acc_top1': logs_tr_acc_top1,
+                    'logs_tr_acc_topK': logs_tr_acc_topK,
+                    'logs_agg_top1': logs_agg_top1,
+                    'logs_agg_bok': logs_agg_bok,
+                    'ph_top1_seq_lens': ph_top1_seq_lens,
                     'ph_edit_distance': ph_edit_distance,
                     'ph_BoK_distance': ph_BoK_distance,
                     'ph_accuracy': ph_accuracy,
