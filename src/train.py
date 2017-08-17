@@ -230,7 +230,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
                             ops.tr_acc_ops.logs_tr_acc_topK
                             ))
         tf_sw.add_summary(logs_top1, step)
-        tf_sw.add_summary(logs_topK)
+        tf_sw.add_summary(logs_topK, step)
         tf_sw.flush()
         metrics = dlc.Properties({
             'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * args.beam_width))
