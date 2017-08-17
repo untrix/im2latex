@@ -219,6 +219,7 @@ def get_logging_steps(step, args, train_it, valid_it):
 
 
 def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_sw, max_steps):
+    logger = hyper.logger
     valid_start_time = time.time()
     batch_size = batch_iterator.batch_size
     epoch_size = batch_iterator.epoch_size
