@@ -221,24 +221,29 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
     hyper.logger.info('validation cycle starting')
     valid_start_time = time.time()
     batch_size = batch_iterator.batch_size
-    n = 0
     epoch_size = batch_iterator.epoch_size
     ## Print a batch randomly
-    print_batch = np.random.randint(0, epoch_size)
+    print_batch_num = np.random.randint(0, epoch_size) if args.print_batch else -1
     eds = []; best_eds = []
     accuracies = []; best_accuracies = []
     lens = []
+    n = 0
     while n < max_steps:
         n += 1
         ids = l = s = b = bis = bids = bl = best_accuracy = accuracy = ed = best_ed = None
 
-        if (not args.print_batch) or (n != print_batch):
+        if (not args.print_batch) or (n != print_batch_num):
             ed, best_ed, accuracy, best_accuracy = session.run((
                                 valid_ops.top1_mean_ed,
                                 valid_ops.bok_mean_ed,
                                 valid_ops.top1_accuracy,
                                 valid_ops.bok_accuracy
                                 ))
+            eds.append(ed)
+            best_eds.append(best_ed)
+            accuracies.append(accuracy)
+            best_accuracies.append(best_accuracy)
+
         else:
             ids, l, s, bis, bids, bl, ed, best_ed, accuracy, best_accuracy = session.run((
                                 valid_ops.topK_ids, 
@@ -252,13 +257,11 @@ def validation_cycle(session, valid_ops, batch_iterator, hyper, args, step, tf_s
                                 valid_ops.top1_accuracy,
                                 valid_ops.bok_accuracy
                                 ))
+            eds.append(ed)
+            best_eds.append(best_ed)
+            accuracies.append(accuracy)
+            best_accuracies.append(best_accuracy)
 
-        eds.append(ed)
-        best_eds.append(best_ed)
-        accuracies.append(accuracy)
-        best_accuracies.append(best_accuracy)
-
-        if n == print_batch:
             i = np.random.randint(0, batch_iterator.batch_size)
             print '############ RANDOM VALIDATION BATCH %d SAMPLE %d ############'%(n, i)
             beam = 0
