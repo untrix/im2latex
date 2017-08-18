@@ -22,6 +22,7 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 import collections
+import pprint
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -104,6 +105,9 @@ class Properties(dict):
         """
         items = self.items()
         return [[ str(item[0]), str(item[1]) ] for item in items]
+
+    def pformat(self):
+        return pprint.pformat(self)
 
     def __getattr__(self, key):
         return self._get_val_(key)

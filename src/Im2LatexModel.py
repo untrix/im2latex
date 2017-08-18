@@ -434,7 +434,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         #                alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
-                    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                    alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                    alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
                     mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
                     mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
                     mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
@@ -475,6 +476,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 tf.summary.scalar('training/ctc_loss/', ctc_loss)
                 tf.summary.scalar('training/alpha_penalty/', alpha_penalty)
                 tf.summary.scalar('training/total_cost/', cost)
+                tf.summary.scalar('training/alpha_squared_error/', alpha_squared_error)
+                tf.summary.histogram('training/seq_len/', sequence_lengths)
 
                 # Optimizer
                 with tf.variable_scope('Optimizer'):
@@ -613,7 +616,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
-                    with tf.name_scope('predicted'):
+                    with tf.name_scope('prediction'):
                         top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_accuracy = tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0))) # scalar
@@ -628,8 +631,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     with tf.name_scope('Instrumentation'):
                         tf.summary.scalar( 'training/accuracy/predicted/edit_distance', top1_mean_ed, collections=['top1'])
                         tf.summary.scalar( 'training/accuracy/predicted/accuracy', top1_accuracy, collections=['top1'])
-                        tf.summary.scalar( 'training/accuracy/top_%d/edit_distance'%k, bok_mean_ed, collections=['top_k'])
-                        tf.summary.scalar( 'training/accuracy/top_%d/accuracy'%k, bok_accuracy, collections=['top_k'])
+                        tf.summary.scalar( 'training/accuracy/bestof_%d/edit_distance'%k, bok_mean_ed, collections=['top_k'])
+                        tf.summary.scalar( 'training/accuracy/bestof_%d/accuracy'%k, bok_accuracy, collections=['top_k'])
 
                 logs_tr_acc_top1 = tf.summary.merge_all(key='top1')
                 logs_tr_acc_topK = tf.summary.merge_all(key='top_k')

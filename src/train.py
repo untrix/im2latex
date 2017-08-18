@@ -209,8 +209,8 @@ def train(raw_data_folder,
                 coord.join(enqueue_threads)
 
 def do_validate(step, args, train_it, valid_it):
-    valid_epochs = args.valid_epochs if (args.valid_epochs is not None) else 1
-    valid_steps = int(valid_epochs * train_it.epoch_size)
+    valid_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
+    valid_steps = int(valid_frac * train_it.epoch_size)
     do_validate = (step % valid_steps == 0) or (step == train_it.max_steps)
     num_valid_batches = valid_it.epoch_size if do_validate else 0
 
@@ -269,7 +269,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
         metrics = dlc.Properties({
             'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * args.beam_width)
             })
-
+        print lens
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={
                                         valid_ops.ph_top1_seq_lens: lens,

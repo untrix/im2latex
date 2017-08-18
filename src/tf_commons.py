@@ -570,7 +570,7 @@ def printVars(name, coll):
     return total_n
 
 def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
-    with tf.name_scope('edit_distance'):
+    with tf.name_scope('edit_distance3D'):
         p_shape = K.int_shape(predicted_ids)
         t_shape = K.int_shape(target_ids)
         assert len(p_shape) == 3
@@ -589,7 +589,7 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         return d
 
 def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
-    with tf.name_scope('edit_distance'):
+    with tf.name_scope('edit_distance2D'):
         p_shape = K.int_shape(predicted_ids)
         t_shape = K.int_shape(target_ids)
         assert len(p_shape) == 2
