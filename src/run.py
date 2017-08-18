@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.9",
                         default=0.9)
-    parser.add_argument("--adap_alpha", "-a", dest="alpha", type=float,
+    parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=None)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
@@ -146,9 +146,9 @@ def main():
     logger.addHandler(fh)
     logger.setLevel(logging_level[args.logging_level - 1])
 
-    logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams)
+    logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams.pformat())
     logger.info('##################################################################\n')
-    logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper)
+    logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())
     logger.info('##################################################################\n')
     
     train.train(raw_data_folder,
