@@ -538,7 +538,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """ Test one batch of input """
         B = self.C.B
         BW = self.BeamWidth
-
+        k = min([self.C.k, BW])
+        
         with tf.variable_scope(self.outer_scope) as var_scope:
             assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
@@ -570,45 +571,41 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ids_flat = tf.reshape(ids, shape=(B*BW, -1)) * seq_mask ## False values become 0
                     ids = tf.reshape(ids_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
 
-                with tf.name_scope('SequenceScores'):
+                with tf.name_scope('Score'):
                     ## Sum of log-probabilities == Product of probabilities
                     seq_scores = tf.reduce_sum(scores, axis=2) # (B, BeamWidth)
 
-                ## Select the top scoring beams
-                with tf.name_scope('SelectTopScoring'):
-
-                    ## Top 1
-                    top1_seq_scores = seq_scores[:,0] # (B,)
-                    top1_ids = ids[:,0,:] # (B, T)
-                    top1_seq_lens = seq_lens[:,0] # (B,)
+                    ## Select the top scoring beams
+                    with tf.name_scope('top_1'):
+                        ## Top 1
+                        top1_seq_scores = seq_scores[:,0] # (B,)
+                        top1_ids = ids[:,0,:] # (B, T)
+                        top1_seq_lens = seq_lens[:,0] # (B,)
+                        tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
+                        tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
 
                     ## Top K
-                    k = min([5, BW])
-                    ## Old code not needed because beams are already sorted by beam-score
-                        # topK_seq_scores, topK_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
-                        # topK_ids = tfc.batch_slice(ids, topK_score_indices) # (B, k, T)
-                        # assert K.int_shape(topK_ids) == (B, k, None)
-                        # topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
-                        # assert K.int_shape(topK_seq_lens) == (B, k)
-                    topK_seq_scores = seq_scores[:,:k] # (B, k)
-                    topK_ids = ids[:,:k,:] # (B, k, T)
-                    topK_seq_lens = seq_lens[:, :k] # (B, k)
-                    assert K.int_shape(topK_seq_scores) == (B, k)
-                    assert K.int_shape(topK_seq_lens) == (B, k)
-                    assert K.int_shape(topK_ids) == (B, k, None)
+                    with tf.name_scope('top_%d'%k):
+                        ## Old code not needed because beams are already sorted by beam-score
+                            # topK_seq_scores, topK_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
+                            # topK_ids = tfc.batch_slice(ids, topK_score_indices) # (B, k, T)
+                            # assert K.int_shape(topK_ids) == (B, k, None)
+                            # topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
+                            # assert K.int_shape(topK_seq_lens) == (B, k)
+                        topK_seq_scores = seq_scores[:,:k] # (B, k)
+                        topK_ids = ids[:,:k,:] # (B, k, T)
+                        topK_seq_lens = seq_lens[:, :k] # (B, k)
+                        assert K.int_shape(topK_seq_scores) == (B, k)
+                        assert K.int_shape(topK_seq_lens) == (B, k)
+                        assert K.int_shape(topK_ids) == (B, k, None)
 
-                    with tf.name_scope('Instrumentation'):
-                        tf.summary.histogram( 'training/score/predicted/score', top1_seq_scores, collections=['top1'])
-                        tf.summary.histogram( 'training/score/predicted/seq_len', top1_seq_lens, collections=['top1'])
-                        tf.summary.histogram( 'training/score/top_%d/score'%k, topK_seq_scores, collections=['top_k'])
-                        tf.summary.histogram( 'training/score/top_%d/seq_len'%k, topK_seq_lens, collections=['top_k'])
 
                 ## BLEU scores
                 # with tf.name_scope('BLEU'):
                 #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                #     tf.summary.histogram( 'training/accuracy/predicted/bleu', ph_bleu, collections=['bleu'])
-                #     tf.summary.scalar( 'training/accuracy/predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
+                #     tf.summary.histogram( 'predicted/bleu', ph_bleu, collections=['bleu'])
+                #     tf.summary.scalar( 'predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
                 #     logs_b = tf.summary.merge_all(key='bleu')
 
                 ## Levenshtein Distance metric
@@ -616,23 +613,27 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
-                    with tf.name_scope('prediction'):
+                    with tf.name_scope('top_1'):
                         top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_accuracy = tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0))) # scalar
+                        tf.summary.scalar( 'edit_distance', top1_mean_ed, collections=['top1'])
+                        tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
 
-                    with tf.name_scope('top_k'):
+                    with tf.name_scope('bestof_%d'%k):
                         ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
                         ## Best of top_k
-                        bok_ed = tf.reduce_min(ed, axis=1) # (B, 1)
+                        # bok_ed = tf.reduce_min(ed, axis=1) # (B, 1)
+                        bok_ed, bok_indices = tfc.batch_top_k_2D(ed, 1) # (B, 1)
                         bok_mean_ed = tf.reduce_mean(bok_ed)
                         bok_accuracy = tf.reduce_mean(tf.to_float(tf.equal(bok_ed, 0)))
+                        bok_seq_lens =  tf.squeeze(tfc.batch_slice(topK_seq_lens, bok_indices), axis=1) # (B, 1)
+                        bok_seq_scores = tf.squeeze(tfc.batch_slice(topK_seq_scores, bok_indices), axis=1) # (B, 1)
 
-                    with tf.name_scope('Instrumentation'):
-                        tf.summary.scalar( 'training/accuracy/predicted/edit_distance', top1_mean_ed, collections=['top1'])
-                        tf.summary.scalar( 'training/accuracy/predicted/accuracy', top1_accuracy, collections=['top1'])
-                        tf.summary.scalar( 'training/accuracy/bestof_%d/edit_distance'%k, bok_mean_ed, collections=['top_k'])
-                        tf.summary.scalar( 'training/accuracy/bestof_%d/accuracy'%k, bok_accuracy, collections=['top_k'])
+                        tf.summary.scalar( 'edit_distance', bok_mean_ed, collections=['top_k'])
+                        tf.summary.scalar( 'accuracy', bok_accuracy, collections=['top_k'])
+                        tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
+                        tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
 
                 logs_tr_acc_top1 = tf.summary.merge_all(key='top1')
                 logs_tr_acc_topK = tf.summary.merge_all(key='top_k')
@@ -652,12 +653,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
                     agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
-                    tf.summary.histogram( 'prediction/aggregate/predicted/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'prediction/aggregate/predicted/edit_distance', agg_ed, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'prediction/aggregate/predicted/accuracy', agg_accuracy, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'prediction/aggregate/time_per100', ph_valid_time, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
-                    tf.summary.scalar( 'prediction/aggregate/bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
+                    tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
+                    tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
                     logs_agg_top1 = tf.summary.merge_all(key='aggregate_top1')
                     logs_agg_bok = tf.summary.merge_all(key='aggregate_bok')
@@ -674,9 +675,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'all_id_scores': scores,
                     'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
                     'top1_accuracy': top1_accuracy, # scalar
-                    'bok_accuracy': bok_accuracy, # scalar
                     'top1_mean_ed': top1_mean_ed, # scalar
+                    'bok_accuracy': bok_accuracy, # scalar
                     'bok_mean_ed': bok_mean_ed, # scalar
+                    'bok_seq_lens': bok_seq_lens, # (B,)
+                    'bok_seq_scores': bok_seq_scores, #(B,)
                     'logs_tr_acc_top1': logs_tr_acc_top1,
                     'logs_tr_acc_topK': logs_tr_acc_topK,
                     'logs_agg_top1': logs_agg_top1,

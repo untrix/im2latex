@@ -53,7 +53,7 @@ def main():
                         default=50)
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.9",
-                        default=0.9)
+                        default=0.5)
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=None)

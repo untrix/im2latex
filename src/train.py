@@ -100,8 +100,8 @@ def train(raw_data_folder,
             with tf.variable_scope('InputQueue'):
                 enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
-            trainable_vars_n = num_trainable_vars() # 8544670
-            assert 8544670 == trainable_vars_n
+            trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
+            assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
@@ -115,6 +115,7 @@ def train(raw_data_folder,
 
         ##### Training Accuracy Graph
         with tf.name_scope('TrainingAccuracy'):
+            hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
             model_predict2 = Im2LatexModel(hyper_predict, args.beam_width, reuse=True)
             tr_acc_ops = model_predict2.test()
             with tf.variable_scope('InputQueue'):

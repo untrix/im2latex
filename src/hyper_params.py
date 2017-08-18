@@ -143,13 +143,19 @@ class GlobalParams(dlc.HyperParams):
               None
               ),
         PD('weights_regularizer',
-              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallableOrNone(),
-              None),
+              'L1 / L2 norm regularization',
+              iscallable(noneokay=True), 
+              None
+              # tf.contrib.layers.l2_regularizer(scale, scope=None)
+              # tf.contrib.layers.l1_regularizer(scale, scope=None)
+              ),
         PD('biases_regularizer',
-              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallableOrNone(),
-              None),
+              'L1 / L2 norm regularization',
+              iscallable(noneokay=True), None),
+        PD('use_peephole',
+            '(boolean): whether to employ peephole connections in the decoder LSTM',
+            (True, False),
+            True),
         #### Training Parameters ####
         PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
            boolean,
@@ -178,6 +184,11 @@ class GlobalParams(dlc.HyperParams):
 class CALSTMParams(dlc.HyperParams):
     @staticmethod
     def makeProto(GLOBAL=GlobalParams()):
+        """
+        Trickle down parameters from GlobalParams down the params-tree. Strictly, this should be done
+        inside __init__ because prototype is supposed to be static. However, I decided to do this inside
+        proto so that all parameter updates are located in one place.
+        """
         return GlobalParams.proto + (
         ### Attention Model Params ###
             PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
@@ -308,7 +319,10 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
                instanceof(float),
                0.0001 # default in tf.train.AdamOptimizer is 0.001
-           )
+              ),
+            PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
+               integer(1),
+               5)
         )
     def __init__(self, initVals):
         dlc.HyperParams.__init__(self, self.makeProto(GlobalParams(initVals).freeze()), initVals)

@@ -96,8 +96,8 @@ class DropoutParams(HyperParams):
     proto = (
         PD('keep_prob',
               'Probability of keeping an output (i.e. not dropping it).',
-              decimal()
-              ),
+              decimal(),
+              0.5),
         PD('seed',
               'Integer seed for the random number generator',
               integerOrNone()
@@ -137,10 +137,14 @@ class CommonParams(HyperParams):
               tf.zeros_initializer()
               ),
         PD('weights_regularizer',
-              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
-              iscallable(noneokay=True), None),
+              'L1 / L2 norm regularization',
+              iscallable(noneokay=True), 
+              None ## Trickle down value from above
+              # tf.contrib.layers.l2_regularizer(scale, scope=None)
+              # tf.contrib.layers.l1_regularizer(scale, scope=None)
+              ),
         PD('biases_regularizer',
-              'Defined in tf.contrib.layers. Not sure what this is, but probably a normalizer?',
+              'L1 / L2 norm regularization',
               iscallable(noneokay=True), None),
 #        PD('make_tb_metric',"(boolean): Create tensorboard metrics.",
 #              boolean,
@@ -373,15 +377,21 @@ class RNNParams(HyperParams):
             PD('weights_initializer',
               'Tensorflow weights initializer function',
               iscallableOrNone(),
-              None
-              #tf.contrib.layers.xavier_initializer()
+              tf.contrib.layers.xavier_initializer()
               # tf.contrib.layers.xavier_initializer_conv2d()
               # tf.contrib.layers.variance_scaling_initializer()
               ),
+            PD('weights_regularizer',
+                'L1 / L2 norm regularization',
+                iscallable(noneokay=True), 
+                None ## Trickle down value from above
+                # tf.contrib.layers.l2_regularizer(scale, scope=None)
+                # tf.contrib.layers.l1_regularizer(scale, scope=None)
+                ),
             PD('use_peephole',
                '(boolean): whether to employ peephole connections in the decoder LSTM',
                (True, False),
-               False),
+               True),
             PD('forget_bias', '',
                decimal(),
                1.0),
@@ -422,7 +432,8 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
     def __init__(self, params, reuse=None, _scope=None, beamsearch_width=1):
         self._params = params = RNNParams(params)
         with tf.variable_scope(_scope or self._params.op_name,
-                               initializer=self._params.weights_initializer) as scope:
+                               initializer=self._params.weights_initializer,
+                               regularizer=self._params.weights_regularizer) as scope:
             super(RNNWrapper, self).__init__(_reuse=reuse, _scope=scope, name=scope.name)
             self.my_scope = scope
             if len(self._params.layers_units) == 1:
