@@ -96,7 +96,7 @@ class DropoutParams(HyperParams):
     proto = (
         PD('keep_prob',
               'Probability of keeping an output (i.e. not dropping it).',
-              instanceof(tf.Tensor)
+              decimal()
               ),
         PD('seed',
               'Integer seed for the random number generator',
