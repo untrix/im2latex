@@ -174,6 +174,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         ## non-linearity for the first layer
                         o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
                         dim = m
+                        ## TODO: CHECK DROPOUT: Paper has one dropout layer here
                     else: ## Use a straight MLP Stack
                         o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
                         dim = m+n+D
@@ -181,6 +182,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Regular MLP layers
                     assert CONF.output_layers.layers_units[-1] == Kv
                     logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
+                    ## TODO: CHECK DROPOUT: Paper has a dropout layer after each FC layer including the last one
 
                     assert K.int_shape(logits_t) == (B, Kv)
                     return tf.nn.softmax(logits_t), logits_t
@@ -261,6 +263,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
                     ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model'
                     a = K.mean(a, axis=1) # final shape = (B, D)
+                    ## TODO: CHECK DROPOUT: The paper has a dropout layer after each FC layer including at the end
                     a = tfc.MLPStack(self.C.init_model)(a)
 
                     counter = itertools.count(0)
@@ -312,6 +315,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 calstm_states_t_1 = state.calstm_states
                 ## CALSTM stack
                 htop_t, calstm_states_t = self._CALSTM_stack(Ex_t, calstm_states_t_1)
+                ## TODO: CHECK DROPOUT: Paper has one dropout layer in between CALSTM stack and output layer
                 ## Output layer
                 yProbs_t, yLogits_t = self._output_layer(Ex_t, htop_t, calstm_states_t[-1].ztop)
 
