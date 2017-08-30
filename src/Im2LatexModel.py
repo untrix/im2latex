@@ -330,7 +330,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
         return self.ScanOut(yLogits_t, state_t)
 
-    def build_train_graph(self):
+    def build_training_graph(self):
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
 #                with tf.variable_scope('TrainingGraph'):

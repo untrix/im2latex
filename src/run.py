@@ -52,7 +52,7 @@ def main():
                         help="Number of training steps after which to log results. Defaults to 50 if unspecified",
                         default=50)
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
-                        help="Dropout 'keep' probability. Defaults to 0.9",
+                        help="Dropout 'keep' probability. Defaults to 0.5",
                         default=0.5)
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",

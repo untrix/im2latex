@@ -96,7 +96,7 @@ def train(raw_data_folder,
         ##### Training Graph
         with tf.name_scope('Training'):
             model = Im2LatexModel(hyper, reuse=False)
-            train_ops = model.build_train_graph()
+            train_ops = model.build_training_graph()
             with tf.variable_scope('InputQueue'):
                 enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)

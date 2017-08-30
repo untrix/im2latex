@@ -106,7 +106,7 @@ class GlobalParams(dlc.HyperParams):
            tfc.TensorboardParams()
            ),
         PD('dropout',
-           'Dropout parameters if any - global at the level of the RNN. Absence of this property '
+           'Dropout parameters if any - global. Absence of this property '
            'signals no dropouts.',
            instanceofOrNone(tfc.DropoutParams)
            ),
@@ -195,7 +195,8 @@ class CALSTMParams(dlc.HyperParams):
                tfc.MLPParams(GLOBAL).updated({
                     # Number of units in all layers of the attention model = D in the paper"s source-code.
                     'layers_units': (equalto('D', GLOBAL),),
-                    'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+                    'activation_fn': tf.nn.tanh, # = tanh in the paper's source code
+                    'dropout': None # Remove dropout in the attention model
                        }).freeze()
                 ),
             PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
@@ -215,7 +216,8 @@ class CALSTMParams(dlc.HyperParams):
                     'B': equalto('B', GLOBAL),
                     'i': None, ## size of input vector + z_t. Set dynamically.
                      ## paper uses a value of n=1000
-                    'layers_units': (equalto('n', GLOBAL),)
+                    'layers_units': (equalto('n', GLOBAL),),
+                    'dropout': None # No dropout by default
                     })
                 )
         )
