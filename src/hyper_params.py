@@ -177,7 +177,7 @@ class GlobalParams(dlc.HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
@@ -189,14 +189,15 @@ class CALSTMParams(dlc.HyperParams):
         inside __init__ because prototype is supposed to be static. However, I decided to do this inside
         proto so that all parameter updates are located in one place.
         """
+        GLOBAL = GLOBAL.copy().updated({'dropout': None}) ## No dropout within CALSTM
         return GlobalParams.proto + (
         ### Attention Model Params ###
             PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
                tfc.MLPParams(GLOBAL).updated({
                     # Number of units in all layers of the attention model = D in the paper"s source-code.
                     'layers_units': (equalto('D', GLOBAL),),
-                    'activation_fn': tf.nn.tanh, # = tanh in the paper's source code
-                    'dropout': None # Remove dropout in the attention model
+                    'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+                    ## 'dropout': None # Remove dropout in the attention model
                        }).freeze()
                 ),
             PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
@@ -217,7 +218,7 @@ class CALSTMParams(dlc.HyperParams):
                     'i': None, ## size of input vector + z_t. Set dynamically.
                      ## paper uses a value of n=1000
                     'layers_units': (equalto('n', GLOBAL),),
-                    'dropout': None # No dropout by default
+                    ## 'dropout': None # No dropout by default
                     })
                 )
         )
@@ -236,7 +237,7 @@ class CALSTMParams(dlc.HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
@@ -334,7 +335,7 @@ class Im2LatexModelParams(dlc.HyperParams):
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
