@@ -704,6 +704,10 @@ def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
         assert K.int_shape(ctc_losses) == (B, )
         return ctc_losses
 
+def batch_bottom_k_2D(t, k):
+    t2, indices = batch_top_k_2D(t * -1, k)
+    return t2 * -1, indices
+
 def batch_top_k_2D(t, k):
     """
     Slice a tensor of size (B, W) to size (B, k) by taking the top k of W values of

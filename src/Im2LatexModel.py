@@ -628,7 +628,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
                         ## Best of top_k
                         # bok_ed = tf.reduce_min(ed, axis=1) # (B, 1)
-                        bok_ed, bok_indices = tfc.batch_top_k_2D(ed, 1) # (B, 1)
+                        bok_ed, bok_indices = tfc.batch_bottom_k_2D(ed, 1) # (B, 1)
                         bok_mean_ed = tf.reduce_mean(bok_ed)
                         bok_accuracy = tf.reduce_mean(tf.to_float(tf.equal(bok_ed, 0)))
                         bok_seq_lens =  tf.squeeze(tfc.batch_slice(topK_seq_lens, bok_indices), axis=1) # (B, 1)
