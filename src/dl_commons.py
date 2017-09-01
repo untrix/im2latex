@@ -64,6 +64,13 @@ class Properties(dict):
     def _get_val_(self, key):
         return dict.__getitem__(self, key)
 
+    def _get_unvalidated_val(self, name):
+        """
+        Return resolved but unvalidated value.
+        Reroutes to _get_val_. Is useful only for subclasses that validate values.
+        """
+        return self._get_val_(name)
+
     def _rvn(self, key):
         """
         For internal use only - needed by Params.__init__.
@@ -98,16 +105,39 @@ class Properties(dict):
         dict.update(self, other)
         return self
 
-    def str_items(self):
+    # def str_items(self):
+    #     """
+    #     Same as dict.items() except that it converts each key and value to a
+    #     string type. Returns a list of list of strings.
+    #     """
+    #     items = self.items()
+    #     return [[ str(item[0]), str(item[1]) ] for item in items]
+
+    def to_dict(self):
         """
-        Same as dict.items() except that it converts each key and value to a
-        string type. Returns a list of list of strings.
+        Returns a dictionary with all values resolved but not validated.
+        Used for debugging and pretty printing. Will not throw an exception
+        if invalid/unset values are detected in order to be useful for debugging.
         """
-        items = self.items()
-        return [[ str(item[0]), str(item[1]) ] for item in items]
+        resolved = {}
+        for key in self.keys():
+            ## Resolve LambdaVals but do not validate them because we
+            ## need this method to work for debugging purposes, therefore we need to
+            ## see the state of the dictionary - especially the invalid values.
+            val = self._get_unvalidated_val(key)
+            if isinstance(val, Properties):
+                resolved[key] = val.to_dict()
+            elif issequence(val):
+                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else v) for v in val]
+            elif isinstance(val, dict):
+                resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
+            else:
+                resolved[key] = val
+
+        return resolved
 
     def pformat(self):
-        return pprint.pformat(self)
+        return pprint.pformat(self.to_dict())
 
     def __getattr__(self, key):
         return self._get_val_(key)
@@ -337,7 +367,7 @@ class Params(Properties):
             val = val(name, self)
         return val
 
-    def _resolve_raw_vals(self, name, vals_):
+    def _resolve_raw_vals(self, name, vals_, doValidate=True):
         """ Resolve a single (possibly lambda) val or sequence of (possibly lambda) vals. """
 #        if isTupleOrList(vals_):
         if issequence(vals_):
@@ -346,9 +376,10 @@ class Params(Properties):
         else:
             vals = self._resolve_raw_val(name, vals_)
 
-        protoD = self.protoD
-        if (vals is not None) and (protoD[name].validator is not None) and (vals not in protoD[name].validator):
-            raise ParamsValueError('%s is not a valid value of property %s'%(vals, name))
+        if doValidate:
+            protoD = self.protoD
+            if (vals is not None) and (protoD[name].validator is not None) and (vals not in protoD[name].validator):
+                raise ParamsValueError('%s is not a valid value of property %s'%(vals, name))
 
         return vals
 
@@ -361,13 +392,20 @@ class Params(Properties):
         except KeyError:
             return None
 
-    def _get_val_(self, name):
-        """ Polymorphic override of _get_val_. Be careful of recursion. """
+    def _get_val_helper(self, name, doValidate):
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
         else:
             val = Properties._get_val_(self, name)
-            return self._resolve_raw_vals(name, val)
+            return self._resolve_raw_vals(name, val, doValidate)
+
+    def _get_val_(self, name):
+        """ Resolves and validates values returned by Properties._get_val_ """
+        return self._get_val_helper(name, doValidate=True)
+
+    def _get_unvalidated_val(self, name):
+        """ Resolves but does not validate values returned by Properties._get_val_ """
+        return self._get_val_helper(name, doValidate=False)
 
     def isValidName(self, name):
         return name in self.protoD
@@ -437,6 +475,11 @@ class HyperParams(Params):
             raise KeyError('property %s was not set'%(name,))
         else:
             return val
+
+    def _get_unvalidated_val(self, name):
+        """Return resolved but unvalidated value"""
+        return Params._get_unvalidated_val(self, name)
+
 
 ## Abstract parameter validator class.
 class _ParamValidator(object):

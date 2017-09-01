@@ -48,15 +48,20 @@ class GlobalParams(dlc.HyperParams):
            integer(151,200),
            151 #get_max_seq_len(data_folder)
            ),
-        PD('MaxDecodeLen',
+        PD('DecodingSlack',
            "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
            "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
            "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
            "do so by determining the extra slack to give to the network - the more slack we give it "
            "presumably that much easier the learning will be. This parameter includes that slack. In "
-           "other words, MaxDecodeLen = MaxSeqLen+<slack>",
+           "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
+           integer(0),
+           20
+           ),
+        PD('MaxDecodeLen',
+           "See the description for MaxSeqLen and DecodingSlack",
            integer(151),
-           LambdaVal(lambda _, p: int(p.MaxSeqLen*1.3))
+           LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
            ),
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing.',
@@ -349,7 +354,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-def make_hyper(initVals):
+def make_hyper(initVals={}):
     globals = GlobalParams(initVals)
     initVals = dlc.Properties(initVals)
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
