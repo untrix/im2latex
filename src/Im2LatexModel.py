@@ -464,7 +464,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                               sequence_lengths,
                                               ctc_merge_repeated=False,
                                               time_major=False)
-                    print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
+                    ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
                     assert K.int_shape(ctc_losses) == (B, )
                     if self.C.sum_logloss:
                         ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
@@ -525,7 +525,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False,
-                                                                    maximum_iterations=self.C.Max_Seq_Len+10,
+                                                                    maximum_iterations=self.C.MaxDecodeLen,
                                                                     swap_memory=True)
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
                     assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
@@ -587,6 +587,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         top1_seq_lens = seq_lens[:,0] # (B,)
                         tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
                         tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
+                        print "test/top1_seq_lens: ", top1_seq_lens
 
                     ## Top K
                     with tf.name_scope('top_%d'%k):
@@ -610,7 +611,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
                 #     tf.summary.histogram( 'predicted/bleu', ph_bleu, collections=['bleu'])
                 #     tf.summary.scalar( 'predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
-                #     logs_b = tf.summary.merge_all(key='bleu')
+                #     logs_b = tf.summary.merge(tf.get_collection('bleu'))
 
                 ## Levenshtein Distance metric
                 with tf.name_scope('LevenshteinDistance'):
@@ -639,17 +640,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
                         tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
 
-                logs_tr_acc_top1 = tf.summary.merge_all(key='top1')
-                logs_tr_acc_topK = tf.summary.merge_all(key='top_k')
+                logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
+                logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
 
                 ## Aggregate metrics injected into the graph from outside
                 with tf.name_scope('AggregateMetrics'):
-                    ph_top1_seq_lens = tf.placeholder(self.C.dtype)
-                    ph_edit_distance = tf.placeholder(self.C.dtype)
+                    ph_top1_seq_lens = tf.placeholder(self.C.int_type)
+                    ph_edit_distance = tf.placeholder(self.C.int_type)
                     ph_accuracy =  tf.placeholder(self.C.dtype)
                     ph_valid_time =  tf.placeholder(self.C.dtype)
 
-                    ph_BoK_distance =  tf.placeholder(self.C.dtype)
+                    ph_BoK_distance =  tf.placeholder(self.C.int_type)
                     ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
 
                     agg_accuracy = tf.reduce_mean(ph_accuracy)
@@ -658,14 +659,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
                     tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+                    tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
+                    tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
                     tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
                     tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
                     tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
                     tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
                     tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
-                    logs_agg_top1 = tf.summary.merge_all(key='aggregate_top1')
-                    logs_agg_bok = tf.summary.merge_all(key='aggregate_bok')
+                    logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
+                    logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,

@@ -297,14 +297,13 @@ class BatchContextIterator(ShuffleIterator):
         a_batch = np.asarray(a_batch)
 
         bin_len = df_batch.bin_len.iloc[0]
-        y_s = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,
-                         dtype=self._hyper.int_type_np)
-        y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values,
-                           dtype=self._hyper.int_type_np)
+        y_s   = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,     dtype=self._hyper.int_type_np)
+        y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values, dtype=self._hyper.int_type_np)
+        seq_len = np.asarray(df_batch.seq_len.values,      dtype=self._hyper.int_type_np)
         ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
         return dlc.Properties({'im':a_batch,
                                'y_s':y_s,
-                               'seq_len': np.asarray(df_batch.seq_len.values, dtype=self._hyper.int_type_np),
+                               'seq_len': seq_len,
                                ## 'y_s':y_ctc,
                                ## 'seq_len': ctc_len,
                                'y_ctc':y_ctc,

@@ -42,11 +42,21 @@ class GlobalParams(dlc.HyperParams):
            issequenceof(int),
            (120,1075,3)
            ),
-        PD('Max_Seq_Len',
+        PD('MaxSeqLen',
            "Max sequence length including the end-of-sequence marker token. Is used to "
             "limit the number of decoding steps.",
            integer(151,200),
            151 #get_max_seq_len(data_folder)
+           ),
+        PD('MaxDecodeLen',
+           "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
+           "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
+           "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
+           "do so by determining the extra slack to give to the network - the more slack we give it "
+           "presumably that much easier the learning will be. This parameter includes that slack. In "
+           "other words, MaxDecodeLen = MaxSeqLen+<slack>",
+           integer(151),
+           LambdaVal(lambda _, p: int(p.MaxSeqLen*1.3))
            ),
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing.',
