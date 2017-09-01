@@ -646,7 +646,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## Aggregate metrics injected into the graph from outside
                 with tf.name_scope('AggregateMetrics'):
                     ph_top1_seq_lens = tf.placeholder(self.C.int_type)
-                    ph_edit_distance = tf.placeholder(self.C.int_type)
+                    ph_edit_distance = tf.placeholder(self.C.dtype)
                     ph_accuracy =  tf.placeholder(self.C.dtype)
                     ph_valid_time =  tf.placeholder(self.C.dtype)
 
