@@ -78,13 +78,21 @@ def main():
                         help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
                         default=4)
     parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
-                        help="Fraction of samples to use for validation. Defaults to 0.01",
+                        help="Fraction of samples to use for validation. Defaults to 0.05",
                         default=0.05)
     parser.add_argument("--validation-epochs", "-v", dest="valid_epochs", type=float,
-                        help="Number (and fraction) of epochs after which to run a full validation cycle. Defaults to 1.",
-                        default=1.)
+                        help="Number (or fraction) of epochs after which to run a full validation cycle. Defaults to 1.0",
+                        default=1.0)
     parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
                         help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to False.",
+                        default=False)
+    parser.add_argument("--build-image-context", "-i", dest="build_image_context", action='store_true',
+                        help="(Boolean): If set, trains the convolutional neural network along with the rest of the graph."
+                        "In this case images are input to the model. Will triple the number of parameters and require an"
+                        "will severly limit the batch-size owing to GPU memory limits - unless extra GPUs are used. "
+                        "If not set, then output VGGnet obtained by preprocessing images through VGGnet is directly used as input"
+                        " to the graph and no conv-net is. Default value is False - i.e. use the smaller graph."
+                        "present in the model at all. This is a much smaller graph requiring only about 8.44 million parameters.",
                         default=False)
 
     args = parser.parse_args()
@@ -116,12 +124,13 @@ def main():
                                     'print_steps': args.print_steps,
                                     'num_steps': args.num_steps,
                                     'num_epochs': args.num_epochs,
+                                    'image_dir': image_folder,
                                     'logger': logger,
                                     'beam_width':args.beam_width,
                                     'valid_frac': args.valid_frac,
                                     'valid_epochs': args.valid_epochs,
                                     'print_batch': args.print_batch,
-                                    'build_image_context':False,
+                                    'build_image_context':args.build_image_context,
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}),
                                     'MeanSumAlphaEquals1': False,

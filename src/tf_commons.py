@@ -46,12 +46,12 @@ class tensor(instanceof):
 def summarize_layer(layer_name, weights, biases, activations, state=None):
     def summarize_vars(var, section_name):
         """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-        mean = tf.reduce_mean(var)
-        tf.summary.scalar(section_name+'/mean', mean)
-        stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.summary.scalar(section_name+'/stddev', stddev)
-        tf.summary.scalar(section_name+'/max', tf.reduce_max(var))
-        tf.summary.scalar(section_name+'/min', tf.reduce_min(var))
+        # mean = tf.reduce_mean(var)
+        # tf.summary.scalar(section_name+'/mean', mean)
+        # stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        # tf.summary.scalar(section_name+'/stddev', stddev)
+        # tf.summary.scalar(section_name+'/max', tf.reduce_max(var))
+        # tf.summary.scalar(section_name+'/min', tf.reduce_min(var))
         tf.summary.histogram(section_name+'/histogram', var)
 
     with tf.variable_scope('Instrumentation'):
@@ -277,6 +277,8 @@ class FCLayer(object):
                         a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
 
                     # Tensorboard Summaries
+                    if params.tb is not None:
+                        summarize_layer(layer_name, None, None, a)
                     # if params.tb is not None:
                     #     summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
 
@@ -336,8 +338,8 @@ class Activation(object):
                 with tf.variable_scope(scope_name):
                     h = params.activation_fn(inp)
                     # Tensorboard Summaries
-                    # if params.tb is not None:
-                    #     summarize_layer(scope_name, None, None, h)
+                    if params.tb is not None:
+                        summarize_layer(scope_name, None, None, h)
 
                 return h
 
@@ -532,9 +534,10 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                 params = self._params
                 output, new_state = self._cell(inp, state)
                 # Tensorboard Summaries
-                # if params.tb is not None:
-                #     summarize_layer(self._params.op_name, tf.get_collection('weights'),
-                #                     tf.get_collection('biases'), output, new_state)
+                if params.tb is not None:
+                    summarize_layer(self._params.op_name, None, None, output, new_state)
+                    # summarize_layer(self._params.op_name, tf.get_collection('weights'),
+                    #                 tf.get_collection('biases'), output, new_state)
 
                 self.assertOutputShape(output)
                 self.assertStateShape(new_state)

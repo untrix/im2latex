@@ -38,6 +38,7 @@ BeamSearchDecoder = tf.contrib.seq2seq.BeamSearchDecoder
 
 def build_image_context(params, image_batch):
     ## Conv-net
+    ## params.logger.debug('image_batch shape = %s', K.int_shape(image_batch))
     assert K.int_shape(image_batch) == (params.B,) + params.image_shape
     ################ Build VGG Net ################
     with tf.variable_scope('VGGNet'):
@@ -92,12 +93,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Image features/context from the Conv-Net
                     ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
                     self._im = inp_tup.im
+                    ## Set tensor shape because it gets forgotten in the queue
+                    self._im.set_shape((self.C.B,)+self.C.image_shape)
                     self._a = build_image_context(params, self._im)
                 else:
                     ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
                     self._a = inp_tup.im
 
-            ## Set tensor shapes because they get forgotten by the queue
+            ## Set tensor shapes because they get forgotten in the queue
             self._a.set_shape((self.C.B, self.C.L, self.C.D))
             self._y_s.set_shape((self.C.B, None))
             self._seq_len.set_shape((self.C.B,))
@@ -450,7 +453,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## Using CTC loss will have the following side-effect:
                 ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
                 ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
-                ##     between tokens at inferencing step.
+                ##     between tokens when printing out the predicted markup.
                 with tf.variable_scope('CTC_Cost'):
                     ## sparse tensor
         #            y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((

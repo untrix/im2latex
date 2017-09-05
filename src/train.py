@@ -33,7 +33,7 @@ import tf_commons as tfc
 from Im2LatexModel import Im2LatexModel
 from keras import backend as K
 import hyper_params
-from data_reader import create_context_iterators
+from data_reader import create_context_iterators, create_imagenet_iterators
 import dl_commons as dlc
 import nltk
 from nltk.util import ngrams
@@ -88,10 +88,15 @@ def train(raw_data_folder,
     logger = hyper.logger
     graph = tf.Graph()
     with graph.as_default():
-        train_it, valid_it, tr_acc_it = create_context_iterators(raw_data_folder,
-                                              vgg16_folder,
-                                              hyper,
-                                              args)
+        if hyper.build_image_context:
+            train_it, valid_it, tr_acc_it = create_imagenet_iterators(raw_data_folder,
+                                                hyper,
+                                                args)            
+        else:
+            train_it, valid_it, tr_acc_it = create_context_iterators(raw_data_folder,
+                                                vgg16_folder,
+                                                hyper,
+                                                args)
 
         ##### Training Graph
         with tf.name_scope('Training'):
@@ -101,7 +106,8 @@ def train(raw_data_folder,
                 enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
             trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
-            assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
+            hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
+            ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
@@ -111,6 +117,7 @@ def train(raw_data_folder,
             with tf.variable_scope('InputQueue'):
                 enqueue_op2 = valid_ops.inp_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
+            hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
             assert(num_trainable_vars() == trainable_vars_n)
 
         ##### Training Accuracy Graph
