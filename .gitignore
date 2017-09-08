@@ -107,3 +107,4 @@ tb_metrics/
 *.out
 .vscode/
 *.py~
+*.tgz

@@ -109,8 +109,7 @@ class ImageProcessorRGB(object):
             im_ar = ar
         return im_ar
 
-    @staticmethod
-    def whiten(image_ar):
+    def whiten(self, image_ar):
         """
         normalize values to lie between -1.0 and 1.0.
         This is done in place of data whitening - i.e. normalizing to mean=0 and std-dev=0.5
@@ -127,8 +126,7 @@ class ImagenetProcessor3(ImageProcessorRGB):
     def __init__(self, params, image_dir_):
         ImageProcessorRGB.__init__(self, params, image_dir_)
 
-    @staticmethod
-    def whiten(image_ar):
+    def whiten(self, image_ar):
         """
         Run Imagenet preprocessing -
         1) flip RGB to BGR
@@ -173,7 +171,7 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
         ## This is not a requirement for this function to operate, rather
         ## is a way of possibly catching data-corrupting bugs
         if assert_whole_batch:
-            assert (bin_counts[i] % batch_size_) == 0
+            assert (bin_counts[i] % batch_size_) == 0, 'bin_counts[%d]=%d is not a whole multiple of batch_size=%d'%(i, bin_counts[i], batch_size_)
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
     ## Shuffle the bin-batch list
@@ -401,17 +399,19 @@ class BatchContextIterator(BatchImageIterator3):
                  name='BatchContextIterator'):
         BatchImageIterator3.__init__(self, df, raw_data_dir_, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
 
-def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=None, validation_size=None):
+def split_dataset(df_, batch_size_, logger, assert_whole_batch=True, validation_frac=None, validation_size=None):
     if validation_frac is None and validation_size is None:
         raise ValueError('Either validation_frac or validation_size must be specified.')
     elif validation_frac is not None and validation_size is not None:
         raise ValueError('Either validation_frac or validation_size must be specified, but not both.')
     elif validation_frac is not None:
-        assert validation_frac <1.0 and validation_frac >0
+        assert validation_frac <1.0 and validation_frac >=0
         validation_size = int(df_.shape[0] * validation_frac)
     num_val_batches = validation_size // batch_size_
     validation_size = num_val_batches * batch_size_
-    assert num_val_batches >= 1
+    assert num_val_batches >= 0
+    if num_val_batches == 0:
+        logger.warn('number of validation batches set to 0.')
 
     ## Shuffle the dataframe
     df_ = df_.sample(frac=1)
@@ -434,13 +434,16 @@ def split_dataset(df_, batch_size_, assert_whole_batch=True, validation_frac=Non
     ## Separate out the training and validation samples
     df_train = df_
     df_val = None
-    val_bin_counts = get_bin_counts(val_batches)
-    for bin_len, num_batches in val_bin_counts.iteritems():
-        df_val_bin = df_[df_.bin_len == bin_len].iloc[:num_batches*batch_size_]
-        df_val = df_val_bin if df_val is None else df_val.append(df_val_bin)
+    if (num_val_batches > 0):
+        val_bin_counts = get_bin_counts(val_batches)
+        for bin_len, num_batches in val_bin_counts.iteritems():
+            df_val_bin = df_[df_.bin_len == bin_len].iloc[:num_batches*batch_size_]
+            df_val = df_val_bin if df_val is None else df_val.append(df_val_bin)
 
-    df_train = df_train.drop(df_val.index)
-    assert df_train.shape[0] + df_val.shape[0] == df_.shape[0]
+        df_train = df_train.drop(df_val.index)
+        assert df_train.shape[0] + df_val.shape[0] == df_.shape[0]
+    else:
+        assert df_train.shape[0] == df_.shape[0]
 
     return df_train, df_val
 
@@ -470,20 +473,25 @@ def create_context_iterators(raw_data_dir_,
                                                 num_epochs=-1,
                                                 image_processor_=image_processor_,
                                                 name='TrainingAccuracyIterator')
-    batch_iterator_valid = BatchContextIterator(df_valid,
-                                                raw_data_dir_,
-                                                image_feature_dir_,
-                                                hyper,
-                                                num_steps=-1,
-                                                num_epochs=-1,
-                                                image_processor_=image_processor_,
-                                                name='ValidationIterator')
+    if df_valid is not None:
+        batch_iterator_valid = BatchContextIterator(df_valid,
+                                                    raw_data_dir_,
+                                                    image_feature_dir_,
+                                                    hyper,
+                                                    num_steps=-1,
+                                                    num_epochs=-1,
+                                                    image_processor_=image_processor_,
+                                                    name='ValidationIterator')
+    else:
+        batch_iterator_valid = None
+
     return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
 
 def create_imagenet_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
                                        hyper.B, 
+                                       hyper.logger,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     image_processor = ImagenetProcessor3(hyper, args.image_dir)
@@ -501,11 +509,15 @@ def create_imagenet_iterators(raw_data_dir_, hyper, args):
                                                 num_epochs=-1,
                                                 image_processor_=image_processor,
                                                 name='TrainingAccuracyIterator')
-    batch_iterator_valid = BatchImageIterator3(df_valid,
-                                                raw_data_dir_,
-                                                hyper,
-                                                num_steps=-1,
-                                                num_epochs=-1,
-                                                image_processor_=image_processor,
-                                                name='ValidationIterator')
+
+    if df_valid is not None:
+        batch_iterator_valid = BatchImageIterator3(df_valid,
+                                                    raw_data_dir_,
+                                                    hyper,
+                                                    num_steps=-1,
+                                                    num_epochs=-1,
+                                                    image_processor_=image_processor,
+                                                    name='ValidationIterator')
+    else:
+        batch_iterator_valid = None
     return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc

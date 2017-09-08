@@ -30,6 +30,7 @@ from keras import backend as K
 from keras.preprocessing import image
 from Im2LatexModel import build_image_context
 from data_reader import BatchImageIterator2, ImagenetProcessor
+import hyper_params
 from hyper_params import make_hyper
 import tf_commons as tfc
 import argparse as arg
@@ -50,11 +51,17 @@ def get_df(params):
     df.bin_len = df.bin_len.max()
     return df
 
-def run(params):
+def run_convnet(params):
     HYPER = make_hyper(params)
     image_folder = params.image_folder
     raw_data_folder = params.raw_data_folder
     image_features_folder = params.vgg16_folder
+
+    logger = HYPER.logger
+    logger.info('\n#################### Args: ####################\n%s', params.pformat())
+    logger.info('##################################################################\n')
+    logger.info( '\n#########################  HYPER Params: #########################\n%s', HYPER.pformat())
+    logger.info('##################################################################\n')
 
     b_it = BatchImageIterator2(
                         raw_data_folder,
@@ -68,15 +75,16 @@ def run(params):
     graph = tf.Graph()
     with graph.as_default():
 
-        ## config=tf.ConfigProto(log_device_placement=True)
-        ## config.gpu_options.allow_growth = True
-        tf_session = tf.Session(config=None)
+        config=tf.ConfigProto(log_device_placement=False)
+        config.gpu_options.allow_growth = True
+        tf_session = tf.Session(config=config)
         with tf_session.as_default():
             K.set_session(tf_session)
             
             tf_im = tf.placeholder(dtype=HYPER.dtype, shape=((HYPER.B,)+HYPER.image_shape), name='image')
-            tf_a_batch = build_image_context(HYPER, tf_im)
-            tf_a_list = tf.unstack(tf_a_batch, axis=0)
+            with tf.device('/gpu:0'):
+                tf_a_batch = build_image_context(HYPER, tf_im)
+                tf_a_list = tf.unstack(tf_a_batch, axis=0)
         
             t_n = tfc.printVars('Trainable Variables', tf.trainable_variables())
             g_n = tfc.printVars('Global Variables', tf.global_variables())
@@ -110,15 +118,15 @@ def run(params):
             print 'done'
               
 def main():
-    _data_folder = '../data/generated2'
+    _data_folder = '../data'
 
     parser = arg.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion",
                         default=-1)
     parser.add_argument("--num-epochs", "-e", dest="num_epochs", type=int,
-                        help="Number of training steps to run. Defaults to 10 if unspecified.",
-                        default=10)
+                        help="Number of training steps to run. Defaults to 1 if unspecified.",
+                        default=1)
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
@@ -129,42 +137,48 @@ def main():
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
     parser.add_argument("--raw-data-folder", dest="raw_data_folder", type=str,
-                        help="Raw data folder. If unspecified, defaults to data_folder/training",
+                        help="Raw data folder. If unspecified, defaults to data_folder/generated2/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features",
+                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features_2",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
-                        help="image folder. If unspecified, defaults to data_folder/formula_images",
+                        help="image folder. If unspecified, defaults to data_folder/formula_images_2",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
                         help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
+    parser.add_argument("--logging-level", "-l", dest="logging_level", type=int,
+                        help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
+                        default=4)
+
 
     args = parser.parse_args()
     data_folder = args.data_folder
     params = dlc.Properties({'num_steps': args.num_steps, 
                              'print_steps':args.print_steps,
-                             'num_epochs': args.num_epochs})
+                             'num_epochs': args.num_epochs,
+                             'image_shape': (120,1075,3),
+                             'logger': hyper_params.makeLogger(args.logging_level)})
     if args.image_folder:
         params.image_folder = args.image_folder
     else:
-        params.image_folder = os.path.join(data_folder,'formula_images')
+        params.image_folder = os.path.join(data_folder,'formula_images_2')
 
     if args.raw_data_folder:
         params.raw_data_folder = args.raw_data_folder
     else:
-        params.raw_data_folder = os.path.join(data_folder, 'training')
+        params.raw_data_folder = os.path.join(data_folder, 'generated2', 'training')
 
     if args.vgg16_folder:
         params.vgg16_folder = args.vgg16_folder
     else:
-        params.vgg16_folder = os.path.join(params.raw_data_folder, 'vgg16_features')
+        params.vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
     
     if args.batch_size is not None:
         params.B = args.batch_size
     if args.partial_batch:
         params.assert_whole_batch = False
-
-    run(params)
+    
+    run_convnet(params)
 
 main()

@@ -126,3 +126,4 @@ with tf.Session():
     assert _acc2_s.eval() == 1./2.
 
 
+print "Success !"

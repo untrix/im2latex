@@ -34,6 +34,21 @@ import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
 
+def setLogLevel(logger, level):
+    logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
+    logger.setLevel(logging_levels[level - 1])
+
+def makeFormatter():
+    return logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+def makeLogger(logging_level=3, name='default'):
+    logger = logging.Logger(name)
+    ch = logging.StreamHandler()
+    ch.setFormatter(makeFormatter())
+    logger.addHandler(ch)
+    setLogLevel(logger, logging_level)
+    return logger
+
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (

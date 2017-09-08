@@ -33,7 +33,7 @@ import argparse
 import os
 
 def main():
-    _data_folder = '../data/generated2'
+    _data_folder = '../data'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -46,8 +46,8 @@ def main():
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
     parser.add_argument("--beam-width", "-w", dest="beam_width", type=int,
-                        help="Beamwidth. If unspecified, defaults to 100",
-                        default=100)
+                        help="Beamwidth. If unspecified, defaults to 10",
+                        default=10)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 50 if unspecified",
                         default=50)
@@ -64,10 +64,10 @@ def main():
                         help="Raw data folder. If unspecified, defaults to data_folder/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features",
+                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features_2",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
-                        help="image folder. If unspecified, defaults to data_folder/formula_images",
+                        help="image folder. If unspecified, defaults to data_folder/formula_images_2",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
                         help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
@@ -100,25 +100,19 @@ def main():
     if args.image_folder:
         image_folder = args.image_folder
     else:
-        image_folder = os.path.join(data_folder,'formula_images')
+        image_folder = os.path.join(data_folder,'formula_images_2')
 
     if args.raw_data_folder:
         raw_data_folder = args.raw_data_folder
     else:
-        raw_data_folder = os.path.join(data_folder, 'training')
+        raw_data_folder = os.path.join(data_folder, 'generated2', 'training')
 
     if args.vgg16_folder:
         vgg16_folder = args.vgg16_folder
     else:
-        vgg16_folder = os.path.join(raw_data_folder, 'vgg16_features')
+        vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
-    ## Logger
-    logger = logging.getLogger()
-    logging_level = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
-    ch = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+    logger = hyper_params.makeLogger()
 
     globalParams = dlc.Properties({
                                     'print_steps': args.print_steps,
@@ -135,7 +129,7 @@ def main():
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}),
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.005
-                                    })    
+                                    })
     if args.batch_size is not None:
         globalParams.B = args.batch_size
     if args.partial_batch:
@@ -151,9 +145,9 @@ def main():
     # Add logging file handler now that we have instantiated hyperparams.
     globalParams.logdir = tfc.makeTBDir(hyper.tb)
     fh = logging.FileHandler(os.path.join(globalParams.logdir, 'training.log'))
-    fh.setFormatter(formatter)
+    fh.setFormatter(hyper_params.makeFormatter())
     logger.addHandler(fh)
-    logger.setLevel(logging_level[args.logging_level - 1])
+    hyper_params.setLogLevel(logger, args.logging_level)
 
     logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams.pformat())
     logger.info('##################################################################\n')
