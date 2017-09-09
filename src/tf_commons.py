@@ -287,6 +287,104 @@ class FCLayer(object):
 
                 return a
 
+class Conv2dLayerParams(HyperParams):
+    proto = (
+        PD('activation_fn',
+              'The activation function to use. None signifies no activation function.',
+              iscallable((tf.nn.relu, tf.nn.tanh, None)),
+              tf.nn.tanh),
+        PD('normalizer_fn',
+              'Normalizer function to use instead of biases. If set, biases are not used.',
+              (None,)
+              ),
+        PD('weights_initializer',
+              'Tensorflow weights initializer function',
+              iscallableOrNone(),
+              tf.contrib.layers.xavier_initializer_conv2d()
+              # tf.contrib.layers.variance_scaling_initializer()
+              ),
+        PD('biases_initializer',
+              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+              iscallable(),
+              tf.zeros_initializer()
+              ),
+        PD('output_channels',
+          "(integer): Depth of output layer = Number of features/channels in the output." ,
+          integer(1),
+          ),
+        PD('kernel_shape',
+           '(sequence): shape of kernel',
+           isSequenceOf(integer)
+           ),
+        PD('stride',
+           '(sequence): shape of stride',
+           isSequenceOf(integer)
+           ),
+        PD('padding',
+           'Convnet padding: SAME or VALID',
+           ('SAME', 'VALID', None)
+           ),
+        PD('tb', "Tensorboard Params.",
+           instanceofOrNone(TensorboardParams)
+           )
+        )
+
+    def __init__(self, initVals=None):
+        HyperParams.__init__(self, self.proto, initVals)
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+
+    def copy(self, override_vals=None):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
+
+class Conv2dLayer(object):
+    def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
+        self._params = FCLayerParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
+
+                params = self._params
+                prefix = 'Conv'
+                scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+                with tf.variable_scope(scope_name) as var_scope:
+                    layer_name = var_scope.name
+        #            coll_w = layer_name + '/' + params.tb.tb_weights
+        #            coll_b = layer_name + '/' + params.tb.tb_biases
+
+                    a = tf.contrib.layers.conv2d(inputs=a,
+                                                num_outputs=params.output_channels, 
+                                                kernel_size=params.kernel_shape, 
+                                                stride=params.stride,
+                                                padding=params.padding,
+                                                activation_fn=params.activation_fn,
+                                                normalizer_fn=params.normalizer_fn,
+                                                scope=scope,
+                                                trainable=True,
+                                                weights_initializer=params.weights_initializer_conv2d(),
+                                                biases_initializer=params.biases_initializer
+                                                )
+
+                    # Tensorboard Summaries
+                    # if params.tb is not None:
+                    #     summarize_layer(layer_name, None, None, a)
+                    # if params.tb is not None:
+                    #     summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
+
+                # if (self._batch_input_shape):
+                #     a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+
+                return a
+
 class DropoutLayer(object):
     def __init__(self, params, batch_input_shape=None):
         self.my_scope = tf.get_variable_scope()
@@ -563,6 +661,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                                                       dtype=params.dtype
                                                       )
                 return cell
+
 
 def makeTBDir(params):
     dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')
