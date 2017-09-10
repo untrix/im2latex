@@ -33,6 +33,7 @@ import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
+from tf_commons import (ConvStackParams, ConvParams, ConvLayerParams, MaxpoolParams)
 
 def setLogLevel(logger, level):
     logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
@@ -62,21 +63,6 @@ class GlobalParams(dlc.HyperParams):
             "limit the number of decoding steps.",
            integer(151,200),
            151 #get_max_seq_len(data_folder)
-           ),
-        PD('DecodingSlack',
-           "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
-           "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
-           "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
-           "do so by determining the extra slack to give to the network - the more slack we give it "
-           "presumably that much easier the learning will be. This parameter includes that slack. In "
-           "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
-           integer(0),
-           20
-           ),
-        PD('MaxDecodeLen',
-           "See the description for MaxSeqLen and DecodingSlack",
-           integer(151),
-           LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
            ),
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing.',
@@ -189,7 +175,7 @@ class GlobalParams(dlc.HyperParams):
         #### Training Parameters ####
         PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
            boolean,
-           False
+           True
            ),
         PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
            'of the bin-size',
@@ -200,7 +186,22 @@ class GlobalParams(dlc.HyperParams):
            5),
         PD('logger', 'Python logger object for logging.',
             instanceof(logging.Logger)
-            )
+            ),
+        PD('DecodingSlack',
+           "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
+           "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
+           "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
+           "do so by determining the extra slack to give to the network - the more slack we give it "
+           "presumably that much easier the learning will be. This parameter includes that slack. In "
+           "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
+           integer(0),
+           20
+           ),
+        PD('MaxDecodeLen',
+           "See the description for MaxSeqLen and DecodingSlack",
+           integer(151),
+           LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
+           ),
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
@@ -284,9 +285,12 @@ class Im2LatexModelParams(dlc.HyperParams):
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(),
                tf.contrib.layers.xavier_initializer()),
-        ### Decoder LSTM Params ###
-            PD('D_RNN',
-               'sequence of CALSTMParams, one for each AttentionLSTM layer in the stack. The paper '
+        ### ConvNet Params ###
+            PD('CONVNET', 'ConvStackParams for the convent',
+                instanceof(ConvStackParams)),
+        ### Decoder CALSTM Params ###
+            PD('CALSTM_STACK',
+               'sequence of CALSTMParams, one for each CALSTM layer in the stack. The paper '
                "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
                "that the published results are based on one layer alone.",
                issequenceof(CALSTMParams)),
@@ -372,9 +376,48 @@ class Im2LatexModelParams(dlc.HyperParams):
 def make_hyper(initVals={}):
     globals = GlobalParams(initVals)
     initVals = dlc.Properties(initVals)
+
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
-    HYPER = Im2LatexModelParams(initVals).updated({'D_RNN':(CALSTM_1,)}).freeze()
+
+    VGG_D = ConvStackParams({
+        'op_name': 'Convnet',
+        'tb': globals.tb,
+        'activation_fn': tf.nn.relu,
+        'weights_initializer': tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32),
+        'padding': 'SAME',
+        'layers': (
+            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+
+            ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+
+            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+        )
+    })
+
+    
+    HYPER = Im2LatexModelParams(initVals).updated({
+        'CALSTM_STACK':(CALSTM_1,),
+        'CONVNET': VGG_D
+        }).freeze()
+
 
 #    print 'Hyper Params = '
 #    print HYPER

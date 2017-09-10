@@ -91,9 +91,9 @@ def main():
                         "In this case images are input to the model. Will triple the number of parameters and require an"
                         "will severly limit the batch-size owing to GPU memory limits - unless extra GPUs are used. "
                         "If not set, then output VGGnet obtained by preprocessing images through VGGnet is directly used as input"
-                        " to the graph and no conv-net is. Default value is False - i.e. use the smaller graph."
+                        " to the graph and no conv-net is. Default value is True."
                         "present in the model at all. This is a much smaller graph requiring only about 8.44 million parameters.",
-                        default=False)
+                        default=True)
 
     args = parser.parse_args()
     data_folder = args.data_folder

@@ -93,9 +93,9 @@ class Properties(dict):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self):
+    def copy(self, other={}):
         ## Shallow copy
-        return self.__class__(self)
+        return self.__class__(self).updated(other)
 
     def updated(self, other):
         """ chain-update
@@ -197,6 +197,19 @@ class ParamDesc(Properties):
 
         Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
         self.freeze()
+
+    def defaultIsSet():
+        """
+        Returns True if a default value has been set else returns False.
+        Note that if the default value was None and if None was a valid value (per the validator if set)
+        then this method will return True.
+        """
+        if self.default is not None:
+            return True
+        elif self.validator is None:
+            return True
+        else:
+            return None in self.validator
 
 ## A shorter alias of ParamDesc
 PD = ParamDesc
@@ -325,13 +338,6 @@ class Params(Properties):
 
         object.__setattr__(self, '_descr_dict', props.freeze())
 
-        # Derivatives: Run the derived param callables
-        # First copy _vals so that we may safely pass the dictionary of values to
-        # the callables
-#        _vals_copy = copy.copy(_vals)
-#        for name in derivatives:
-#            _vals[name] = _vals_copy[name] = _vals[name](name, _vals_copy)
-
         # Validation: Now insert the property values one by one. Doing so will invoke
         # self._set_val_ which will validate their values against self._descr_dict.
         for prop in descriptors:
@@ -428,6 +434,12 @@ class Params(Properties):
 
         return self
 
+    def fill(self, other={}):
+        """Sets unset properties of self with values in other if present"""
+        for prop in self.protoS:
+            if not prop.name in self and prop.name in other:
+                self[prop.name] = other[prop.name]
+
     @property
     def protoS(self):
         # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
@@ -444,7 +456,7 @@ class Params(Properties):
 class HyperParams(Params):
     """
     Params class specialized for HyperParams. Adds the following semantic:
-        If a key has value None, then it is deemed absent from the dictionary. Calls
+        If a key has value None, then it is deemed absent from the dictionary. CallshasDefault
         to __contains__ and _get_val_ will beget a KeyError - as if the property was
         absent from the dictionary. This is necessary to catch cases wherein one
         has forgotten to set a mandatory property. Mandatory properties must not have

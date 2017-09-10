@@ -36,7 +36,7 @@ from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
 BeamSearchDecoder = tf.contrib.seq2seq.BeamSearchDecoder
 
-def build_image_context(params, image_batch):
+def build_vgg_context(params, image_batch):
     ## Conv-net
     ## params.logger.debug('image_batch shape = %s', K.int_shape(image_batch))
     assert K.int_shape(image_batch) == (params.B,) + params.image_shape
@@ -54,6 +54,22 @@ def build_image_context(params, image_batch):
         ## a = convnet(image_batch)
         a = convnet.output
         assert K.int_shape(a)[1:] == (params.H, params.W, params.D)
+
+        ## Combine HxW into a single dimension L
+        a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
+        assert K.int_shape(a) == (params.B, params.L, params.D)
+
+    return a
+
+def build_convnet(params, image_batch, reuse_vars=True):
+    ## Conv-net
+    ## params.logger.debug('image_batch shape = %s', K.int_shape(image_batch))
+    assert K.int_shape(image_batch) == (params.B,) + params.image_shape
+    ################ Build Conv Net ################
+    with tf.variable_scope('Convnet', reuse=reuse_vars):
+        convnet = tfc.ConvStack(params.CONVNET, (params.B,)+params.image_shape)
+        a = convnet(image_batch)
+        assert K.int_shape(a)[1:] == (params.H, params.W, params.D), 'Expected shape %s, got %s'%((params.H, params.W, params.D), K.int_shape(a)[1:])
 
         ## Combine HxW into a single dimension L
         a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
@@ -95,7 +111,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     self._im = inp_tup.im
                     ## Set tensor shape because it gets forgotten in the queue
                     self._im.set_shape((self.C.B,)+self.C.image_shape)
-                    self._a = build_image_context(params, self._im)
+                    self._a = build_convnet(params, self._im, reuse)
                 else:
                     ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
                     self._a = inp_tup.im
@@ -123,11 +139,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                     name='begin_sequence')
 
                 self._calstms = []
-                for i, rnn_params in enumerate(self.C.D_RNN, start=1):
+                for i, rnn_params in enumerate(self.C.CALSTM_STACK, start=1):
                     with tf.variable_scope('CALSTM_%d'%i) as var_scope:
                         self._calstms.append(CALSTM(rnn_params, self._a, beamsearch_width, var_scope))
                 self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(self._calstms)
-                self._num_calstm_layers = len(self.C.D_RNN)
+                self._num_calstm_layers = len(self.C.CALSTM_STACK)
 
                 with tf.variable_scope('Embedding') as embedding_scope:
                     self._embedding_scope = embedding_scope

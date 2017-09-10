@@ -194,9 +194,47 @@ class MLPParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
+
+# class Layer(object):
+#     """
+#         Abstract base class containing common code for Layers.
+#         Concrete classes must implement the method call(inp, layer_idx)
+#     """
+#     def __init__(self, params, params_cls, batch_input_shape=None):
+#         self.my_scope = tf.get_variable_scope()
+#         self._params = params_cls(params)
+#         self._batch_input_shape = batch_input_shape
+
+#     def __call__(self, inp, layer_idx=None):
+#         with tf.variable_scope(self.my_scope) as var_scope:
+#             with tf.name_scope(var_scope.original_name_scope):
+#                 ## Parameter Validation
+#                 assert isinstance(inp, tf.Tensor)
+#                 if self._batch_input_shape is not None:
+#                     assert K.int_shape(inp) == self._batch_input_shape
+
+#                 params = self._params
+#                 scope_name = self.__class__.__name__ + '_%d'%(layer_idx+1) if layer_idx is not None else self.__class__.__name__
+#                 with tf.variable_scope(scope_name) as var_scope:
+#                     layer_name = var_scope.name
+#         #            coll_w = layer_name + '/' + params.tb.tb_weights
+#         #            coll_b = layer_name + '/' + params.tb.tb_biases
+
+#                     a = self.call(inp, layer_idx)
+
+#                     # Tensorboard Summaries
+#                     # if params.tb is not None:
+#                     #     summarize_layer(layer_name, None, None, a)
+#                     # if params.tb is not None:
+#                     #     summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
+
+#                 # if (self._batch_input_shape):
+#                 #     a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+
+#                 return a
 
 class MLPStack(object):
     def __init__(self, params, batch_input_shape=None):
@@ -287,62 +325,119 @@ class FCLayer(object):
 
                 return a
 
-class Conv2dLayerParams(HyperParams):
+class ConvParams(HyperParams):
     proto = (
-        PD('activation_fn',
-              'The activation function to use. None signifies no activation function.',
-              iscallable((tf.nn.relu, tf.nn.tanh, None)),
-              tf.nn.tanh),
-        PD('normalizer_fn',
-              'Normalizer function to use instead of biases. If set, biases are not used.',
-              (None,)
-              ),
-        PD('weights_initializer',
-              'Tensorflow weights initializer function',
-              iscallableOrNone(),
-              tf.contrib.layers.xavier_initializer_conv2d()
-              # tf.contrib.layers.variance_scaling_initializer()
-              ),
-        PD('biases_initializer',
-              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
-              iscallable(),
-              tf.zeros_initializer()
-              ),
-        PD('output_channels',
-          "(integer): Depth of output layer = Number of features/channels in the output." ,
-          integer(1),
-          ),
-        PD('kernel_shape',
-           '(sequence): shape of kernel',
-           isSequenceOf(integer)
-           ),
-        PD('stride',
-           '(sequence): shape of stride',
-           isSequenceOf(integer)
-           ),
-        PD('padding',
-           'Convnet padding: SAME or VALID',
-           ('SAME', 'VALID', None)
-           ),
         PD('tb', "Tensorboard Params.",
-           instanceofOrNone(TensorboardParams)
-           )
+            instanceofOrNone(TensorboardParams)
+        ),
+        PD('activation_fn',
+            'The activation function to use. None signifies no activation function.',
+            iscallable((tf.nn.relu, tf.nn.tanh)),
+            ),
+        PD('normalizer_fn',
+            'Normalizer function to use instead of biases. If set, biases are not used.',
+            iscallableOrNone()
+        ),
+        PD('weights_initializer',
+            'Tensorflow weights initializer function',
+            iscallable(),
+            ## tf.contrib.layers.xavier_initializer()
+        ),
+        PD('biases_initializer',
+            'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+            iscallable(),
+            tf.zeros_initializer()
+        ),
+        PD('padding',
+            'Convnet padding: SAME or VALID',
+            ('SAME', 'VALID')
+        ),
+        PD('output_channels',
+            "(integer): Depth of output layer = Number of features/channels in the output." ,
+            integer(1),
+            ),
+        PD('kernel_shape',
+            '(sequence): shape of kernel',
+            issequenceof(int)
+            ),
+        PD('stride',
+            '(sequence): shape of stride',
+            issequenceof(int)
+            ),
+    )
+    def __init__(self, initVals=None):
+        HyperParams.__init__(self, self.proto, initVals)
+
+ConvParamsProto = ConvParams().protoD
+
+class ConvStackParams(HyperParams):
+    proto = ConvParams.proto + (
+        PD('op_name',
+            'Name of the stack; will show up in tensorboard visualization',
+            None,
+            'ConvStack'
+        ),
+        PD('layers',
+            '(sequence of *Params): Sequence of layer params. Each value should be either of type ConvLayerParams '
+            'or MaxpoolParams. ',
+            instanceof(tuple)
+        ),
+    )
+    def __init__(self, initVals=None):
+        HyperParams.__init__(self, self.proto, initVals)
+        ## Unset properties in self.layers should be filled with defaults from self
+        for layer in self.layers:
+            layer.fill(self)
+
+    # def get_layer_params(self, i):
+    #     return ConvLayerParams(self).updated({'num_units': self.layers_units[i]})
+
+class ConvStack(object):
+    def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
+        self._params = ConvStackParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp):
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
+
+                params = self._params
+
+                a = inp
+                with tf.variable_scope(params.op_name):
+                    for i, layerParams in enumerate(params.layers):
+                        if isinstance(layerParams, ConvLayerParams):
+                            a = ConvLayer(layerParams)(a, i)
+                        elif isinstance(layerParams, MaxpoolParams):
+                            a = MaxpoolLayer(layerParams)(a, i)
+                        else:
+                            raise AttributeError('Unsupported params class (%s) found in ConvStackParams.layers'%layerParams.__class__.__name__)
+                return a
+
+class ConvLayerParams(HyperParams):
+    proto = (
+        ConvParamsProto.output_channels,
+        ConvParamsProto.kernel_shape,
+        ConvParamsProto.stride,
+        ConvParamsProto.padding,
+        ConvParamsProto.activation_fn,
+        ConvParamsProto.normalizer_fn,
+        ConvParamsProto.weights_initializer,
+        ConvParamsProto.biases_initializer,
+        ConvParamsProto.tb,
         )
 
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-    def __copy__(self):
-        ## Shallow copy
-        return self.__class__(self)
 
-    def copy(self, override_vals=None):
-        ## Shallow copy
-        return self.__class__(self).updated(override_vals)
-
-class Conv2dLayer(object):
+class ConvLayer(object):
     def __init__(self, params, batch_input_shape=None):
         self.my_scope = tf.get_variable_scope()
-        self._params = FCLayerParams(params)
+        self._params = ConvLayerParams(params)
         self._batch_input_shape = batch_input_shape
 
     def __call__(self, inp, layer_idx=None):
@@ -354,24 +449,23 @@ class Conv2dLayer(object):
                     assert K.int_shape(inp) == self._batch_input_shape
 
                 params = self._params
-                prefix = 'Conv'
-                scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+                scope_name = 'Conv' + '_%d'%(layer_idx+1) if layer_idx is not None else 'Conv'
                 with tf.variable_scope(scope_name) as var_scope:
                     layer_name = var_scope.name
         #            coll_w = layer_name + '/' + params.tb.tb_weights
         #            coll_b = layer_name + '/' + params.tb.tb_biases
 
-                    a = tf.contrib.layers.conv2d(inputs=a,
+                    a = tf.contrib.layers.conv2d(inputs=inp,
                                                 num_outputs=params.output_channels, 
                                                 kernel_size=params.kernel_shape, 
                                                 stride=params.stride,
                                                 padding=params.padding,
                                                 activation_fn=params.activation_fn,
                                                 normalizer_fn=params.normalizer_fn,
-                                                scope=scope,
                                                 trainable=True,
-                                                weights_initializer=params.weights_initializer_conv2d(),
-                                                biases_initializer=params.biases_initializer
+                                                weights_initializer=params.weights_initializer,
+                                                biases_initializer=params.biases_initializer,
+                                                data_format='NHWC'
                                                 )
 
                     # Tensorboard Summaries
@@ -384,6 +478,57 @@ class Conv2dLayer(object):
                 #     a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
 
                 return a
+
+class MaxpoolParams(HyperParams):
+    proto = (
+        ConvParamsProto.kernel_shape,
+        ConvParamsProto.stride,
+        ConvParamsProto.padding,
+        ConvParamsProto.tb
+        )
+
+    def __init__(self, initVals=None):
+        HyperParams.__init__(self, self.proto, initVals)
+
+class MaxpoolLayer(object):
+    def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
+        self._params = MaxpoolParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
+
+                params = self._params
+                scope_name = 'MaxPool' + '_%d'%(layer_idx+1) if layer_idx is not None else 'MaxPool'
+                with tf.variable_scope(scope_name) as var_scope:
+                    layer_name = var_scope.name
+        #            coll_w = layer_name + '/' + params.tb.tb_weights
+        #            coll_b = layer_name + '/' + params.tb.tb_biases
+
+                    a = tf.contrib.layers.max_pool2d(inputs=inp,
+                                             kernel_size=params.kernel_shape, 
+                                             stride=params.stride,
+                                             padding=params.padding,
+                                             data_format='NHWC')
+
+                    # Tensorboard Summaries
+                    # if params.tb is not None:
+                    #     summarize_layer(layer_name, None, None, a)
+                    # if params.tb is not None:
+                    #     summarize_layer(layer_name, tf.get_collection('weights'), tf.get_collection('biases'), a)
+
+                # if (self._batch_input_shape):
+                #     a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+
+                return a
+
+
 
 class DropoutLayer(object):
     def __init__(self, params, batch_input_shape=None):
