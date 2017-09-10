@@ -105,13 +105,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 self._y_ctc = inp_tup.y_ctc
                 self._ctc_len = inp_tup.ctc_len
 
-                if self._params.build_image_context:
+                if self._params.build_image_context != 0:
                     ## Image features/context from the Conv-Net
                     ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
                     self._im = inp_tup.im
                     ## Set tensor shape because it gets forgotten in the queue
                     self._im.set_shape((self.C.B,)+self.C.image_shape)
-                    self._a = build_convnet(params, self._im, reuse)
+                    if self._params.build_image_context == 2:
+                        self._a = build_convnet(params, self._im, reuse)
+                    elif self._params.build_image_context == 1:
+                        self._a = build_image_context(params, self._im)
+                    else:
+                        raise AttributeError('build_image_context should be in the range [0,2]. Instead, it is %s'%self._params.build_image_context)
                 else:
                     ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
                     self._a = inp_tup.im
