@@ -33,7 +33,7 @@ import tf_commons as tfc
 from Im2LatexModel import Im2LatexModel
 from keras import backend as K
 import hyper_params
-from data_reader import create_context_iterators, create_imagenet_iterators
+from data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
 import dl_commons as dlc
 import nltk
 from nltk.util import ngrams
@@ -48,6 +48,7 @@ def num_trainable_vars():
 def printVars(logger):
     total_n = 0
     total_vggnet = 0
+    total_convnet = 0
     total_init = 0
     total_calstm = 0
     total_output = 0
@@ -59,6 +60,8 @@ def printVars(logger):
         total_n += n
         if 'VGGNet/' in var.name :
             total_vggnet += n
+        elif 'Convnet/' in var.name:
+            total_convnet += n
         elif 'CALSTM' in var.name:
             total_calstm += n
         elif 'Im2LatexRNN/Output_Layer/' in var.name:
@@ -72,7 +75,8 @@ def printVars(logger):
         logger.info('%s %s num_params = %d'%(var.name, K.int_shape(var),n) )
 
     logger.info( 'Total number of trainable params = %d'%total_n)
-    logger.info( 'Convnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n))
+    logger.info( 'Vggnet: %d (%d%%)'%(total_vggnet, total_vggnet*100./total_n))
+    logger.info( 'Convnet: %d (%d%%)'%(total_convnet, total_vggnet*100./total_n))
     logger.info( 'Initializer: %d (%d%%)'%(total_init, total_init*100./total_n))
     logger.info( 'CALSTM: %d (%d%%)'%(total_calstm, total_calstm*100./total_n))
     logger.info( 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n))
@@ -88,10 +92,14 @@ def train(raw_data_folder,
     logger = hyper.logger
     graph = tf.Graph()
     with graph.as_default():
-        if hyper.build_image_context:
+        if hyper.build_image_context == 1:
             train_it, valid_it, tr_acc_it = create_imagenet_iterators(raw_data_folder,
                                                 hyper,
-                                                args)            
+                                                args)
+        elif hyper.build_image_context == 2:
+            train_it, valid_it, tr_acc_it = create_BW_image_iterators(raw_data_folder,
+                                                hyper,
+                                                args)
         else:
             train_it, valid_it, tr_acc_it = create_context_iterators(raw_data_folder,
                                                 vgg16_folder,
@@ -100,6 +108,7 @@ def train(raw_data_folder,
 
         ##### Training Graph
         with tf.name_scope('Training'):
+            # with tf.device('/gpu:0'):
             model = Im2LatexModel(hyper, reuse=False)
             train_ops = model.build_training_graph()
             with tf.variable_scope('InputQueue'):
@@ -108,10 +117,12 @@ def train(raw_data_folder,
             trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
             hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
             ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
+            ## assert trainable_vars_n == 23261206 if hyper.build_image_context
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
+            # with tf.device('/gpu:0'):
             model_predict = Im2LatexModel(hyper_predict, args.beam_width, reuse=True)
             valid_ops = model_predict.test()
             with tf.variable_scope('InputQueue'):
@@ -123,6 +134,7 @@ def train(raw_data_folder,
         ##### Training Accuracy Graph
         with tf.name_scope('TrainingAccuracy'):
             hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
+            # with tf.device('/gpu:0'):
             model_predict2 = Im2LatexModel(hyper_predict, args.beam_width, reuse=True)
             tr_acc_ops = model_predict2.test()
             with tf.variable_scope('InputQueue'):

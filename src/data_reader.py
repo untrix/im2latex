@@ -87,21 +87,26 @@ class ImagenetProcessor(ImageProcessor):
         """
         return preprocess_input(image_ar, data_format='channels_last')
 
-class ImageProcessorRGB(object):
-    def __init__(self, params, image_dir_):
+class ImageProcessor3(object):
+    def __init__(self, params, image_dir_, grayscale=True):
         self._params=params
         self._image_dir = image_dir_
+        self._mode = 'L' if grayscale else 'RGB'
+        self._channels = 1 if grayscale else 3
 
     def get_array(self, image_name_, height_, width_, padded_dim_):
         image_file = os.path.join(self._image_dir, image_name_)
         padded_height = padded_dim_['height']
         padded_width = padded_dim_['width']
-        ## Load image and convert to a 3-channel array
-        im_ar = ndimage.imread(os.path.join(image_file), mode='RGB')
+        ## Load image and convert to a n-channel array
+        im_ar = ndimage.imread(os.path.join(image_file), mode= self._mode)
+        if len(im_ar.shape) == 2:
+            im_ar = np.expand_dims(im_ar, 2)
+
         height, width, channels = im_ar.shape
-        assert height == height_
-        assert width == width_
-        assert channels == 3
+        assert height == height_, 'image height = %d instead of %d'%(height_, height)
+        assert width == width_, 'image width = %d instead of %d'%(width_, width)
+        assert channels == self._channels, 'image channels = %d instead of %d'%(self._channels, channels)
         if (height < padded_height) or (width < padded_width):
             ar = np.full((padded_height, padded_width, channels), 255.0, dtype=self._params.dtype_np)
             h = (padded_height - height)//2
@@ -119,12 +124,21 @@ class ImageProcessorRGB(object):
         Arguments:
             image_batch: (ndarray) Batch of images or a single image. Shape doesn't matter.
         """
-        assert image_ar.shape == (self._params.B,) + self._params.image_shape
+        assert image_ar.shape == (self._params.B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.B,) + self._params.image_shape)
         return (image_ar - 127.5) / 255.0
-
-class ImagenetProcessor3(ImageProcessorRGB):
+3
+class ImageProcessor3_RGB(ImageProcessor3):
     def __init__(self, params, image_dir_):
-        ImageProcessorRGB.__init__(self, params, image_dir_)
+        ImageProcessor3.__init__(self, params, image_dir_, grayscale=False)
+
+class ImageProcessor3_BW(ImageProcessor3):
+    def __init__(self, params, image_dir_):
+        ImageProcessor3.__init__(self, params, image_dir_, grayscale=True)
+
+
+class ImagenetProcessor3(ImageProcessor3_RGB):
+    def __init__(self, params, image_dir_):
+        ImageProcessor3_RGB.__init__(self, params, image_dir_)
 
     def whiten(self, image_ar):
         """
@@ -136,7 +150,7 @@ class ImagenetProcessor3(ImageProcessorRGB):
             image_batch: (ndarray) Batch of images of shape (B, H, W, D) - i.e. 'channels-last' format.
             Also, must have 3 channels in order 'RGB' (i.e. mode='RGB')
         """
-        assert image_ar.shape == (self._params.B,) + self._params.image_shape
+        assert image_ar.shape == (self._params.B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.B,) + self._params.image_shape)
         return preprocess_input(image_ar, data_format='channels_last')
 
 class VGGProcessor(object):
@@ -343,7 +357,8 @@ class BatchImageIterator3(ShuffleIterator):
         self._raw_data_dir = raw_data_dir_
         assert image_processor_ is not None
         self._image_processor = image_processor_
-        self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
+        image_shape = hyper.image_shape
+        self._padded_im_dim = {'height': image_shape[0], 'width': image_shape[1]}
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
         self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_sq_train.pkl'))
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs, name)
@@ -356,17 +371,21 @@ class BatchImageIterator3(ShuffleIterator):
         # ]
         # a_batch = np.asarray(a_batch)
         df_batch = nxt.df_batch[['image', 'height', 'width', 'bin_len', 'seq_len', 'squashed_len']]
+        self._hyper.logger.debug('%s.next() going to get image arrays'%self._name)
         im_batch = [
             self._image_processor.get_array(row[0], row[1], row[2], self._padded_im_dim)
             for row in df_batch.itertuples(index=False)
         ]
+        self._hyper.logger.debug('%s.next() obtained image arrays'%self._name)
         im_batch = self._image_processor.whiten(np.asarray(im_batch))
+        self._hyper.logger.debug('%s.next() whitened image arrays'%self._name)
 
         bin_len = df_batch.bin_len.iloc[0]
         y_s   = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,     dtype=self._hyper.int_type_np)
         y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values, dtype=self._hyper.int_type_np)
         seq_len = np.asarray(df_batch.seq_len.values,      dtype=self._hyper.int_type_np)
         ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
+        self._hyper.logger.debug('%s.next() obtained all batch_data. returning ...'%self._name)
         return dlc.Properties({'im':im_batch,
                                'y_s':y_s,
                                'seq_len': seq_len,
@@ -495,6 +514,41 @@ def create_imagenet_iterators(raw_data_dir_, hyper, args):
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     image_processor = ImagenetProcessor3(hyper, args.image_dir)
+    batch_iterator_train = BatchImageIterator3(df_train,
+                                                raw_data_dir_,
+                                                hyper,
+                                                args.num_steps,
+                                                args.num_epochs,
+                                                image_processor,
+                                                'TrainingIterator')
+    batch_iterator_tr_acc = BatchImageIterator3(df_train,
+                                                raw_data_dir_,
+                                                hyper,
+                                                num_steps=-1,
+                                                num_epochs=-1,
+                                                image_processor_=image_processor,
+                                                name='TrainingAccuracyIterator')
+
+    if df_valid is not None:
+        batch_iterator_valid = BatchImageIterator3(df_valid,
+                                                    raw_data_dir_,
+                                                    hyper,
+                                                    num_steps=-1,
+                                                    num_epochs=-1,
+                                                    image_processor_=image_processor,
+                                                    name='ValidationIterator')
+    else:
+        batch_iterator_valid = None
+    return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
+
+def create_BW_image_iterators(raw_data_dir_, hyper, args):
+    df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    df_train, df_valid = split_dataset(df, 
+                                       hyper.B, 
+                                       hyper.logger,
+                                       hyper.assert_whole_batch,
+                                       validation_frac=args.valid_frac)
+    image_processor = ImageProcessor3_BW(hyper, args.image_dir)
     batch_iterator_train = BatchImageIterator3(df_train,
                                                 raw_data_dir_,
                                                 hyper,

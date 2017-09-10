@@ -87,13 +87,8 @@ def main():
                         help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to False.",
                         default=False)
     parser.add_argument("--build-image-context", "-i", dest="build_image_context", action='store_true',
-                        help="(Boolean): If set, trains the convolutional neural network along with the rest of the graph."
-                        "In this case images are input to the model. Will triple the number of parameters and require an"
-                        "will severly limit the batch-size owing to GPU memory limits - unless extra GPUs are used. "
-                        "If not set, then output VGGnet obtained by preprocessing images through VGGnet is directly used as input"
-                        " to the graph and no conv-net is. Default value is True."
-                        "present in the model at all. This is a much smaller graph requiring only about 8.44 million parameters.",
-                        default=True)
+                        help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
+                        default=2)
 
     args = parser.parse_args()
     data_folder = args.data_folder

@@ -28,6 +28,7 @@ Tested on python 2.7
 
 import logging
 import numpy as np
+import os
 import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
@@ -50,13 +51,38 @@ def makeLogger(logging_level=3, name='default'):
     setLogLevel(logger, logging_level)
     return logger
 
+def pad_image_shape(shape, padding):
+    return (shape[0] + 2*padding, shape[1] + 2*padding) + shape[2:]
+
+def get_image_shape(raw_data_dir_, num_channels, valid_padding):
+    standardized_size = np.load(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
+    return pad_image_shape( (standardized_size['height'], standardized_size['width'], num_channels), valid_padding )
+
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
-        PD('image_shape',
-           'Shape of input images. Should be a python sequence.',
+        PD('image_shape_unframed',
+           'Shape of input images. Should be a python sequence.'
+           'This is superceded by image_shape which includes an extra padding frame around it',
            issequenceof(int),
-           (120,1075,3)
+           (120,1075,1) ## = get_image_shape(raw_data_dir, num_channels, 0)
+           ),
+        PD('image_frame_width',
+            'Width of an extra padding frame around the (possibly already padded) image. This extra padding is used '
+            'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
+            'in the first conv-net layer without losing any information. The effect of doing this is to simulate SAME padding '
+            'but using custom padding values (background color in this case) instead of zeroes (which is what SAME padding would do). '
+            'This value should be equal to (kernel_size-1)/2 using kernel_size of the first convolution layer.'
+            ,
+            integer(),
+            ## Dynamically set =  (kernel_size-1)/2 given kernel_size of first conv-net layer
+            ),
+        PD('image_shape',
+           'Shape of input images. Should be a python sequence.'
+           '= image_shape_unpadded + image_frame_width around it',
+           issequenceof(int),
+           LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
+           ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
            ),
         PD('MaxSeqLen',
            "Max sequence length including the end-of-sequence marker token. Is used to "
@@ -104,9 +130,9 @@ class GlobalParams(dlc.HyperParams):
            64
            ),
         PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None,
-           3),
+           8),
         PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None,
-           33),
+           68),
         PD('L',
            '(integer): number of pixels in an image feature-map = HxW (see paper or model description)',
            integer(1),
@@ -174,8 +200,7 @@ class GlobalParams(dlc.HyperParams):
             True),
         #### Training Parameters ####
         PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
-           boolean,
-           True
+           (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
            ),
         PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
            'of the bin-size',
@@ -374,8 +399,9 @@ class Im2LatexModelParams(dlc.HyperParams):
         return self.__class__(self).updated(override_vals)
 
 def make_hyper(initVals={}):
-    globals = GlobalParams(initVals)
     initVals = dlc.Properties(initVals)
+    initVals.image_frame_width = 1
+    globals = GlobalParams(initVals)
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
@@ -387,7 +413,7 @@ def make_hyper(initVals={}):
         'weights_initializer': tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32),
         'padding': 'SAME',
         'layers': (
-            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
+            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
             ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
             MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
 
@@ -412,7 +438,6 @@ def make_hyper(initVals={}):
         )
     })
 
-    
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),
         'CONVNET': VGG_D
