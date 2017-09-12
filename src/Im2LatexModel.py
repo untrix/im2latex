@@ -672,9 +672,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     with tf.name_scope('top_1'):'y_ctc': self._y_ctc, # (B, T)
                         top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
-                        top1_accuracy = tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0))) # scalar
+                        top1_hits = tf.to_float(tf.equal(top1_ed, 0))
+                        top1_accuracy = tf.reduce_mean(top1_hits) # scalar
+                        top1_num_hits = tf.reduce_sum(top1_hits) # scalar
                         tf.summary.scalar( 'edit_distance', top1_mean_ed, collections=['top1'])
-                        tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
+                        ## tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
+                        tf.summary.scalar('num_hits', top1_num_hits, collections=['top1'])
 
                     with tf.name_scope('bestof_%d'%k):
                         ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
@@ -699,12 +702,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 with tf.name_scope('AggregateMetrics'):
                     ph_top1_seq_lens = tf.placeholder(self.C.int_type)
                     ph_edit_distance = tf.placeholder(self.C.dtype)
+                    ph_num_hits =  tf.placeholder(self.C.dtype)
                     ph_accuracy =  tf.placeholder(self.C.dtype)
                     ph_valid_time =  tf.placeholder(self.C.dtype)
 
                     ph_BoK_distance =  tf.placeholder(self.C.int_type)
                     ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
 
+                    agg_num_hits = tf.reduce_sum(ph_num_hits)
                     agg_accuracy = tf.reduce_mean(ph_accuracy)
                     agg_ed = tf.reduce_mean(ph_edit_distance)
                     agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
@@ -714,6 +719,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
                     tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
                     tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
+                    tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
                     tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
                     tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
                     tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
@@ -734,6 +740,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'all_ids': ids, # (B, BeamWidth, T),
                     'all_id_scores': scores,
                     'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
+                    'top1_num_hits': top1_num_hits, # scalar
                     'top1_accuracy': top1_accuracy, # scalar
                     'top1_mean_ed': top1_mean_ed, # scalar
                     'bok_accuracy': bok_accuracy, # scalar

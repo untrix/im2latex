@@ -35,8 +35,9 @@ from keras import backend as K
 import hyper_params
 from data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
 import dl_commons as dlc
-import nltk
-from nltk.util import ngrams
+import data_commons as dtc
+# import nltk
+# from nltk.util import ngrams
 
 def num_trainable_vars():
     total_n = 0
@@ -89,6 +90,7 @@ def train(raw_data_folder,
     """
     Start training the model.
     """
+    dtc.initialize(args.generated_data_dir)
     logger = hyper.logger
     graph = tf.Graph()
     with graph.as_default():
@@ -227,6 +229,12 @@ def train(raw_data_folder,
                         log_time = session.run(train_ops.log_time, feed_dict={train_ops.ph_train_time: train_time_per100})
                         tf_sw.add_summary(log_time, global_step=step)
                         tf_sw.flush()
+                        
+                        ids_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
+                        targets_str = np.expand_dims(dtc.seq2str(y_ctc), axis=1)
+                        logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_ctc, predicted_ids))
+                        logger.info( '###################################\n')        
+
                         ## reset metrics
                         train_time = []; ctc_losses = []; logs = []
 
@@ -241,6 +249,16 @@ def train(raw_data_folder,
                 # close_queue1.run()
                 # close_queue2.run()
                 coord.join(enqueue_threads)
+
+def ids2str(target_ids, predicted_ids):
+    """
+    Args:
+        target_ids: Numpy array of shape (B,T)
+        predicted_ids: Numpy array of same shape as target_ids
+    """
+    ids_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
+    targets_str = np.expand_dims(dtc.seq2str(target_ids), axis=1)
+    np.concatenate((targets_str, ids_str), axis=1)
 
 def do_validate(step, args, train_it, valid_it):
     valid_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
@@ -279,10 +297,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             logger.info( '###################################\n')        
             return metrics
         else:
-            logger.info('############ RANDOM TRAINING BATCH ############')
-            logger.info('[target_ids, predicted_ids]=\n%s', format_ids(ops.train_ops.ctc_predicted_ids, ops.train_ops.y_ctc))
-            logger.info( '###################################\n')        
-            
+            pass            
     else: ## run a full validation cycle
         valid_ops = ops.valid_ops
         batch_it = batch_its.valid_it
@@ -293,35 +308,48 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
         eds = []; best_eds = []
         accuracies = []; best_accuracies = []
         lens = []
+        hits = []
         n = 0
         hyper.logger.info('validation cycle starting for %d steps', num_steps)
         while n < num_steps:
             n += 1
-            l, ed, accuracy = session.run((
-                                valid_ops.top1_lens,
-                                valid_ops.top1_mean_ed,
-                                valid_ops.top1_accuracy,
-                                valid_ops.top1_ids
-                                ))
+            if (n != print_batch_num):
+                l, ed, accuracy, num_hits = session.run((
+                                    valid_ops.top1_lens,
+                                    valid_ops.top1_mean_ed,
+                                    valid_ops.top1_accuracy,
+                                    valid_ops.top1_num_hits
+                                    ))
+            else:
+                l, ed, accuracy, num_hits, top1_ids, y_ctc = session.run((
+                                    valid_ops.top1_lens,
+                                    valid_ops.top1_mean_ed,
+                                    valid_ops.top1_accuracy,
+                                    valid_ops.top1_num_hits,
+                                    valid_ops.top1_ids,
+                                    valid_ops.y_ctc
+                                    ))
+                logger.info( '############ RANDOM VALIDATION BATCH %d ############', n)
+                beam = 0
+                logger.info('prediction mean_ed=%f', ed)
+                logger.info('prediction accuracy=%f', accuracy)
+                logger.info('prediction hits=%d', num_hits)
+                logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_ctc, top1_ids))
+                logger.info( '###################################\n')
+
             lens.append(l)
             eds.append(ed)
             accuracies.append(accuracy)
-            if (n == print_batch_num):
-                logger.info( '############ RANDOM VALIDATION BATCH %d ############', n)
-                beam = 0
-                logger.info('predicted seq lens=%s', l)
-                logger.info('prediction mean_ed=%s', ed)
-                logger.info('prediction accuracy=%s', accuracy)
-                logger.info( '###################################\n')
+            hits.append(num_hits)
 
         metrics = dlc.Properties({
             'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.beam_width)
             })
-        print lens
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={
                                         valid_ops.ph_top1_seq_lens: lens,
                                         valid_ops.ph_edit_distance: eds,
+                                        valid_ops.ph_num_hits: hits,
                                         valid_ops.ph_accuracy: accuracies,
                                         valid_ops.ph_valid_time : metrics.valid_time_per100
                                     })

@@ -84,8 +84,8 @@ def main():
                         help="Number (or fraction) of epochs after which to run a full validation cycle. Defaults to 1.0",
                         default=1.0)
     parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
-                        help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to False.",
-                        default=False)
+                        help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to True.",
+                        default=True)
     parser.add_argument("--build-image-context", "-i", dest="build_image_context", type=int,
                         help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
                         default=2)
@@ -113,6 +113,8 @@ def main():
                                     'print_steps': args.print_steps,
                                     'num_steps': args.num_steps,
                                     'num_epochs': args.num_epochs,
+                                    'data_dir': data_folder,
+                                    'generated_data_dir': os.path.join(data_folder, 'generated2'),
                                     'image_dir': image_folder,
                                     'logger': logger,
                                     'beam_width':args.beam_width,
