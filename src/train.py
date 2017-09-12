@@ -108,9 +108,9 @@ def train(raw_data_folder,
 
         ##### Training Graph
         with tf.name_scope('Training'):
-            # with tf.device('/gpu:0'):
-            model = Im2LatexModel(hyper, reuse=False)
-            train_ops = model.build_training_graph()
+            with tf.device('/gpu:0'):
+                model = Im2LatexModel(hyper, reuse=False)
+                train_ops = model.build_training_graph()
             with tf.variable_scope('InputQueue'):
                 enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
@@ -118,39 +118,42 @@ def train(raw_data_folder,
             hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
             ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
             ## assert trainable_vars_n == 23261206 if hyper.build_image_context
+        qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
-            # with tf.device('/gpu:0'):
-            model_predict = Im2LatexModel(hyper_predict, args.beam_width, reuse=True)
-            valid_ops = model_predict.test()
+            with tf.device('/gpu:0'):
+                model_predict = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
+                valid_ops = model_predict.test()
             with tf.variable_scope('InputQueue'):
                 enqueue_op2 = valid_ops.inp_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
             hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
             assert(num_trainable_vars() == trainable_vars_n)
+        qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
 
         ##### Training Accuracy Graph
-        with tf.name_scope('TrainingAccuracy'):
-            hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
-            # with tf.device('/gpu:0'):
-            model_predict2 = Im2LatexModel(hyper_predict, args.beam_width, reuse=True)
-            tr_acc_ops = model_predict2.test()
-            with tf.variable_scope('InputQueue'):
-                enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
-                close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
-            assert(num_trainable_vars() == trainable_vars_n)
+        if (args.make_training_accuracy_graph):
+            with tf.name_scope('TrainingAccuracy'):
+                hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
+                with tf.device('/gpu:0'):
+                    model_predict2 = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
+                    tr_acc_ops = model_predict2.test()
+                with tf.variable_scope('InputQueue'):
+                    enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
+                    close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
+                assert(num_trainable_vars() == trainable_vars_n)
+            qr3 = tf.train.QueueRunner(tr_acc_ops.inp_q, [enqueue_op3], cancel_op=[close_queue3])
+        else:
+            tr_acc_ops = None
 
-        qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
-        qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
-        qr3 = tf.train.QueueRunner(tr_acc_ops.inp_q, [enqueue_op3], cancel_op=[close_queue3])
         coord = tf.train.Coordinator()
 
         printVars(logger)
 
-        config=tf.ConfigProto(log_device_placement=False)
-        config.gpu_options.allow_growth = True
+        config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+        ## config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as session:
             logger.info( 'Flushing graph to disk')
@@ -168,12 +171,23 @@ def train(raw_data_folder,
             try:
                 while not coord.should_stop():
                     step_start_time = time.time()
-                    _, ctc_loss, log = session.run(
-                        (
-                            train_ops.train, 
-                            train_ops.ctc_loss,
-                            train_ops.tb_logs
-                        ))
+                    if not do_log(step, args, train_it, valid_it):
+                        _, ctc_loss, log = session.run(
+                            (
+                                train_ops.train, 
+                                train_ops.ctc_loss,
+                                train_ops.tb_logs
+                            ))
+                    else:
+                        _, ctc_loss, log, predicted_ids, y_ctc = session.run(
+                            (
+                                train_ops.train, 
+                                train_ops.ctc_loss,
+                                train_ops.tb_logs,
+                                train_ops.ctc_predicted_ids,
+                                train_ops.y_ctc
+                            ))
+
                     ctc_losses.append(ctc_loss[()])
                     logs.append(log)
                     train_time.append(time.time()-step_start_time)
@@ -244,18 +258,29 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
     logger = hyper.logger
     validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
     valid_start_time = time.time()
-    if not validate: # Run only one training batch
-        logs_top1, logs_topK = session.run((
-                            ops.tr_acc_ops.logs_tr_acc_top1,
-                            ops.tr_acc_ops.logs_tr_acc_topK
-                            ))
-        tf_sw.add_summary(logs_top1, step)
-        tf_sw.add_summary(logs_topK, step)
-        tf_sw.flush()
-        metrics = dlc.Properties({
-            'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * args.beam_width))
-            })
-        return metrics
+    if not validate:
+        if args.make_training_accuracy_graph: # Run one training batch thought training_accuracy_graph
+            logs_top1, logs_topK, bok_ids = session.run((
+                                ops.tr_acc_ops.logs_tr_acc_top1,
+                                ops.tr_acc_ops.logs_tr_acc_topK,
+                                ops.tr_acc_ops.bok_ids
+                                ))
+            tf_sw.add_summary(logs_top1, step)
+            tf_sw.add_summary(logs_topK, step)
+            tf_sw.flush()
+            metrics = dlc.Properties({
+                'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * hyper.beam_width))
+                })
+            logger.info( '############ RANDOM TRAINING BATCH ############')
+            logger.info('bok ids=\n%s', bok_ids)
+            logger.info( '###################################\n')        
+            return metrics
+        else:
+            logger.info( '############ RANDOM TRAINING BATCH ############')
+            np.concatenate()
+            logger.info('[target_ids, predicted_ids]=\n%s', ops.train_ops.target_and_predicted_ids)
+            logger.info( '###################################\n')        
+            
     else: ## run a full validation cycle
         valid_ops = ops.valid_ops
         batch_it = batch_its.valid_it
@@ -274,6 +299,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
                                 valid_ops.top1_lens,
                                 valid_ops.top1_mean_ed,
                                 valid_ops.top1_accuracy,
+                                valid_ops.top1_ids
                                 ))
             lens.append(l)
             eds.append(ed)
@@ -287,7 +313,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
                 logger.info( '###################################\n')
 
         metrics = dlc.Properties({
-            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * args.beam_width)
+            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.beam_width)
             })
         print lens
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,

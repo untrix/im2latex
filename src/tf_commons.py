@@ -828,6 +828,7 @@ def printVars(name, coll):
     return total_n
 
 def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+    """Compute edit distance for matrix of shape (B,k,T) """
     with tf.name_scope('edit_distance3D'):
         p_shape = K.int_shape(predicted_ids)
         t_shape = K.int_shape(target_ids)
@@ -847,6 +848,7 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         return d
 
 def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+    """Compute edit distance for matrix of shape (B,T) """
     with tf.name_scope('edit_distance2D'):
         p_shape = K.int_shape(predicted_ids)
         t_shape = K.int_shape(target_ids)
@@ -867,7 +869,7 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
 
 def squash_2d(B, m, lens, blank_token, padding_token=0):
     """
-    Takes in a matrix shaped (B, T), from each row removes blank_tokens and appends
+    Takes in a tensor m, shaped (B, T), from each row removes blank_tokens and appends
     an equal number of padding_tokens at the end. Returns the resulting (B, T) shaped tensor and
     a tensor carrying sequence_lengths, shaped (B,).
     """
@@ -892,7 +894,7 @@ def squash_2d(B, m, lens, blank_token, padding_token=0):
 
 def squash_3d(B, k, m, lens, blank_token, padding_token=0):
     """
-    Takes in a matrix shaped (B, k, T), from each sequence of length T removes blank_tokens and appends
+    Takes in a tensor m, shaped (B, k, T), from each sequence of length T removes blank_tokens and appends
     an equal number of padding_tokens at the end. Returns the resulting (B, k, T) shaped tensor and
     a tensor carrying sequence_lengths, shaped (B, k).
     """

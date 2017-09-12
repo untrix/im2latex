@@ -321,6 +321,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert self._embedding_matrix is not None
                 #assert K.int_shape(ids) == (B,)
                 shape = list(K.int_shape(ids))
+                # with tf.device(None): ## Unset device placement to keep Tensorflow happy
                 embedded = tf.nn.embedding_lookup(self._embedding_matrix, ids)
                 shape.append(m)
                 ## Embedding lookup forgets the leading dimensions (e.g. (B,))
@@ -391,10 +392,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 tb_logs = tf.summary.merge_all()
                 ## Placeholder for injecting training-time from outside
                 ph_train_time =  tf.placeholder(self.C.dtype)
+
+                ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
                 log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
 
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q,
+                                              'y_ctc': self._y_ctc, # (B, T)
                                               'tb_logs': tb_logs,
                                               'ph_train_time': ph_train_time,
                                               'log_time': log_time
@@ -426,7 +430,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
                     ## joint-sequence-probability is same as taking sum of log of probability at each time-step
 
-                    ## Compute Sequence Log-Loss / Log-Likelihood = -Log( product(p_t) ) = -sum(Log(p_t))
+                    ################ Compute Sequence Log-Loss / Log-Likelihood  ################
+                    #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
                     if self.C.sum_logloss:
                         ## Here we do not normalize the log-loss across time-steps because the
                         ## paper as well as it's source-code do not do that.
@@ -448,18 +453,19 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
                         log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
                     assert K.int_shape(log_likelihood) == tuple()
+
+                    ################   Calculate the alpha penalty:   ################
+                    #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
                     alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
-                    ## Calculate the alpha penalty: lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i)))
-                    ##
                     if self.C.MeanSumAlphaEquals1:
                         mean_sum_alpha_i = 1.0
                     else:
                         mean_sum_alpha_i = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
                         mean_sum_alpha_i = tf.expand_dims(mean_sum_alpha_i, axis=1) # (B, 1)
 
-        #                sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
-        #                squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (B, L)
-        #                alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                    #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
+                    #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (B, L)
+                    #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
                     alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
@@ -468,6 +474,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
                     mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
                     assert K.int_shape(alpha_penalty) == tuple()
+
                 ################ Build CTC Cost Function ################
                 ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
                 ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
@@ -477,7 +484,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ##     between tokens when printing out the predicted markup.
                 with tf.variable_scope('CTC_Cost'):
                     ## sparse tensor
-        #            y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
+                #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
                     ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
                     assert K.int_shape(ctc_mask) == (B,None) # (B,T)
                     y_idx =    tf.where(ctc_mask)
@@ -486,7 +493,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_losses = tf.nn.ctc_loss(y_sparse,
                                               yLogits,
                                               sequence_lengths,
-                                              ctc_merge_repeated=False,
+                                              ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
                                               time_major=False)
                     ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
                     assert K.int_shape(ctc_losses) == (B, )
@@ -500,14 +507,32 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 else:
                     cost = log_likelihood + alpha_penalty
 
+                ################ CTC Beamsearch Decoding ################
+                with tf.variable_scope('CTC_Decoder'):
+                    yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
+                    decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.beam_width, 
+                        top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
+                    ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_sparse[0], default_value=0) # (B, T)
+                    assert K.int_shape(ctc_decoded_ids) == (B, None), 'got ctc_decoded_ids shape = %s'%K.int_shape(ctc_decoded_ids)
+                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B, 
+                                                                        ctc_decoded_ids, 
+                                                                        sequence_lengths, 
+                                                                        self.C.SpaceTokenID, 
+                                                                        padding_token=0) # ((B,T), (B,))
+                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, self._y_ctc, self._ctc_len, self.C.SpaceTokenID)
+                    ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
+                    target_and_predicted_ids = tf.stack([self._y_ctc, ctc_squashed_ids], axis=1)
+
                 tf.summary.scalar('training/logloss/', log_likelihood)
                 tf.summary.scalar('training/ctc_loss/', ctc_loss)
                 tf.summary.scalar('training/alpha_penalty/', alpha_penalty)
                 tf.summary.scalar('training/total_cost/', cost)
                 tf.summary.scalar('training/alpha_squared_error/', alpha_squared_error)
                 tf.summary.histogram('training/seq_len/', sequence_lengths)
+                ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
+                tf.summary.histogram('training/ctc_ed')
 
-                # Optimizer
+                ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
                     global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
                     optimizer = tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
@@ -524,7 +549,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'global_step':global_step,
                         'mean_sum_alpha_i': mean_sum_alpha_i,
                         'mean_sum_alpha_i2': mean_sum_alpha_i2,
-                        'mean_seq_len': mean_seq_len
+                        'mean_seq_len': mean_seq_len,
+                        'ctc_predicted_ids': ctc_squashed_ids,
+                        'target_and_predicted_ids': target_and_predicted_ids
                         })
 
     def _beamsearch(self):
@@ -642,7 +669,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
-                    with tf.name_scope('top_1'):
+                    with tf.name_scope('top_1'):'y_ctc': self._y_ctc, # (B, T)
                         top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_accuracy = tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0))) # scalar
@@ -656,8 +683,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         bok_ed, bok_indices = tfc.batch_bottom_k_2D(ed, 1) # (B, 1)
                         bok_mean_ed = tf.reduce_mean(bok_ed)
                         bok_accuracy = tf.reduce_mean(tf.to_float(tf.equal(bok_ed, 0)))
-                        bok_seq_lens =  tf.squeeze(tfc.batch_slice(topK_seq_lens, bok_indices), axis=1) # (B, 1)
-                        bok_seq_scores = tf.squeeze(tfc.batch_slice(topK_seq_scores, bok_indices), axis=1) # (B, 1)
+                        bok_seq_lens =  tf.squeeze(tfc.batch_slice(topK_seq_lens, bok_indices), axis=1) # (B, 1).squeeze => (B,)
+                        bok_seq_scores = tf.squeeze(tfc.batch_slice(topK_seq_scores, bok_indices), axis=1) # (B, 1).squeeze => (B,)
+                        bok_ids = tf.squeeze(tfc.batch_slice(topK_ids, bok_indices), axis=1) # (B, 1, T).squeeze => (B,T)
 
                         tf.summary.scalar( 'edit_distance', bok_mean_ed, collections=['top_k'])
                         tf.summary.scalar( 'accuracy', bok_accuracy, collections=['top_k'])
@@ -691,11 +719,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
                     tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
-                    logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
+                    logs_agg_top1 = tf.summary.merge(tf.get_collection('agg'y_ctc': self._y_ctc, # (B, T)regate_top1'))
                     logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
+                    'y_ctc': self._y_ctc, # (B, T)
                     'top1_ids': top1_ids, # (B, T)
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
@@ -709,8 +738,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_mean_ed': top1_mean_ed, # scalar
                     'bok_accuracy': bok_accuracy, # scalar
                     'bok_mean_ed': bok_mean_ed, # scalar
-                    'bok_seq_lens': bok_seq_lens, # (B,)
+                    'bok_seq_lens': bok_seq_lens, # (B,)'y_ctc': self._y_ctc, # (B, T)
                     'bok_seq_scores': bok_seq_scores, #(B,)
+                    'bok_ids': bok_ids, # (B,T)
                     'logs_tr_acc_top1': logs_tr_acc_top1,
                     'logs_tr_acc_topK': logs_tr_acc_topK,
                     'logs_agg_top1': logs_agg_top1,

@@ -86,7 +86,7 @@ def main():
     parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
                         help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to False.",
                         default=False)
-    parser.add_argument("--build-image-context", "-i", dest="build_image_context", action='store_true',
+    parser.add_argument("--build-image-context", "-i", dest="build_image_context", type=int,
                         help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
                         default=2)
 

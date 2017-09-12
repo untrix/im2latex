@@ -65,24 +65,8 @@ class GlobalParams(dlc.HyperParams):
            'Shape of input images. Should be a python sequence.'
            'This is superceded by image_shape which includes an extra padding frame around it',
            issequenceof(int),
-           (120,1075,1) ## = get_image_shape(raw_data_dir, num_channels, 0)
-           ),
-        PD('image_frame_width',
-            'Width of an extra padding frame around the (possibly already padded) image. This extra padding is used '
-            'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
-            'in the first conv-net layer without losing any information. The effect of doing this is to simulate SAME padding '
-            'but using custom padding values (background color in this case) instead of zeroes (which is what SAME padding would do). '
-            'This value should be equal to (kernel_size-1)/2 using kernel_size of the first convolution layer.'
-            ,
-            integer(),
-            ## Dynamically set =  (kernel_size-1)/2 given kernel_size of first conv-net layer
-            ),
-        PD('image_shape',
-           'Shape of input images. Should be a python sequence.'
-           '= image_shape_unpadded + image_frame_width around it',
-           issequenceof(int),
-           LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
-           ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
+           LambdaVal(lambda _,p: (120,1075,3) if (p.build_image_context != 2) else (120,1075,1))
+           ## = get_image_shape(raw_data_dir, num_channels, 0)
            ),
         PD('MaxSeqLen',
            "Max sequence length including the end-of-sequence marker token. Is used to "
@@ -130,9 +114,11 @@ class GlobalParams(dlc.HyperParams):
            64
            ),
         PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None,
-           8),
+            LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
+           ),
         PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None,
-           68),
+            LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
+            ),
         PD('L',
            '(integer): number of pixels in an image feature-map = HxW (see paper or model description)',
            integer(1),
@@ -198,35 +184,9 @@ class GlobalParams(dlc.HyperParams):
             '(boolean): whether to employ peephole connections in the decoder LSTM',
             (True, False),
             True),
-        #### Training Parameters ####
-        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
-           (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
-           ),
-        PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
-           'of the bin-size',
-           boolean,
-           True),
-        PD('input_queue_capacity', 'Capacity of input queue.',
-           integer(),
-           5),
         PD('logger', 'Python logger object for logging.',
             instanceof(logging.Logger)
             ),
-        PD('DecodingSlack',
-           "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
-           "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
-           "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
-           "do so by determining the extra slack to give to the network - the more slack we give it "
-           "presumably that much easier the learning will be. This parameter includes that slack. In "
-           "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
-           integer(0),
-           20
-           ),
-        PD('MaxDecodeLen',
-           "See the description for MaxSeqLen and DecodingSlack",
-           integer(151),
-           LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
-           ),
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
@@ -302,17 +262,68 @@ class Im2LatexModelParams(dlc.HyperParams):
     @staticmethod
     def makeProto(GLOBAL=GlobalParams()):
         return GlobalParams.proto + (
+        ### Training Parameters ####
+            PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
+            (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
+            ),
+            PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
+            'of the bin-size',
+            boolean,
+            True),
+            PD('input_queue_capacity', 'Capacity of input queue.',
+            integer(),
+            5),
+            PD('DecodingSlack',
+            "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
+            "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
+            "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
+            "do so by determining the extra slack to give to the network - the more slack we give it "
+            "presumably that much easier the learning will be. This parameter includes that slack. In "
+            "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
+            integer(0),
+            20
+            ),
+            PD('MaxDecodeLen',
+            "See the description for MaxSeqLen and DecodingSlack",
+            integer(151),
+            LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
+            ),
             PD('use_ctc_loss',
                "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
                "ctc_loss will be logged.",
                boolean,
                True),
+            PD('no_ctc_merge_repeated',
+               "(boolean): Negated value of ctc_merge_repeated argument for ctc operations",
+               boolean,
+               True),
+            PD('beam_width', 'Beam Width to use for beamsearch decoding,
+                integer(1)
+                )
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(),
                tf.contrib.layers.xavier_initializer()),
         ### ConvNet Params ###
             PD('CONVNET', 'ConvStackParams for the convent',
                 instanceof(ConvStackParams)),
+            PD('image_frame_width',
+                'Width of an extra padding frame around the (possibly already padded) image. This extra padding is used '
+                'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
+                'in the first conv-net layer without losing any information. The effect of doing this is to simulate SAME padding '
+                'but using custom padding values (background color in this case) instead of zeroes (which is what SAME padding would do). '
+                'This value should be equal to (kernel_size-1)/2 using kernel_size of the first convolution layer.'
+                ,
+                integer(),
+                LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0]-1)/2 )
+                ## Dynamically set to = (kernel_size-1)/2 given kernel_size of first conv-net layer
+                ),
+            PD('image_shape',
+                'Shape of input images. Should be a python sequence.'
+                '= image_shape_unpadded + image_frame_width around it',
+                issequenceof(int),
+                LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
+                ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
+            ),
         ### Decoder CALSTM Params ###
             PD('CALSTM_STACK',
                'sequence of CALSTMParams, one for each CALSTM layer in the stack. The paper '
@@ -400,7 +411,7 @@ class Im2LatexModelParams(dlc.HyperParams):
 
 def make_hyper(initVals={}):
     initVals = dlc.Properties(initVals)
-    initVals.image_frame_width = 1
+    ## initVals.image_frame_width = 1
     globals = GlobalParams(initVals)
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
