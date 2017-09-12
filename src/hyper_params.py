@@ -301,8 +301,11 @@ class Im2LatexModelParams(dlc.HyperParams):
                 integer(1)
                 )
         ### Embedding Layer ###
-            PD('embeddings_initializer', 'Initializer for embedding weights', dlc.iscallable(),
-               tf.contrib.layers.xavier_initializer()),
+            PD('embeddings_initializer', 'Initializer for embedding weights', 
+                dlc.iscallable(),
+               ## tf.contrib.layers.xavier_initializer()
+               equalto('weights_initializer')
+               ),
         ### ConvNet Params ###
             PD('CONVNET', 'ConvStackParams for the convent',
                 instanceof(ConvStackParams)),
