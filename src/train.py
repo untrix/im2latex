@@ -254,6 +254,9 @@ def do_log(step, args, train_it, valid_it):
     validate, _ = do_validate(step, args, train_it, valid_it)
     return (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
 
+def format_ids(predicted_ids, target_ids):
+    np.apply_along_axis
+
 def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
     logger = hyper.logger
     validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
@@ -276,9 +279,8 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             logger.info( '###################################\n')        
             return metrics
         else:
-            logger.info( '############ RANDOM TRAINING BATCH ############')
-            np.concatenate()
-            logger.info('[target_ids, predicted_ids]=\n%s', ops.train_ops.target_and_predicted_ids)
+            logger.info('############ RANDOM TRAINING BATCH ############')
+            logger.info('[target_ids, predicted_ids]=\n%s', format_ids(ops.train_ops.ctc_predicted_ids, ops.train_ops.y_ctc))
             logger.info( '###################################\n')        
             
     else: ## run a full validation cycle
