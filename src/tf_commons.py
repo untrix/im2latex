@@ -66,7 +66,7 @@ def summarize_layer(layer_name, weights, biases, activations, state=None):
 
 class TensorboardParams(HyperParams):
     proto = (
-        PD('tb_logdir', '', None, "tb_metrics/"),
+        PD('tb_logdir', '', None, "tb_metrics"),
         PD('tb_weights',
               'Section name under which weight summaries show up on tensorboard',
               None, 'Weights'
@@ -859,16 +859,10 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         assert t_shape[0] == B
         assert K.int_shape(target_lens) == (B,)
 
-        if K.is_sparse(predicted_ids):
-            predicted_sparse = predicted_ids
-        else:
-            predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
-
-        ## blank tokens should not be present in target_ids
-        if K.is_sparse(target_ids):
-            target_sparse = target_ids
-        else:
-            target_sparse = dense_to_sparse2D(target_ids, target_lens)
+        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
+        
+        ## blank tokens should not be present in target_ids, therefore we won't squash it
+        target_sparse = dense_to_sparse2D(target_ids, target_lens)
             
         d = tf.edit_distance(predicted_sparse, target_sparse)
         # assert K.int_shape(d) == K.int_shape(predicted_lens)

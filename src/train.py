@@ -189,15 +189,15 @@ def main(raw_data_folder,
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs
                             ))
-                        predicted_ids = y_ctc = None
+                        predicted_ids = y_s = None
                     else:
-                        _, ctc_loss, log, y_ctc, predicted_ids = session.run(
+                        _, ctc_loss, log, y_s, predicted_ids = session.run(
                             (
                                 train_ops.train, 
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs,
-                                train_ops.y_ctc,
-                                train_ops.ctc_predicted_ids
+                                train_ops.y_s,
+                                train_ops.predicted_ids
                             ))
 
                     ## Accumulate metrics
@@ -208,15 +208,15 @@ def main(raw_data_folder,
                     if doLog:
                         logger.info( 'Step %d',step)
                         train_time_per100 = np.mean(train_time) * 100. / hyper.B
-                        if args.make_training_accuracy_graph:
-                            accuracy_res = measure_accuracy(
-                                session,
-                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
-                                dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                                hyper,
-                                args,
-                                step, 
-                                tf_sw)
+                        accuracy_res = measure_accuracy(
+                            session,
+                            dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
+                            dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                            hyper,
+                            args,
+                            step, 
+                            tf_sw)
+                        if accuracy_res:
                             logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
                                 step,
                                 time.time()-start_time,
@@ -248,7 +248,7 @@ def main(raw_data_folder,
                         tf_sw.flush()
                         
                         logger.info( '############ RANDOM TRAINING BATCH ############')
-                        logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_ctc, predicted_ids))
+                        logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_s, predicted_ids))
                         logger.info( '###################################\n')
 
                         ## Reset metrics
@@ -272,9 +272,9 @@ def ids2str(target_ids, predicted_ids):
         target_ids: Numpy array of shape (B,T)
         predicted_ids: Numpy array of same shape as target_ids
     """
-    ids_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
-    targets_str = np.expand_dims(dtc.seq2str(target_ids), axis=1)
-    np.concatenate((targets_str, ids_str), axis=1)
+    target_str = np.expand_dims(dtc.seq2str(target_ids), axis=1)
+    predicted_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
+    return np.concatenate((target_str, predicted_str), axis=1)
 
 def do_validate(step, args, train_it, valid_it):
     valid_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
@@ -317,7 +317,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             logger.info( '###################################\n')        
             return metrics
         else:
-            return
+            return None
     else: ## run a full validation cycle
         valid_ops = ops.valid_ops
         batch_it = batch_its.valid_it
@@ -341,20 +341,20 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_num_hits
                                     ))
             else:
-                l, ed, accuracy, num_hits, top1_ids, y_ctc = session.run((
+                l, ed, accuracy, num_hits, top1_ids, y_s = session.run((
                                     valid_ops.top1_lens,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids,
-                                    valid_ops.y_ctc
+                                    valid_ops.y_s
                                     ))
                 logger.info( '############ RANDOM VALIDATION BATCH %d ############', n)
                 beam = 0
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
-                logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_ctc, top1_ids))
+                logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_s, top1_ids))
                 logger.info( '###################################\n')
 
             lens.append(l)

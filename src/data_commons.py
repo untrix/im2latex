@@ -36,8 +36,7 @@ def initialize(data_dir):
     global i2w_ufunc, dict_id2word
     if i2w_ufunc is None:
         dict_id2word = dict_id2word or pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
-        id2word = lambda id: dict_id2word[id]
-        i2w_ufunc = np.frompyfunc(id2word, 1, 1)
+        i2w_ufunc = np.frompyfunc(lambda id: dict_id2word[id], 1, 1)
     return i2w_ufunc
 
 def seq2str(arr):
@@ -47,7 +46,8 @@ def seq2str(arr):
     <arr> to string.
     """
     assert i2w_ufunc is not None, "i2w_ufunc is None. Please call initialize first in order to setup i2w_ufunc."
-    str_arr = i2w_ufunc(arr)
-    return np.apply_along_axis(lambda vec: " ".join(vec), axis=1, arr=str_arr)
+    str_arr = i2w_ufunc(arr) # (B, T)
+    func1d = lambda vec: u"".join(vec)
+    return [func1d(vec) for vec in str_arr]
 
 

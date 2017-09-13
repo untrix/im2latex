@@ -552,8 +552,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'mean_sum_alpha_i': mean_sum_alpha_i,
                         'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len,
-                        'ctc_predicted_ids': ctc_squashed_ids,
-                        'y_ctc': self._y_ctc
+                        'predicted_ids': ctc_decoded_ids,
+                        'y_s': self._y_s
                         })
 
     def _beamsearch(self):
@@ -732,7 +732,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
-                    'y_ctc': self._y_ctc, # (B, T)
+                    'y_s': self._y_s, # (B, T)
                     'top1_ids': top1_ids, # (B, T)
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
@@ -759,5 +759,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'ph_BoK_distance': ph_BoK_distance,
                     'ph_accuracy': ph_accuracy,
                     'ph_BoK_accuracy': ph_BoK_accuracy,
-                    'ph_valid_time': ph_valid_time
+                    'ph_valid_time': ph_valid_time,
+                    'ph_num_hits': ph_num_hits
                     })

@@ -34,6 +34,8 @@ import os
 
 def main():
     _data_folder = '../data'
+    _logdir = 'tb_metrics'
+    _logdir2 = 'tb_metrics_dev'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -89,6 +91,9 @@ def main():
     parser.add_argument("--build-image-context", "-i", dest="build_image_context", type=int,
                         help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
                         default=2)
+    parser.add_argument("--logdir2", dest="logdir2", action='store_true',
+                        help="Log to alternative data_folder " + _logdir2,
+                        default=False)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -107,9 +112,15 @@ def main():
     else:
         vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
+    if args.logdir2:
+        tb = tfc.TensorboardParams({'tb_logdir':_logdir2})
+    else:
+        tb = tfc.TensorboardParams({'tb_logdir':_logdir})
+
     logger = hyper_params.makeLogger()
 
     globalParams = dlc.Properties({
+                                    'tb': tb,
                                     'print_steps': args.print_steps,
                                     'num_steps': args.num_steps,
                                     'num_epochs': args.num_epochs,
@@ -126,7 +137,8 @@ def main():
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}),
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.005,
-                                    'make_training_accuracy_graph': False
+                                    'make_training_accuracy_graph': False,
+                                    'use_ctc_loss': False
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size
