@@ -858,9 +858,18 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         assert len(t_shape) == 2
         assert t_shape[0] == B
         assert K.int_shape(target_lens) == (B,)
-        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
+
+        if K.is_sparse(predicted_ids):
+            predicted_sparse = predicted_ids
+        else:
+            predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
+
         ## blank tokens should not be present in target_ids
-        target_sparse = dense_to_sparse2D(target_ids, target_lens)
+        if K.is_sparse(target_ids):
+            target_sparse = target_ids
+        else:
+            target_sparse = dense_to_sparse2D(target_ids, target_lens)
+            
         d = tf.edit_distance(predicted_sparse, target_sparse)
         # assert K.int_shape(d) == K.int_shape(predicted_lens)
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.

@@ -389,7 +389,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                             self._ctc_len)
 
                 ## Summary Logs
-                tb_logs = tf.summary.merge_all()
+                tb_logs = tf.summary.merge(tf.get_collection('training'))
                 ## Placeholder for injecting training-time from outside
                 ph_train_time =  tf.placeholder(self.C.dtype)
 
@@ -398,7 +398,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q,
-                                              'y_ctc': self._y_ctc, # (B, T)
                                               'tb_logs': tb_logs,
                                               'ph_train_time': ph_train_time,
                                               'log_time': log_time
@@ -512,25 +511,28 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
                     decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.beam_width, 
                         top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
-                    ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_sparse[0], default_value=0) # (B, T)
-                    assert K.int_shape(ctc_decoded_ids) == (B, None), 'got ctc_decoded_ids shape = %s'%K.int_shape(ctc_decoded_ids)
+                    print decoded_ids_sparse[0]
+                    ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=0) # (B, T)
+                    ctc_decoded_ids.set_shape((B, None))
+                    ## assert len(K.int_shape(ctc_decoded_ids)) == (B, None), 'got ctc_decoded_ids shape = %s'%(K.int_shape(ctc_decoded_ids),)
                     ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B, 
                                                                         ctc_decoded_ids, 
                                                                         sequence_lengths, 
                                                                         self.C.SpaceTokenID, 
                                                                         padding_token=0) # ((B,T), (B,))
-                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, self._y_ctc, self._ctc_len, self.C.SpaceTokenID)
+                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
+                                                 self.C.SpaceTokenID)
                     ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
-                    target_and_predicted_ids = tf.stack([self._y_ctc, ctc_squashed_ids], axis=1)
+                    # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
-                tf.summary.scalar('training/logloss/', log_likelihood)
-                tf.summary.scalar('training/ctc_loss/', ctc_loss)
-                tf.summary.scalar('training/alpha_penalty/', alpha_penalty)
-                tf.summary.scalar('training/total_cost/', cost)
-                tf.summary.scalar('training/alpha_squared_error/', alpha_squared_error)
-                tf.summary.histogram('training/seq_len/', sequence_lengths)
+                tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
+                tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
+                tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
+                tf.summary.scalar('training/total_cost/', cost, collections=['training'])
+                tf.summary.scalar('training/alpha_squared_error/', alpha_squared_error, collections=['training'])
+                tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
                 ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
-                tf.summary.histogram('training/ctc_ed')
+                tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
@@ -551,7 +553,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len,
                         'ctc_predicted_ids': ctc_squashed_ids,
-                        'target_and_predicted_ids': target_and_predicted_ids
+                        'y_ctc': self._y_ctc
                         })
 
     def _beamsearch(self):
@@ -669,7 +671,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     y_ctc_beams = tf.tile(tf.expand_dims(self._y_ctc, axis=1), multiples=[1,k,1])
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
-                    with tf.name_scope('top_1'):'y_ctc': self._y_ctc, # (B, T)
+                    with tf.name_scope('top_1'):
                         top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_hits = tf.to_float(tf.equal(top1_ed, 0))
@@ -725,7 +727,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
                     tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
-                    logs_agg_top1 = tf.summary.merge(tf.get_collection('agg'y_ctc': self._y_ctc, # (B, T)regate_top1'))
+                    logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
                     logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
@@ -745,7 +747,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_mean_ed': top1_mean_ed, # scalar
                     'bok_accuracy': bok_accuracy, # scalar
                     'bok_mean_ed': bok_mean_ed, # scalar
-                    'bok_seq_lens': bok_seq_lens, # (B,)'y_ctc': self._y_ctc, # (B, T)
+                    'bok_seq_lens': bok_seq_lens, # (B,)
                     'bok_seq_scores': bok_seq_scores, #(B,)
                     'bok_ids': bok_ids, # (B,T)
                     'logs_tr_acc_top1': logs_tr_acc_top1,

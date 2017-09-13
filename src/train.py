@@ -39,6 +39,8 @@ import data_commons as dtc
 # import nltk
 # from nltk.util import ngrams
 
+logger = None
+
 def num_trainable_vars():
     total_n = 0
     for var in tf.trainable_variables():
@@ -83,7 +85,7 @@ def printVars(logger):
     logger.info( 'Output Layer: %d (%d%%)'%(total_output, total_output*100./total_n))
     logger.info( 'Embedding Matrix: %d (%d%%)'%(total_embedding, total_embedding*100./total_n))
 
-def train(raw_data_folder,
+def main(raw_data_folder,
           vgg16_folder,
           args,
           hyper):
@@ -91,7 +93,9 @@ def train(raw_data_folder,
     Start training the model.
     """
     dtc.initialize(args.generated_data_dir)
+    global logger
     logger = hyper.logger
+
     graph = tf.Graph()
     with graph.as_default():
         if hyper.build_image_context == 1:
@@ -151,6 +155,7 @@ def train(raw_data_folder,
             tr_acc_ops = None
 
         coord = tf.train.Coordinator()
+        # print train_ops
 
         printVars(logger)
 
@@ -165,52 +170,64 @@ def train(raw_data_folder,
 
             enqueue_threads = qr1.create_threads(session, coord=coord, start=True)
             enqueue_threads.extend(qr2.create_threads(session, coord=coord, start=True))
-            enqueue_threads.extend(qr3.create_threads(session, coord=coord, start=True))
+            if (args.make_training_accuracy_graph):
+                enqueue_threads.extend(qr3.create_threads(session, coord=coord, start=True))
 
             start_time = time.time()
+            ## Set metrics
             train_time = []; ctc_losses = []; logs = []
             step = 0
             try:
                 while not coord.should_stop():
                     step_start_time = time.time()
-                    if not do_log(step, args, train_it, valid_it):
+                    step += 1
+                    doLog = do_log(step, args, train_it, valid_it)
+                    if not doLog:
                         _, ctc_loss, log = session.run(
                             (
                                 train_ops.train, 
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs
                             ))
+                        predicted_ids = y_ctc = None
                     else:
-                        _, ctc_loss, log, predicted_ids, y_ctc = session.run(
+                        _, ctc_loss, log, y_ctc, predicted_ids = session.run(
                             (
                                 train_ops.train, 
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs,
-                                train_ops.ctc_predicted_ids,
-                                train_ops.y_ctc
+                                train_ops.y_ctc,
+                                train_ops.ctc_predicted_ids
                             ))
 
+                    ## Accumulate metrics
                     ctc_losses.append(ctc_loss[()])
                     logs.append(log)
                     train_time.append(time.time()-step_start_time)
-                    step += 1
 
-                    if do_log(step, args, train_it, valid_it):
-                        logger.info( 'Step %d'%(step))
+                    if doLog:
+                        logger.info( 'Step %d',step)
                         train_time_per100 = np.mean(train_time) * 100. / hyper.B
-                        accuracy_res = measure_accuracy(
-                            session,
-                            dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
-                            dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                            hyper,
-                            args,
-                            step, 
-                            tf_sw)
-                        logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
-                            step,
-                            time.time()-start_time,
-                            train_time_per100,
-                            accuracy_res.valid_time_per100))
+                        if args.make_training_accuracy_graph:
+                            accuracy_res = measure_accuracy(
+                                session,
+                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
+                                dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                                hyper,
+                                args,
+                                step, 
+                                tf_sw)
+                            logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
+                                step,
+                                time.time()-start_time,
+                                train_time_per100,
+                                accuracy_res.valid_time_per100))
+                        else:
+                            logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
+                                step,
+                                time.time()-start_time,
+                                train_time_per100))
+                            
                         ## emit training graph metrics of the minimum and maximum loss batches
                         i_min = np.argmin(ctc_losses)
                         i_max = np.argmax(ctc_losses)
@@ -230,12 +247,11 @@ def train(raw_data_folder,
                         tf_sw.add_summary(log_time, global_step=step)
                         tf_sw.flush()
                         
-                        ids_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
-                        targets_str = np.expand_dims(dtc.seq2str(y_ctc), axis=1)
+                        logger.info( '############ RANDOM TRAINING BATCH ############')
                         logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_ctc, predicted_ids))
-                        logger.info( '###################################\n')        
+                        logger.info( '###################################\n')
 
-                        ## reset metrics
+                        ## Reset metrics
                         train_time = []; ctc_losses = []; logs = []
 
             except tf.errors.OutOfRangeError, StopIteration:
@@ -266,11 +282,15 @@ def do_validate(step, args, train_it, valid_it):
     do_validate = (step % valid_steps == 0) or (step == train_it.max_steps)
     num_valid_batches = valid_it.epoch_size if do_validate else 0
 
+    logger.debug('do_validate returning %s at step %d', do_validate, step)
+
     return do_validate, num_valid_batches
 
 def do_log(step, args, train_it, valid_it):
     validate, _ = do_validate(step, args, train_it, valid_it)
-    return (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
+    do_log = (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
+    logger.debug('do_log returning %s at step %d', do_log, step)
+    return do_log
 
 def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
@@ -297,7 +317,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             logger.info( '###################################\n')        
             return metrics
         else:
-            pass            
+            return
     else: ## run a full validation cycle
         valid_ops = ops.valid_ops
         batch_it = batch_its.valid_it

@@ -61,6 +61,9 @@ def get_image_shape(raw_data_dir_, num_channels, valid_padding):
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
+        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
+            (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
+            ),
         PD('image_shape_unframed',
            'Shape of input images. Should be a python sequence.'
            'This is superceded by image_shape which includes an extra padding frame around it',
@@ -263,9 +266,6 @@ class Im2LatexModelParams(dlc.HyperParams):
     def makeProto(GLOBAL=GlobalParams()):
         return GlobalParams.proto + (
         ### Training Parameters ####
-            PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
-            (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
-            ),
             PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
             'of the bin-size',
             boolean,
@@ -297,9 +297,9 @@ class Im2LatexModelParams(dlc.HyperParams):
                "(boolean): Negated value of ctc_merge_repeated argument for ctc operations",
                boolean,
                True),
-            PD('beam_width', 'Beam Width to use for beamsearch decoding,
+            PD('beam_width', 'Beam Width to use for beamsearch decoding',
                 integer(1)
-                )
+                ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
                 dlc.iscallable(),

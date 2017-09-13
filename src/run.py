@@ -125,7 +125,8 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.005
+                                    'pLambda': 0.005,
+                                    'make_training_accuracy_graph': False
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size
@@ -151,7 +152,7 @@ def main():
     logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())
     logger.info('##################################################################\n')
     
-    train.train(raw_data_folder,
+    train.main(raw_data_folder,
           vgg16_folder,
           globalParams,
           hyper.freeze()
