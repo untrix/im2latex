@@ -104,7 +104,11 @@ data
 data/
 ShowAndTellSrc/
 tb_metrics/
+tb_metrics_dev/
 *.out
 .vscode/
 *.py~
 *.tgz
+bin/conda
+bin/activate
+bin/deactivate

@@ -473,7 +473,8 @@ def create_context_iterators(raw_data_dir_,
                              image_processor_=None):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
-                                       hyper.B, 
+                                       hyper.B,
+                                       hyper.logger,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     batch_iterator_train = BatchContextIterator(df_train,

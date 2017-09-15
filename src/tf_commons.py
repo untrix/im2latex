@@ -848,7 +848,16 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         return d
 
 def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
-    """Compute edit distance for matrix of shape (B,T) """
+    """
+    Compute edit distance of predicted_ids (ignoring blank_tokens) with target_ids (which are assumed to have no blank tokens).
+    The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
+    actually do that.
+    Args:
+        B: batch-size
+        predicted_ids: shape (B, T)
+        target_ids: shape (B, T)
+        blank_token: blank token as defined by CTC. Space-token in our case.
+    """
     with tf.name_scope('edit_distance2D'):
         p_shape = K.int_shape(predicted_ids)
         t_shape = K.int_shape(target_ids)

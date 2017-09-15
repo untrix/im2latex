@@ -94,6 +94,10 @@ def main():
     parser.add_argument("--logdir2", dest="logdir2", action='store_true',
                         help="Log to alternative data_folder " + _logdir2,
                         default=False)
+    parser.add_argument("--swap-memory", dest="swap_memory", action='store_true',
+                        help="swap_memory option of tf.scan and tf.while_loop. Default to False."
+                             " Enabling allows training larger mini-batches at the cost of speed.",
+                        default=False)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -138,7 +142,8 @@ def main():
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.005,
                                     'make_training_accuracy_graph': False,
-                                    'use_ctc_loss': False
+                                    'use_ctc_loss': False,
+                                    "swap_memory": args.swap_memory
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size

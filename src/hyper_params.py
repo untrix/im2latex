@@ -300,6 +300,11 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('beam_width', 'Beam Width to use for beamsearch decoding',
                 integer(1)
                 ),
+            PD('swap_memory',
+               'swap_memory option to tf.scan',
+                boolean,
+                False
+                ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
                 dlc.iscallable(),

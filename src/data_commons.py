@@ -31,15 +31,24 @@ import numpy as np
 
 dict_id2word = None
 i2w_ufunc = None
+logger = None
 
-def initialize(data_dir):
-    global i2w_ufunc, dict_id2word
+def initialize(data_dir, params):
+    global i2w_ufunc, dict_id2word, logger
+    if logger is None:
+        logger = params.logger
     if i2w_ufunc is None:
         dict_id2word = dict_id2word or pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
-        i2w_ufunc = np.frompyfunc(lambda id: dict_id2word[id], 1, 1)
+        def i2w(id):
+            try:
+                return dict_id2word[id]
+            except KeyError as e:
+                logger.critical('i2w: KeyError: %s', e)
+                return '<%d>'%(id,)
+        i2w_ufunc = np.frompyfunc(i2w, 1, 1)
     return i2w_ufunc
 
-def seq2str(arr):
+def seq2str(arr, label):
     """
     Converts a matrix of id-sequences - shaped (B,T) - to an array of strings shaped (B,).
     Uses the supplied dict_id2word to map ids to words. The dictionary must map dtype of
@@ -47,7 +56,7 @@ def seq2str(arr):
     """
     assert i2w_ufunc is not None, "i2w_ufunc is None. Please call initialize first in order to setup i2w_ufunc."
     str_arr = i2w_ufunc(arr) # (B, T)
-    func1d = lambda vec: u"".join(vec)
+    func1d = lambda vec: label + u" " + u"".join(vec)
     return [func1d(vec) for vec in str_arr]
 
 

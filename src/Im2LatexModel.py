@@ -371,7 +371,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
-                                initializer=accum, swap_memory=True)
+                                initializer=accum, 
+                                swap_memory=self.C.swap_memory)
                 ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
                 ## SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
                 yLogits_s = out_s.yLogits
@@ -509,6 +510,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('CTC_Decoder'):
                     yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
+                    ## ctc_beam_search_decoder sometimes produces ID values = -1
                     decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.beam_width, 
                         top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
                     print decoded_ids_sparse[0]
@@ -577,9 +579,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                 beam_width=self.BeamWidth)
                     final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
-                                                                    impute_finished=False,
+                                                                    impute_finished=False, ## Setting this to true causes error
                                                                     maximum_iterations=self.C.MaxDecodeLen,
-                                                                    swap_memory=True)
+                                                                    swap_memory=self.C.swap_memory)
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
                     assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.BeamWidth)
@@ -602,60 +604,57 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
+                T = tf.shape(outputs.ids)[1]
+                bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
+                bm_seq_lens = outputs.seq_lens # (B, BW)
+                assert K.int_shape(bm_seq_lens) == (B, BW)
+                bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
 
-                with tf.name_scope('Pad_EOS'):
+                with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
-                    T = tf.shape(outputs.ids)[1]
-                    seq_lens = outputs.seq_lens # (B, BW)
-                    assert K.int_shape(seq_lens) == (B, BW)
-                    seq_lens_flat = tf.reshape(outputs.seq_lens, shape=[-1]) # (B*BeamWidth,)
+                    seq_lens_flat = tf.reshape(bm_seq_lens, shape=[-1]) # (B*BeamWidth,)
                     assert K.int_shape(seq_lens_flat) == (B*BW,)
-                    seq_mask = tf.sequence_mask(seq_lens_flat, maxlen=T, dtype=tf.int32) # (B*BeamWidth, T)
-                    assert K.int_shape(seq_mask) == (B*BW, None)
+                    seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T, dtype=tf.int32) # (B*BeamWidth, T)
+                    assert K.int_shape(seq_mask_flat) == (B*BW, None)
 
                     # scores are log-probabilities which are negative values
                     # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
                     # Hence they will have no effect on the sequence probabilities
-                    scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
-                    scores_flat = tf.reshape(scores, shape=(B*BW, -1))  * tf.to_float(seq_mask) # (B*BeamWidth, T)
+                    scores_flat = tf.reshape(bm_scores, shape=(B*BW, -1))  * tf.to_float(seq_mask_flat) # (B*BeamWidth, T)
                     scores = tf.reshape(scores_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
                     assert K.int_shape(scores) == (B, BW, None)
+                    ## Sum of log-probabilities == Product of probabilities
+                    seq_scores = tf.reduce_sum(scores, axis=2) # (B, BeamWidth)
 
                     ## Also zero-out tokens after EOS because we set impute_finished = False and as a result we noticed
                     ## ID values = -1 after EOS tokens.
                     ## Conveniently, zero is also the EOS token hence just multiplying the ids with 0 should make them EOS.
-                    ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
-                    ids_flat = tf.reshape(ids, shape=(B*BW, -1)) * seq_mask ## False values become 0
-                    ids = tf.reshape(ids_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
+                    # ids_flat = tf.reshape(bm_ids, shape=(B*BW, -1)) * seq_mask_flat ## False values become 0
+                    # ids = tf.reshape(ids_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
 
-                with tf.name_scope('Score'):
-                    ## Sum of log-probabilities == Product of probabilities
-                    seq_scores = tf.reduce_sum(scores, axis=2) # (B, BeamWidth)
+                ## Select the top scoring beams
+                with tf.name_scope('top_1'):
+                    ## Top 1. I verified that beams in beamsearch_outputs are already sorted by seq_scores.
+                    top1_seq_scores = seq_scores[:,0] # (B,)
+                    top1_ids = bm_ids[:,0,:] # (B, T)
+                    top1_seq_lens = bm_seq_lens[:,0] # (B,)
+                    tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
+                    tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
 
-                    ## Select the top scoring beams
-                    with tf.name_scope('top_1'):
-                        ## Top 1
-                        top1_seq_scores = seq_scores[:,0] # (B,)
-                        top1_ids = ids[:,0,:] # (B, T)
-                        top1_seq_lens = seq_lens[:,0] # (B,)
-                        tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
-                        tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
-                        print "test/top1_seq_lens: ", top1_seq_lens
-
-                    ## Top K
-                    with tf.name_scope('top_%d'%k):
-                        ## Old code not needed because beams are already sorted by beam-score
-                            # topK_seq_scores, topK_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
-                            # topK_ids = tfc.batch_slice(ids, topK_score_indices) # (B, k, T)
-                            # assert K.int_shape(topK_ids) == (B, k, None)
-                            # topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
-                            # assert K.int_shape(topK_seq_lens) == (B, k)
-                        topK_seq_scores = seq_scores[:,:k] # (B, k)
-                        topK_ids = ids[:,:k,:] # (B, k, T)
-                        topK_seq_lens = seq_lens[:, :k] # (B, k)
-                        assert K.int_shape(topK_seq_scores) == (B, k)
-                        assert K.int_shape(topK_seq_lens) == (B, k)
-                        assert K.int_shape(topK_ids) == (B, k, None)
+                ## Top K
+                with tf.name_scope('top_k'):
+                    ## Old code not needed because beams in beamsearch_outputs are already sorted by seq_score
+                        # topK_seq_scores, topK_score_indices = tfc.batch_top_k_2D(seq_scores, k) # (B, k) and (B, k, 2) sorted
+                        # topK_ids = tfc.batch_slice(ids, topK_score_indices) # (B, k, T)
+                        # assert K.int_shape(topK_ids) == (B, k, None)
+                        # topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
+                        # assert K.int_shape(topK_seq_lens) == (B, k)
+                    topK_seq_scores = seq_scores[:,:k] # (B, k)
+                    topK_ids = bm_ids[:,:k,:] # (B, k, T)
+                    topK_seq_lens = bm_seq_lens[:, :k] # (B, k)
+                    assert K.int_shape(topK_seq_scores) == (B, k)
+                    assert K.int_shape(topK_seq_lens) == (B, k)
+                    assert K.int_shape(topK_ids) == (B, k, None)
 
 
                 ## BLEU scores
@@ -739,9 +738,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
-                    'all_ids': ids, # (B, BeamWidth, T),
+                    'all_ids': bm_ids, # (B, BeamWidth, T),
                     'all_id_scores': scores,
-                    'all_seq_lens': outputs.seq_lens, # (B, BeamWidth)
+                    'all_seq_lens': bm_seq_lens, # (B, BeamWidth)
                     'top1_num_hits': top1_num_hits, # scalar
                     'top1_accuracy': top1_accuracy, # scalar
                     'top1_mean_ed': top1_mean_ed, # scalar

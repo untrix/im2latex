@@ -92,7 +92,7 @@ def main(raw_data_folder,
     """
     Start training the model.
     """
-    dtc.initialize(args.generated_data_dir)
+    dtc.initialize(args.generated_data_dir, hyper)
     global logger
     logger = hyper.logger
 
@@ -114,7 +114,7 @@ def main(raw_data_folder,
 
         ##### Training Graph
         with tf.name_scope('Training'):
-            with tf.device('/gpu:0'):
+            with tf.device('/gpu:1'):
                 model = Im2LatexModel(hyper, reuse=False)
                 train_ops = model.build_training_graph()
             with tf.variable_scope('InputQueue'):
@@ -143,7 +143,7 @@ def main(raw_data_folder,
         if (args.make_training_accuracy_graph):
             with tf.name_scope('TrainingAccuracy'):
                 hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
-                with tf.device('/gpu:0'):
+                with tf.device('/gpu:1'):
                     model_predict2 = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
                     tr_acc_ops = model_predict2.test()
                 with tf.variable_scope('InputQueue'):
@@ -159,7 +159,7 @@ def main(raw_data_folder,
 
         printVars(logger)
 
-        config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+        config=tf.ConfigProto(log_device_placement=True, allow_soft_placement=True)
         ## config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as session:
@@ -272,9 +272,9 @@ def ids2str(target_ids, predicted_ids):
         target_ids: Numpy array of shape (B,T)
         predicted_ids: Numpy array of same shape as target_ids
     """
-    target_str = np.expand_dims(dtc.seq2str(target_ids), axis=1)
-    predicted_str = np.expand_dims(dtc.seq2str(predicted_ids),axis=1)
-    return np.concatenate((target_str, predicted_str), axis=1)
+    target_str = np.expand_dims(dtc.seq2str(target_ids, 'Target:'), axis=1)
+    predicted_str = np.expand_dims(dtc.seq2str(predicted_ids, 'Prediction:'),axis=1)
+    return np.concatenate((predicted_str, target_str), axis=1)
 
 def do_validate(step, args, train_it, valid_it):
     valid_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
