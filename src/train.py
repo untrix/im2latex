@@ -117,7 +117,7 @@ def main(raw_data_folder,
             with tf.device('/gpu:1'):
                 model = Im2LatexModel(hyper, reuse=False)
                 train_ops = model.build_training_graph()
-            with tf.variable_scope('InputQueue'):
+            with tf.variable_scope('QueueOps'):
                 enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
             trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
@@ -132,7 +132,7 @@ def main(raw_data_folder,
             with tf.device('/gpu:0'):
                 model_predict = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
                 valid_ops = model_predict.test()
-            with tf.variable_scope('InputQueue'):
+            with tf.variable_scope('QueueOps'):
                 enqueue_op2 = valid_ops.inp_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
             hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
@@ -146,7 +146,7 @@ def main(raw_data_folder,
                 with tf.device('/gpu:1'):
                     model_predict2 = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
                     tr_acc_ops = model_predict2.test()
-                with tf.variable_scope('InputQueue'):
+                with tf.variable_scope('QueueOps'):
                     enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
                     close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
                 assert(num_trainable_vars() == trainable_vars_n)

@@ -92,7 +92,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
-        with tf.variable_scope('Im2LatexStack', reuse=reuse) as outer_scope:
+        with tf.variable_scope('I2L_Outer_Scope', reuse=reuse, regularizer=self.C.weights_regularizer) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
                 self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity,
@@ -105,21 +105,21 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 self._y_ctc = inp_tup.y_ctc
                 self._ctc_len = inp_tup.ctc_len
 
-                if self._params.build_image_context != 0:
-                    ## Image features/context from the Conv-Net
-                    ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-                    self._im = inp_tup.im
-                    ## Set tensor shape because it gets forgotten in the queue
-                    self._im.set_shape((self.C.B,)+self.C.image_shape)
-                    if self._params.build_image_context == 2:
-                        self._a = build_convnet(params, self._im, reuse)
-                    elif self._params.build_image_context == 1:
-                        self._a = build_image_context(params, self._im)
-                    else:
-                        raise AttributeError('build_image_context should be in the range [0,2]. Instead, it is %s'%self._params.build_image_context)
+            if self._params.build_image_context != 0:
+                ## Image features/context from the Conv-Net
+                ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+                self._im = inp_tup.im
+                ## Set tensor shape because it gets forgotten in the queue
+                self._im.set_shape((self.C.B,)+self.C.image_shape)
+                if self._params.build_image_context == 2:
+                    self._a = build_convnet(params, self._im, reuse)
+                elif self._params.build_image_context == 1:
+                    self._a = build_image_context(params, self._im)
                 else:
-                    ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
-                    self._a = inp_tup.im
+                    raise AttributeError('build_image_context should be in the range [0,2]. Instead, it is %s'%self._params.build_image_context)
+            else:
+                ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+                self._a = inp_tup.im
 
             ## Set tensor shapes because they get forgotten in the queue
             self._a.set_shape((self.C.B, self.C.L, self.C.D))
@@ -129,7 +129,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             self._ctc_len.set_shape((self.C.B,))
 
             ## RNN portion of the model
-            with tf.variable_scope('Im2LatexRNN') as scope:
+            with tf.variable_scope('I2L_RNN') as scope:
                 super(Im2LatexModel, self).__init__(_scope=scope, name=scope.name)
                 self._rnn_scope = scope
 
@@ -420,7 +420,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert K.int_shape(y_ctc) == (B, None) # (B, T)
                 assert K.int_shape(ctc_len) == (B,)
 
-                ################ Build Cost Function ################
+                ################ Regularization Cost ################
+                with tf.variable_scope('Regularization_Cost'):
+                    reg_losses = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+
+                ################ Build LogLoss ################
                 with tf.variable_scope('LogLoss'):
                     sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
                                                      dtype=self.C.dtype) # (B, T)
@@ -504,9 +508,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
                     assert K.int_shape(ctc_loss) == tuple()
                 if self.C.use_ctc_loss:
-                    cost = ctc_loss + alpha_penalty
+                    cost = ctc_loss + alpha_penalty + reg_losses
                 else:
-                    cost = log_likelihood + alpha_penalty
+                    cost = log_likelihood + alpha_penalty + reg_losses
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('CTC_Decoder'):
@@ -528,6 +532,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
+                tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
                 tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
                 tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
                 tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
@@ -536,13 +541,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
                 ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
                 tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
-
-                ################ Regularization Cost ################
-                with tf.variable_scope('Regularization_Cost'):
-                    pass
-                    #   reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-                    #   reg_constant = 0.01  # Choose an appropriate one.
-                    #   loss = my_normal_loss + reg_constant * sum(reg_losses)
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):

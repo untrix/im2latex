@@ -105,14 +105,6 @@ class Properties(dict):
         dict.update(self, other)
         return self
 
-    # def str_items(self):
-    #     """
-    #     Same as dict.items() except that it converts each key and value to a
-    #     string type. Returns a list of list of strings.
-    #     """
-    #     items = self.items()
-    #     return [[ str(item[0]), str(item[1]) ] for item in items]
-
     def to_dict(self):
         """
         Returns a dictionary with all values resolved but not validated.
@@ -129,12 +121,56 @@ class Properties(dict):
                 resolved[key] = val.to_dict()
             elif issequence(val):
                 resolved[key] = [(v.to_dict() if isinstance(v, Properties) else v) for v in val]
-            elif isinstance(val, dict):
-                resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
+            # elif isinstance(val, dict):
+            #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
             else:
                 resolved[key] = val
 
         return resolved
+
+    def flatten(self, prefix=None):
+        """
+        Returns a table - list of rows - with each row containing a list of two items - the key and the value.
+        Nested key names are appended consequtively using dot (.) as the separator.
+        All values resolved but not validated.
+        Used for debugging and pretty printing. Will not throw an exception
+        if invalid/unset values are detected in order to be useful for debugging.
+        Args:
+            prefix: Name of a prefix to prepend to all key names. Its value is non-none when called recursively
+            to expand a nested Property object.
+        """
+        rows = []
+        if prefix is None:
+            rows.append(['NAME','VALUE'])
+
+        for key in self.keys():
+            row_name = key if prefix is not None else prefix + '.' + key
+            ## Resolve LambdaVals but do not validate them because we
+            ## need this method to work for debugging purposes, therefore we need to
+            ## see the state of the dictionary - especially the invalid values.
+            val = self._get_unvalidated_val(key)
+            if isinstance(val, Properties):
+                rows.extend(val.flatten(row_name))
+            elif issequence(val):
+                for i, v in enumerate(val, start=1):
+                    name = '%s.%d'%(row_name,i)
+                    if not isinstance(v, Properties):
+                        rows.append([name, str(v)])
+                    else:
+                        rows.extend(v.flatten(name))
+            # elif isinstance(val, dict):
+            #     for k, v in val.iteritems():
+            #         name = '%s.%s'%(row_name,k)
+            #         if not isinstance(v, Properties):
+            #             rows.append([name, str(v)])
+            #         else:
+            #             rows.extend(v.flatten(name))
+            else:
+                rows.append(row_name, val)
+
+            rows.append(row)
+
+        return rows
 
     def pformat(self):
         return pprint.pformat(self.to_dict())
@@ -644,10 +680,10 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
         trunc = np_seq[:seq_len]
         if trunc[-1] != 0:
             trunc = np.append(trunc, [0])
-            print 'WARNING: No EOS tokens in sequence of length %d'%seq_len
+            print('WARNING: No EOS tokens in sequence of length %d'%seq_len)
         elif trunc[-2] == 0:
             trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
-            print 'WARNING: More than one EOS tokens in sequence of length %d'%seq_len
+            print('WARNING: More than one EOS tokens in sequence of length %d'%seq_len)
 
         squashed = trunc[trunc != remove_val]
         sq_batch.append(squashed.tolist())
@@ -687,10 +723,10 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
                                                         predicted_seq,
                                                         weights=BLEU_WEIGHTS[target_len])
         scores.append(score)
-        print 'BLEU Score = %f'%score
-        print 'Target = %s'%target
-        print 'Predicted = %s'%predicted_seq
-        print 'BLEU Weights = %s'%BLEU_WEIGHTS[target_len]
+        print ('BLEU Score = %f'%score)
+        print ('Target = %s'%target)
+        print ('Predicted = %s'%predicted_seq)
+        print ('BLEU Weights = %s'%BLEU_WEIGHTS[target_len])
 
     return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)

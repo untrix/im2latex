@@ -161,6 +161,11 @@ class GlobalParams(dlc.HyperParams):
            (np.int32, np.int64),
            np.int32
            ),
+        PD('rLambda', 
+            'Lambda value (scale) for regularizer.',
+            decimal(),
+            0.0005
+            ),
         PD('weights_initializer',
               'Tensorflow weights initializer function',
               iscallableOrNone(),
@@ -175,9 +180,8 @@ class GlobalParams(dlc.HyperParams):
               ),
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
-              iscallable(noneokay=True), 
-              None
-              # tf.contrib.layers.l2_regularizer(scale, scope=None)
+              iscallableOrNone(),
+              LambdaVal(lambda _, p: tf.contrib.layers.l2_regularizer(p.rLambda, scope='L2_Regularizer'))
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
         PD('biases_regularizer',
@@ -292,7 +296,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
                "ctc_loss will be logged.",
                boolean,
-               True),
+               False),
             PD('no_ctc_merge_repeated',
                "(boolean): Negated value of ctc_merge_repeated argument for ctc operations",
                boolean,
