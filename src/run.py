@@ -143,7 +143,8 @@ def main():
                                     'pLambda': 0.005,
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': False,
-                                    "swap_memory": args.swap_memory
+                                    "swap_memory": args.swap_memory,
+                                    'tf_session_allow_growth': False
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size

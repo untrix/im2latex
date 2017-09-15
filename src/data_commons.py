@@ -38,7 +38,8 @@ def initialize(data_dir, params):
     if logger is None:
         logger = params.logger
     if i2w_ufunc is None:
-        dict_id2word = dict_id2word or pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
+        dict_id2word = pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
+        dict_id2word[-1] = u'<-1>' ## Catch -1s that beamsearch emits after EOS.
         def i2w(id):
             try:
                 return dict_id2word[id]

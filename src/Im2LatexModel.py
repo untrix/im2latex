@@ -421,7 +421,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert K.int_shape(ctc_len) == (B,)
 
                 ################ Build Cost Function ################
-                with tf.variable_scope('Cost'):
+                with tf.variable_scope('LogLoss'):
                     sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
                                                      dtype=self.C.dtype) # (B, T)
                     assert K.int_shape(sequence_mask) == (B,None) # (B,T)
@@ -454,8 +454,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
                     assert K.int_shape(log_likelihood) == tuple()
 
-                    ################   Calculate the alpha penalty:   ################
-                    #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
+                ################   Calculate the alpha penalty:   ################
+                #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
+                with tf.variable_scope('AlphaPenalty'):
                     alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
                     if self.C.MeanSumAlphaEquals1:
                         mean_sum_alpha_i = 1.0
@@ -535,6 +536,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
                 ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
                 tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
+
+                ################ Regularization Cost ################
+                with tf.variable_scope('Regularization_Cost'):
+                    pass
+                    #   reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+                    #   reg_constant = 0.01  # Choose an appropriate one.
+                    #   loss = my_normal_loss + reg_constant * sum(reg_losses)
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):

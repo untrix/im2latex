@@ -305,6 +305,11 @@ class Im2LatexModelParams(dlc.HyperParams):
                 boolean,
                 False
                 ),
+            PD('tf_session_allow_growth',
+               'tf ConfigProto.gpu_option_allow_growth. Setting this will allow the gpu memory to be allocated incrementally instead of all at once.',
+                boolean,
+                False
+                ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
                 dlc.iscallable(),

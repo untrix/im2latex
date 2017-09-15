@@ -160,7 +160,7 @@ def main(raw_data_folder,
         printVars(logger)
 
         config=tf.ConfigProto(log_device_placement=True, allow_soft_placement=True)
-        ## config.gpu_options.allow_growth = True
+        config.gpu_options.allow_growth = hyper.tf_session_allow_growth
 
         with tf.Session(config=config) as session:
             logger.info( 'Flushing graph to disk')
