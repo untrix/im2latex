@@ -47,8 +47,11 @@ def main():
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
-    parser.add_argument("--beam-width", "-w", dest="beam_width", type=int,
-                        help="Beamwidth. If unspecified, defaults to 10",
+    parser.add_argument("--seq2seq-beam-width", "-w", dest="beam_width", type=int,
+                        help="seq2seq Beamwidth. If unspecified, defaults to 10",
+                        default=10)
+    parser.add_argument("--ctc-beam-width", dest="beam_width", type=int,
+                        help="CTC Beamwidth. If unspecified, defaults to 10",
                         default=10)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
                         help="Number of training steps after which to log results. Defaults to 50 if unspecified",
@@ -132,7 +135,8 @@ def main():
                                     'generated_data_dir': os.path.join(data_folder, 'generated2'),
                                     'image_dir': image_folder,
                                     'logger': logger,
-                                    'beam_width':args.beam_width,
+                                    'ctc_beam_width': args.ctc_beam_width,
+                                    'seq2seq_beam_width': args.seq2seq_beam_width,
                                     'valid_frac': args.valid_frac,
                                     'valid_epochs': args.valid_epochs,
                                     'print_batch': args.print_batch,

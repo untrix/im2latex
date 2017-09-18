@@ -83,16 +83,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, beamsearch_width=1, reuse=True):
+    def __init__(self, params, seq2seq_beam_width=1, reuse=True):
         """
         Args:
             params (Im2LatexModelParams)
-            beamsearch_width (integer): Only used when inferencing with beamsearch. Otherwise set it to 1.
+            seq2seq_beam_width (integer): Only used when inferencing with beamsearch. Otherwise set it to 1.
                 Will cause the batch_size in internal assert statements to get multiplied by beamwidth.
             reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
-        with tf.variable_scope('I2L_Outer_Scope', reuse=reuse, regularizer=self.C.weights_regularizer) as outer_scope:
+        with tf.variable_scope('I2L_Outer_Scope', reuse=reuse) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
                 self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity,
@@ -134,19 +134,19 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 self._rnn_scope = scope
 
                 ## Beam Width to be supplied to BeamsearchDecoder. It essentially broadcasts/tiles a
-                ## batch of input from size B to B * BeamWidth. Set this value to 1 in the training
+                ## batch of input from size B to B * Seq2SeqBeamWidth. Set this value to 1 in the training
                 ## phase.
-                self._beamsearch_width = beamsearch_width
+                self._seq2seq_beam_width = seq2seq_beam_width
 
                 ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
-                self._x_0 = tf.ones(shape=(1, self.C.B*beamsearch_width),
+                self._x_0 = tf.ones(shape=(1, self.C.B*seq2seq_beam_width),
                                     dtype=self.C.int_type,
                                     name='begin_sequence')
 
                 self._calstms = []
                 for i, rnn_params in enumerate(self.C.CALSTM_STACK, start=1):
                     with tf.variable_scope('CALSTM_%d'%i) as var_scope:
-                        self._calstms.append(CALSTM(rnn_params, self._a, beamsearch_width, var_scope))
+                        self._calstms.append(CALSTM(rnn_params, self._a, seq2seq_beam_width, var_scope))
                 self._CALSTM_stack = tf.nn.rnn_cell.MultiRNNCell(self._calstms)
                 self._num_calstm_layers = len(self.C.CALSTM_STACK)
 
@@ -160,12 +160,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             self._init_state_model = self._init_state()
 
     @property
-    def BeamWidth(self):
-        return self._beamsearch_width
+    def Seq2SeqBeamWidth(self):
+        return self._seq2seq_beam_width
 
     @property
     def RuntimeBatchSize(self):
-        return self.C.B * self.BeamWidth
+        return self.C.B * self.Seq2SeqBeamWidth
 
 #    def _set_beamwidth(self, beamwidth):
 #        self._beamsearch_width = beamwidth
@@ -275,9 +275,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):
                 with tf.variable_scope('Initializer_MLP'):
 
-                    ## Broadcast im_context to BeamWidth
-                    if self.BeamWidth > 1:
-                        a = K.tile(self._a, (self.BeamWidth,1,1))
+                    ## Broadcast im_context to Seq2SeqBeamWidth
+                    if self.Seq2SeqBeamWidth > 1:
+                        a = K.tile(self._a, (self.Seq2SeqBeamWidth,1,1))
                         batchsize = self.RuntimeBatchSize
                     else:
                         a = self._a
@@ -422,7 +422,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 ################ Regularization Cost ################
                 with tf.variable_scope('Regularization_Cost'):
-                    reg_losses = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+                    reg_losses = self.C.rLambda * tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
 
                 ################ Build LogLoss ################
                 with tf.variable_scope('LogLoss'):
@@ -473,11 +473,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                     sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
                     squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
-                    alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                    alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
-                    mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
+                    alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False) # (N, B)
+                    # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                    # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
+                    ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
+                    ase_max = tf.constant((L-1.0) / L*1.0 ) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype)) # (B,)
+                    ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
+                    normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
+                    mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
+                    alpha_penalty = self.C.pLambda * mean_ase # scalar
                     mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
-                    mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
+                    # mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
+                    # mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
                     assert K.int_shape(alpha_penalty) == tuple()
 
                 ################ Build CTC Cost Function ################
@@ -516,7 +523,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 with tf.variable_scope('CTC_Decoder'):
                     yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
                     ## ctc_beam_search_decoder sometimes produces ID values = -1
-                    decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.beam_width, 
+                    decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width, 
                         top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
                     print decoded_ids_sparse[0]
                     ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=0) # (B, T)
@@ -537,7 +544,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
                 tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
                 tf.summary.scalar('training/total_cost/', cost, collections=['training'])
-                tf.summary.scalar('training/alpha_squared_error/', alpha_squared_error, collections=['training'])
+                tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
                 tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
                 ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
                 tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
@@ -557,8 +564,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'alpha_penalty': alpha_penalty,
                         'cost': cost,
                         'global_step':global_step,
-                        'mean_sum_alpha_i': mean_sum_alpha_i,
-                        'mean_sum_alpha_i2': mean_sum_alpha_i2,
+                        # 'mean_sum_alpha_i': mean_sum_alpha_i,
+                        # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len,
                         'predicted_ids': ctc_decoded_ids,
                         'y_s': self._y_s
@@ -582,15 +589,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                 begin_tokens,
                                                                 0,
                                                                 self._init_state_model,
-                                                                beam_width=self.BeamWidth)
+                                                                beam_width=self.Seq2SeqBeamWidth)
                     final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False, ## Setting this to true causes error
                                                                     maximum_iterations=self.C.MaxDecodeLen,
                                                                     swap_memory=self.C.swap_memory)
-                    assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.BeamWidth)
-                    assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.BeamWidth)
-                    assert K.int_shape(final_sequence_lengths) == (self.C.B, self.BeamWidth)
+                    assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.Seq2SeqBeamWidth)
+                    assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth)
+                    assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
                     # print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
                     # ids = tf.not_equal(final_outputs.predicted_ids, 0)
                     return dlc.Properties({
@@ -602,7 +609,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def test(self):
         """ Test one batch of input """
         B = self.C.B
-        BW = self.BeamWidth
+        BW = self.Seq2SeqBeamWidth
         k = min([self.C.k, BW])
         
         with tf.variable_scope(self.outer_scope) as var_scope:
@@ -611,32 +618,32 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
                 T = tf.shape(outputs.ids)[1]
-                bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, BeamWidth, T)
+                bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, Seq2SeqBeamWidth, T)
                 bm_seq_lens = outputs.seq_lens # (B, BW)
                 assert K.int_shape(bm_seq_lens) == (B, BW)
-                bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, BeamWidth, T)
+                bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, Seq2SeqBeamWidth, T)
 
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
-                    seq_lens_flat = tf.reshape(bm_seq_lens, shape=[-1]) # (B*BeamWidth,)
+                    seq_lens_flat = tf.reshape(bm_seq_lens, shape=[-1]) # (B*Seq2SeqBeamWidth,)
                     assert K.int_shape(seq_lens_flat) == (B*BW,)
-                    seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T, dtype=tf.int32) # (B*BeamWidth, T)
+                    seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T, dtype=tf.int32) # (B*Seq2SeqBeamWidth, T)
                     assert K.int_shape(seq_mask_flat) == (B*BW, None)
 
                     # scores are log-probabilities which are negative values
                     # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
                     # Hence they will have no effect on the sequence probabilities
-                    scores_flat = tf.reshape(bm_scores, shape=(B*BW, -1))  * tf.to_float(seq_mask_flat) # (B*BeamWidth, T)
-                    scores = tf.reshape(scores_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
+                    scores_flat = tf.reshape(bm_scores, shape=(B*BW, -1))  * tf.to_float(seq_mask_flat) # (B*Seq2SeqBeamWidth, T)
+                    scores = tf.reshape(scores_flat, shape=(B, BW, -1)) # (B, Seq2SeqBeamWidth, T)
                     assert K.int_shape(scores) == (B, BW, None)
                     ## Sum of log-probabilities == Product of probabilities
-                    seq_scores = tf.reduce_sum(scores, axis=2) # (B, BeamWidth)
+                    seq_scores = tf.reduce_sum(scores, axis=2) # (B, Seq2SeqBeamWidth)
 
                     ## Also zero-out tokens after EOS because we set impute_finished = False and as a result we noticed
                     ## ID values = -1 after EOS tokens.
                     ## Conveniently, zero is also the EOS token hence just multiplying the ids with 0 should make them EOS.
                     # ids_flat = tf.reshape(bm_ids, shape=(B*BW, -1)) * seq_mask_flat ## False values become 0
-                    # ids = tf.reshape(ids_flat, shape=(B, BW, -1)) # (B, BeamWidth, T)
+                    # ids = tf.reshape(ids_flat, shape=(B, BW, -1)) # (B, Seq2SeqBeamWidth, T)
 
                 ## Select the top scoring beams
                 with tf.name_scope('top_1'):
@@ -744,9 +751,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
-                    'all_ids': bm_ids, # (B, BeamWidth, T),
+                    'all_ids': bm_ids, # (B, Seq2SeqBeamWidth, T),
                     'all_id_scores': scores,
-                    'all_seq_lens': bm_seq_lens, # (B, BeamWidth)
+                    'all_seq_lens': bm_seq_lens, # (B, Seq2SeqBeamWidth)
                     'top1_num_hits': top1_num_hits, # scalar
                     'top1_accuracy': top1_accuracy, # scalar
                     'top1_mean_ed': top1_mean_ed, # scalar

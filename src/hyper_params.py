@@ -142,7 +142,7 @@ class GlobalParams(dlc.HyperParams):
            instanceofOrNone(tfc.DropoutParams)
            ),
         PD('dtype',
-           'tensorflow_dtype for the entire model.',
+           'tensorflow float type for the entire model.',
            (tf.float32, tf.float64),
            tf.float32
            ),
@@ -161,11 +161,6 @@ class GlobalParams(dlc.HyperParams):
            (np.int32, np.int64),
            np.int32
            ),
-        PD('rLambda', 
-            'Lambda value (scale) for regularizer.',
-            decimal(),
-            0.0005
-            ),
         PD('weights_initializer',
               'Tensorflow weights initializer function',
               iscallableOrNone(),
@@ -178,10 +173,15 @@ class GlobalParams(dlc.HyperParams):
               iscallableOrNone(),
               None
               ),
+        PD('rLambda',
+            'Lambda value (scale) for regularizer.',
+            decimal(),
+            0.0005
+            ),
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
               iscallableOrNone(),
-              LambdaVal(lambda _, p: tf.contrib.layers.l2_regularizer(p.rLambda, scope='L2_Regularizer'))
+              LambdaVal(lambda _, p: tf.contrib.layers.l2_regularizer(1.0, scope='L2_Regularizer'))
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
         PD('biases_regularizer',
@@ -301,7 +301,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                "(boolean): Negated value of ctc_merge_repeated argument for ctc operations",
                boolean,
                True),
-            PD('beam_width', 'Beam Width to use for beamsearch decoding',
+            PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
                 integer(1)
                 ),
             PD('swap_memory',

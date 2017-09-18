@@ -130,7 +130,7 @@ def main(raw_data_folder,
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
             with tf.device('/gpu:0'):
-                model_predict = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
+                model_predict = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
                 valid_ops = model_predict.test()
             with tf.variable_scope('QueueOps'):
                 enqueue_op2 = valid_ops.inp_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
@@ -144,7 +144,7 @@ def main(raw_data_folder,
             with tf.name_scope('TrainingAccuracy'):
                 hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.device('/gpu:1'):
-                    model_predict2 = Im2LatexModel(hyper_predict, hyper.beam_width, reuse=True)
+                    model_predict2 = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
                     tr_acc_ops = model_predict2.test()
                 with tf.variable_scope('QueueOps'):
                     enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
@@ -165,6 +165,9 @@ def main(raw_data_folder,
         with tf.Session(config=config) as session:
             logger.info( 'Flushing graph to disk')
             tf_sw = tf.summary.FileWriter(args.logdir, graph=graph)
+            ph_params = tf.placeholder(tf.string, name='hyper_params')
+            log_params = session.run(tf.summary.text('hyper_params_logger', ph_params), feed_dict={ph_params:hyper.to_table()})
+            tf_sw.add_summary(log_params, global_step=None)
             tf_sw.flush()
             tf.global_variables_initializer().run()
 
@@ -310,7 +313,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             tf_sw.add_summary(logs_topK, step)
             tf_sw.flush()
             metrics = dlc.Properties({
-                'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * hyper.beam_width))
+                'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * hyper.seq2seq_beam_width))
                 })
             logger.info( '############ RANDOM TRAINING BATCH ############')
             logger.info('bok ids=\n%s', bok_ids)
@@ -363,7 +366,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             hits.append(num_hits)
 
         metrics = dlc.Properties({
-            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.beam_width)
+            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.seq2seq_beam_width)
             })
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={

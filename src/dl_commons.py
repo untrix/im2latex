@@ -23,6 +23,7 @@ Tested on python 2.7
 """
 import collections
 import pprint
+import numpy as np
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -128,9 +129,9 @@ class Properties(dict):
 
         return resolved
 
-    def flatten(self, prefix=None):
+    def to_table(self, prefix=None):
         """
-        Returns a table - list of rows - with each row containing a list of two items - the key and the value.
+        Returns a table - a 2D numpy array - with each row containing a list of two items - the key and the value.
         Nested key names are appended consequtively using dot (.) as the separator.
         All values resolved but not validated.
         Used for debugging and pretty printing. Will not throw an exception
@@ -144,7 +145,7 @@ class Properties(dict):
             rows.append(['NAME','VALUE'])
 
         for key in self.keys():
-            row_name = key if prefix is not None else prefix + '.' + key
+            row_name = key if prefix is None else prefix + '.' + key
             ## Resolve LambdaVals but do not validate them because we
             ## need this method to work for debugging purposes, therefore we need to
             ## see the state of the dictionary - especially the invalid values.
@@ -166,11 +167,9 @@ class Properties(dict):
             #         else:
             #             rows.extend(v.flatten(name))
             else:
-                rows.append(row_name, val)
+                rows.append([row_name, val])
 
-            rows.append(row)
-
-        return rows
+        return np.asarray(rows)
 
     def pformat(self):
         return pprint.pformat(self.to_dict())

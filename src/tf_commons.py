@@ -465,6 +465,8 @@ class ConvLayer(object):
                                                 trainable=True,
                                                 weights_initializer=params.weights_initializer,
                                                 biases_initializer=params.biases_initializer,
+                                                weights_regularizer=params.weights_regularizer,
+                                                biases_regularizer=params.biases_regularizer,
                                                 data_format='NHWC'
                                                 )
 
