@@ -151,25 +151,25 @@ class Properties(dict):
             ## see the state of the dictionary - especially the invalid values.
             val = self._get_unvalidated_val(key)
             if isinstance(val, Properties):
-                rows.extend(val.flatten(row_name))
+                rows.extend(val.to_table(row_name))
             elif issequence(val):
                 for i, v in enumerate(val, start=1):
                     name = '%s.%d'%(row_name,i)
                     if not isinstance(v, Properties):
-                        rows.append([name, str(v)])
+                        rows.append([name, unicode(v)])
                     else:
-                        rows.extend(v.flatten(name))
+                        rows.extend(v.to_table(name))
             # elif isinstance(val, dict):
             #     for k, v in val.iteritems():
             #         name = '%s.%s'%(row_name,k)
             #         if not isinstance(v, Properties):
             #             rows.append([name, str(v)])
             #         else:
-            #             rows.extend(v.flatten(name))
+            #             rows.extend(v.to_table(name))
             else:
                 rows.append([row_name, val])
 
-        return np.asarray(rows)
+        return np.asarray(rows, dtype=np.unicode_)
 
     def pformat(self):
         return pprint.pformat(self.to_dict())
@@ -359,7 +359,11 @@ class Params(Properties):
 #                    _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
                     val1 = vals1_._rvn(name)
                     val2 = vals2_._rvn(name)
-                    _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
+                    if (prop.validator is None) or (None not in prop.validator):
+                        _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
+                    else:
+                        _vals[name] = val1
+
                     if isinstance(_vals[name], LambdaVal):
                         ## This is a case where a proxy function has been provided
                         ## in place of a value.
@@ -470,9 +474,12 @@ class Params(Properties):
         return self
 
     def fill(self, other={}):
-        """Sets unset properties of self with values in other if present"""
+        """
+        Sets unset or None properties of self with values in other if present.
+        ** WARNING** Please note that it will override None values even if they are valid.
+        """
         for prop in self.protoS:
-            if not prop.name in self and prop.name in other:
+            if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
                 self[prop.name] = other[prop.name]
 
     @property
@@ -491,14 +498,14 @@ class Params(Properties):
 class HyperParams(Params):
     """
     Params class specialized for HyperParams. Adds the following semantic:
-        If a key has value None, then it is deemed absent from the dictionary. CallshasDefault
+        If a key has value None, then it is deemed absent from the dictionary. Calls
         to __contains__ and _get_val_ will beget a KeyError - as if the property was
         absent from the dictionary. This is necessary to catch cases wherein one
         has forgotten to set a mandatory property. Mandatory properties must not have
         default values in their descriptor. A property that one is okay forgetting
         to specify should have a None default value set in its descriptor which may
         include 'None'.
-        However as with Params, it is still possible to initialize or set a property value to
+        However as with the Params class, it is still possible to initialize or set a property value to
         None eventhough None may not appear in the valid-list. We allow this in
         order to enable lazy initialization - i.e. a case where the
         code may wish to initialize a property to None, and set it to a valid value

@@ -129,10 +129,12 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         """
                         ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
                         ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
-                        h = K.tile(K.expand_dims(h, axis=1), (1,L,1))
+                        h = tf.identity(K.tile(K.expand_dims(h, axis=1), (1,L,1)), name='h_t-1')
+                        a = tf.identity(a, name='a')
                         ## Concatenate a and h. Final shape = (B, L, D+n)
                         ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
-                        ah = tfc.MLPStack(CONF.att_layers)(ah); dim = CONF.att_layers.layers_units[-1]
+                        ah = tfc.MLPStack(CONF.att_layers)(ah)
+                        dim = CONF.att_layers.layers_units[-1]
                         assert K.int_shape(ah) == (B, L, dim)
 
                         ## Below is roughly how it is implemented in the code released by the authors of the paper
@@ -147,7 +149,9 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         ## another set of weights to accomplish this. So we'll keeep that as an option.
                         if CONF.att_weighted_gather:
                             with tf.variable_scope('weighted_gather'):
-                                ah = tfc.FCLayer({'activation_fn':None, 'num_units':1, 'tb':CONF.tb})(ah) # output shape = (B, L, 1)
+                                # Gather layer may have dropout based on CONF.att_layers
+                                gather_params = tfc.FCLayerParams(CONF.att_layers).updated({'activation_fn':None, 'num_units':1})
+                                ah = tfc.FCLayer(gather_params)(ah) # output shape = (B, L, 1)
                                 ah = K.squeeze(ah, axis=2) # output shape = (B, L)
                         else:
                             ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
@@ -161,14 +165,13 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         ## Concatenate a and h. Final shape will be (B, L*D+n)
                         with tf.variable_scope('a_flatten_concat_h'):
                             ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
-                        ah = tfc.MLPStack(CONF.att_layers)(ah);
-                        ## At this point, ah.shape = (B, L)
+                        ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
                         dim = CONF.att_layers.layers_units[-1]
                         assert dim == L
                         assert K.int_shape(ah) == (B, L)
 
-                    alpha = tf.nn.softmax(ah) # output shape = (B, L)
-                    alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
+                    alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
+                    # alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
 
                     assert K.int_shape(alpha) == (B, L)
                     return alpha

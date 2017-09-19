@@ -47,10 +47,10 @@ def main():
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
                         help="Batchsize. If unspecified, defaults to the default value in hyper_params",
                         default=None)
-    parser.add_argument("--seq2seq-beam-width", "-w", dest="beam_width", type=int,
+    parser.add_argument("--seq2seq-beam-width", "-w", dest="seq2seq_beam_width", type=int,
                         help="seq2seq Beamwidth. If unspecified, defaults to 10",
                         default=10)
-    parser.add_argument("--ctc-beam-width", dest="beam_width", type=int,
+    parser.add_argument("--ctc-beam-width", dest="ctc_beam_width", type=int,
                         help="CTC Beamwidth. If unspecified, defaults to 10",
                         default=10)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
@@ -101,6 +101,9 @@ def main():
                         help="swap_memory option of tf.scan and tf.while_loop. Default to False."
                              " Enabling allows training larger mini-batches at the cost of speed.",
                         default=False)
+    parser.add_argument("--restore", dest="restore_logdir", type=str,
+                        help="restore from checkpoint. Provide logdir path as argument",
+                        default=None)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -119,7 +122,9 @@ def main():
     else:
         vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
-    if args.logdir2:
+    if args.restore_logdir is not None:
+        tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.restore_logdir)})
+    elif args.logdir2:
         tb = tfc.TensorboardParams({'tb_logdir':_logdir2})
     else:
         tb = tfc.TensorboardParams({'tb_logdir':_logdir})
@@ -148,7 +153,8 @@ def main():
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': False,
                                     "swap_memory": args.swap_memory,
-                                    'tf_session_allow_growth': False
+                                    'tf_session_allow_growth': False,
+                                    'restore_from_checkpoint': args.restore_logdir is not None
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size
@@ -163,7 +169,10 @@ def main():
     hyper = hyper_params.make_hyper(globalParams)
 
     # Add logging file handler now that we have instantiated hyperparams.
-    globalParams.logdir = tfc.makeTBDir(hyper.tb)
+    if args.restore_logdir is not None:
+        globalParams.logdir = args.restore_logdir
+    else:
+        globalParams.logdir = tfc.makeTBDir(hyper.tb)
     fh = logging.FileHandler(os.path.join(globalParams.logdir, 'training.log'))
     fh.setFormatter(hyper_params.makeFormatter())
     logger.addHandler(fh)

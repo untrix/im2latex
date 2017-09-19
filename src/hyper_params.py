@@ -34,7 +34,7 @@ import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
-from tf_commons import (ConvStackParams, ConvParams, ConvLayerParams, MaxpoolParams)
+from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams)
 
 def setLogLevel(logger, level):
     logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
@@ -138,7 +138,7 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('dropout',
            'Dropout parameters if any - global. Absence of this property '
-           'signals no dropouts.',
+           'signals no dropouts. If this is non-None, then weights regularizer should be None.',
            instanceofOrNone(tfc.DropoutParams)
            ),
         PD('dtype',
@@ -163,15 +163,14 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('weights_initializer',
               'Tensorflow weights initializer function',
-              iscallableOrNone(),
+              iscallable(),
               tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32) ## = glorot_uniform
-              # tf.contrib.layers.xavier_initializer_conv2d()
               # tf.contrib.layers.variance_scaling_initializer()
               ),
         PD('biases_initializer',
               'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
-              iscallableOrNone(),
-              None
+              iscallable(),
+              tf.zeros_initializer()
               ),
         PD('rLambda',
             'Lambda value (scale) for regularizer.',
@@ -179,9 +178,9 @@ class GlobalParams(dlc.HyperParams):
             0.0005
             ),
         PD('weights_regularizer',
-              'L1 / L2 norm regularization',
+              'L1 / L2 norm regularization. If this is non-None then dropout should be None.',
               iscallableOrNone(),
-              LambdaVal(lambda _, p: tf.contrib.layers.l2_regularizer(1.0, scope='L2_Regularizer'))
+              tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
         PD('biases_regularizer',
@@ -271,27 +270,28 @@ class Im2LatexModelParams(dlc.HyperParams):
         return GlobalParams.proto + (
         ### Training Parameters ####
             PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
-            'of the bin-size',
-            boolean,
-            True),
+                'of the bin-size',
+                boolean,
+                True
+                ),
             PD('input_queue_capacity', 'Capacity of input queue.',
-            integer(),
-            5),
+                integer(),
+                5),
             PD('DecodingSlack',
-            "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
-            "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
-            "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
-            "do so by determining the extra slack to give to the network - the more slack we give it "
-            "presumably that much easier the learning will be. This parameter includes that slack. In "
-            "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
-            integer(0),
-            20
-            ),
+                "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
+                "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
+                "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
+                "do so by determining the extra slack to give to the network - the more slack we give it "
+                "presumably that much easier the learning will be. This parameter includes that slack. In "
+                "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
+                integer(0),
+                20
+                ),
             PD('MaxDecodeLen',
-            "See the description for MaxSeqLen and DecodingSlack",
-            integer(151),
-            LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
-            ),
+                "See the description for MaxSeqLen and DecodingSlack",
+                integer(151),
+                LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
+                ),
             PD('use_ctc_loss',
                "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
                "ctc_loss will be logged.",
@@ -302,6 +302,9 @@ class Im2LatexModelParams(dlc.HyperParams):
                boolean,
                True),
             PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
+                integer(1)
+                ),
+            PD('seq2seq_beam_width', 'Beam Width to use for seq2seq.BeamSearchDecoder, which is different from the ctc_beamsearch_decoder',
                 integer(1)
                 ),
             PD('swap_memory',
@@ -316,10 +319,15 @@ class Im2LatexModelParams(dlc.HyperParams):
                 ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
-                dlc.iscallable(),
+                iscallable(),
                ## tf.contrib.layers.xavier_initializer()
                equalto('weights_initializer')
                ),
+        PD('embeddings_regularizer',
+              'L1 / L2 norm regularization',
+              iscallableOrNone(),
+              equalto('weights_regularizer')
+              ),
         ### ConvNet Params ###
             PD('CONVNET', 'ConvStackParams for the convent',
                 instanceof(ConvStackParams)),
@@ -340,20 +348,22 @@ class Im2LatexModelParams(dlc.HyperParams):
                 issequenceof(int),
                 LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
                 ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
-            ),
+                ),
         ### Decoder CALSTM Params ###
             PD('CALSTM_STACK',
                'sequence of CALSTMParams, one for each CALSTM layer in the stack. The paper '
                "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
                "that the published results are based on one layer alone.",
-               issequenceof(CALSTMParams)),
+               issequenceof(CALSTMParams)
+               ),
         ### Output MLP
             PD('output_follow_paper',
                '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
                'Setting this value to True (default) will follow the paper"s logic. Otherwise'
                "a straight MLP will be used.",
                boolean,
-               True),
+               True
+               ),
             PD('output_layers',
                "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
                "must have num_units = K. If output_follow_paper==True, an additional initial layer is created "
@@ -364,7 +374,8 @@ class Im2LatexModelParams(dlc.HyperParams):
                         ## Last layer must have num_units = K because it outputs logits.
                         ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
                         'layers_units': (equalto('m',GLOBAL), equalto('K',GLOBAL)),
-                        'activation_fn': tf.nn.relu # paper has it set to relu
+                        'activation_fn': tf.nn.relu, # paper has it set to relu
+                        'op_name': 'yLogits_MLP'
                         }).freeze()
                 ),
         ### Initializer MLP ###
@@ -430,6 +441,7 @@ def make_hyper(initVals={}):
     initVals = dlc.Properties(initVals)
     ## initVals.image_frame_width = 1
     globals = GlobalParams(initVals)
+    assert (globals.weights_regularizer is None) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
@@ -438,7 +450,10 @@ def make_hyper(initVals={}):
         'op_name': 'Convnet',
         'tb': globals.tb,
         'activation_fn': tf.nn.relu,
-        'weights_initializer': tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32),
+        'weights_initializer': globals.weights_initializer,
+        'biases_initializer': globals.biases_initializer,
+        'weights_regularizer': globals.weights_regularizer,
+        'biases_regularizer': globals.biases_regularizer,
         'padding': 'SAME',
         'layers': (
             ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
@@ -465,12 +480,11 @@ def make_hyper(initVals={}):
             # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
         )
     })
-
+    
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),
         'CONVNET': VGG_D
         }).freeze()
-
 
 #    print 'Hyper Params = '
 #    print HYPER

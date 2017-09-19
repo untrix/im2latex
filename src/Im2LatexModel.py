@@ -100,33 +100,37 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                             self.C.int_type, self.C.int_type,
                                             self.C.dtype))
                 inp_tup = InpTup(*self._inp_q.dequeue())
-                self._y_s = inp_tup.y_s
-                self._seq_len = inp_tup.seq_len
-                self._y_ctc = inp_tup.y_ctc
-                self._ctc_len = inp_tup.ctc_len
+                self._y_s = tf.identity(inp_tup.y_s, name='y_s')
+                self._seq_len = tf.identity(inp_tup.seq_len, name='seq_len')
+                self._y_ctc = tf.identity(inp_tup.y_ctc, name='y_ctc')
+                self._ctc_len = tf.identity(inp_tup.ctc_len, name='ctc_len')
+                ## Set tensor shapes because they get forgotten in the queue
+                self._y_s.set_shape((self.C.B, None))
+                self._seq_len.set_shape((self.C.B,))
+                self._y_ctc.set_shape((self.C.B, None))
+                self._ctc_len.set_shape((self.C.B,))
 
+                ## Image features/context
+                if self._params.build_image_context == 0:
+                    ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
+                    self._a = tf.identity(inp_tup.im, name='a')
+                    ## Set tensor shape because it gets forgotten in the queue
+                    self._a.set_shape((self.C.B, self.C.L, self.C.D))
+                else:
+                    ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
+                    self._im = tf.identity(inp_tup.im, name='im')
+                    ## Set tensor shape because it gets forgotten in the queue
+                    self._im.set_shape((self.C.B,)+self.C.image_shape)
+
+            ## Build Convnet if needed
             if self._params.build_image_context != 0:
                 ## Image features/context from the Conv-Net
-                ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
-                self._im = inp_tup.im
-                ## Set tensor shape because it gets forgotten in the queue
-                self._im.set_shape((self.C.B,)+self.C.image_shape)
                 if self._params.build_image_context == 2:
                     self._a = build_convnet(params, self._im, reuse)
                 elif self._params.build_image_context == 1:
                     self._a = build_image_context(params, self._im)
                 else:
                     raise AttributeError('build_image_context should be in the range [0,2]. Instead, it is %s'%self._params.build_image_context)
-            else:
-                ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
-                self._a = inp_tup.im
-
-            ## Set tensor shapes because they get forgotten in the queue
-            self._a.set_shape((self.C.B, self.C.L, self.C.D))
-            self._y_s.set_shape((self.C.B, None))
-            self._seq_len.set_shape((self.C.B,))
-            self._y_ctc.set_shape((self.C.B, None))
-            self._ctc_len.set_shape((self.C.B,))
 
             ## RNN portion of the model
             with tf.variable_scope('I2L_RNN') as scope:
@@ -155,6 +159,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     self._embedding_matrix = tf.get_variable('Embedding_Matrix',
                                                              (self.C.K, self.C.m),
                                                              initializer=self.C.embeddings_initializer,
+                                                             regularizer=self.C.embeddings_regularizer,
                                                              trainable=True)
             ## Init State Model
             self._init_state_model = self._init_state()
@@ -190,15 +195,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ## First layer of output MLP
                     if CONF.output_follow_paper: ## Follow the paper.
+                        affine_params = tfc.FCLayerParams(CONF.output_layers).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
                         ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-                        o_t = tfc.FCLayer({'num_units':m, 'activation_fn':None, 'tb':CONF.tb},
-                                          batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+                        o_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
                         ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
                         o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
                         ## non-linearity for the first layer
-                        o_t = tfc.Activation(CONF, batch_input_shape=(B,m))(o_t)
+                        activation_params = tfc.ActivationParams(CONF).updated({'activation_fn': tf.nn.tanh})
+                        o_t = tfc.Activation(activation_params, batch_input_shape=(B,m))(o_t)
                         dim = m
-                        ## TODO: CHECK DROPOUT: Paper has one dropout layer here
+                        ## DROPOUT: Paper has one dropout layer here
+                        if CONF.output_layers.dropout is not None:
+                            o_t = tfc.DropoutLayer(CONF.output_layers.dropout, batch_input_shape=(B,m))(o_t)
                     else: ## Use a straight MLP Stack
                         o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
                         dim = m+n+D
@@ -206,10 +214,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Regular MLP layers
                     assert CONF.output_layers.layers_units[-1] == Kv
                     logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
-                    ## TODO: CHECK DROPOUT: Paper has a dropout layer after each FC layer including the last one
+                    ## DROPOUT: Paper has a dropout layer after each FC layer including the last one
 
                     assert K.int_shape(logits_t) == (B, Kv)
-                    return tf.nn.softmax(logits_t), logits_t
+                    return tf.nn.softmax(logits_t, name='yProbs'), logits_t
 
     @property
     def output_size(self):
@@ -360,7 +368,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
 #                with tf.variable_scope('TrainingGraph'):
                 ## tf.scan requires time-dimension to be the first dimension
-                y_s = K.permute_dimensions(self._y_s, (1, 0)) # (T, B)
+                # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s') # (T, B)
+                y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
 
                 ################ Build x_s ################
                 ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
@@ -379,8 +388,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_states], axis=0) # (N, T, B, L)
                 ## Switch the batch dimension back to first position - (B, T, ...)
                 ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
-                yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
-                alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
+                # yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
+                # alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
+                yLogits = tf.transpose(yLogits_s, [1,0,2], name='yLogits')
+                alpha = tf.transpose(alpha_s_n, [0,2,1,3], name='alpha') # (N, B, T, L)
 
                 optimizer_ops = self._optimizer(yLogits,
                                             self._y_s,
@@ -420,107 +431,113 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert K.int_shape(y_ctc) == (B, None) # (B, T)
                 assert K.int_shape(ctc_len) == (B,)
 
-                ################ Regularization Cost ################
-                with tf.variable_scope('Regularization_Cost'):
-                    reg_losses = self.C.rLambda * tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+                ################ Loss Calculations ################  
+                with tf.variable_scope('Loss_Calculations'):
 
-                ################ Build LogLoss ################
-                with tf.variable_scope('LogLoss'):
-                    sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
-                                                     dtype=self.C.dtype) # (B, T)
-                    assert K.int_shape(sequence_mask) == (B,None) # (B,T)
+                    ################ Regularization Cost ################
+                    with tf.variable_scope('Regularization_Cost'):
+                        if self.C.weights_regularizer is not None:
+                            reg_losses = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(v) for v in tf.get_collection("REGULARIZED_WEIGHTS")])
 
-                    ## Masked negative log-likelihood of the sequence.
-                    ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
-                    ## joint-sequence-probability is same as taking sum of log of probability at each time-step
+                    ################ Build LogLoss ################
+                    with tf.variable_scope('LogLoss'):
+                        sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
+                                                         dtype=self.C.dtype, name='sequence_mask') # (B, T)
+                        assert K.int_shape(sequence_mask) == (B,None) # (B,T)
 
-                    ################ Compute Sequence Log-Loss / Log-Likelihood  ################
-                    #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
-                    if self.C.sum_logloss:
-                        ## Here we do not normalize the log-loss across time-steps because the
-                        ## paper as well as it's source-code do not do that.
-                        log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-                                                                       targets=y_s,
-                                                                       weights=sequence_mask,
-                                                                       average_across_timesteps=False,
-                                                                       average_across_batch=False)
-                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                        log_losses = tf.reduce_sum(log_losses, axis=1) # sum along time dimension => (B,)
-                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                        log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
-                    else: ## Standard log perplexity (average per-word log perplexity)
-                        log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-                                                                       targets=y_s,
-                                                                       weights=sequence_mask,
-                                                                       average_across_timesteps=True,
-                                                                       average_across_batch=False)
-                        # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                        log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
-                    assert K.int_shape(log_likelihood) == tuple()
+                        ## Masked negative log-likelihood of the sequence.
+                        ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
+                        ## joint-sequence-probability is same as taking sum of log of probability at each time-step
 
-                ################   Calculate the alpha penalty:   ################
-                #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
-                with tf.variable_scope('AlphaPenalty'):
-                    alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
-                    if self.C.MeanSumAlphaEquals1:
-                        mean_sum_alpha_i = 1.0
+                        ################ Compute Sequence Log-Loss / Log-Likelihood  ################
+                        #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
+                        if self.C.sum_logloss:
+                            ## Here we do not normalize the log-loss across time-steps because the
+                            ## paper as well as it's source-code do not do that.
+                            log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                                                                        targets=y_s,
+                                                                        weights=sequence_mask,
+                                                                        average_across_timesteps=False,
+                                                                        average_across_batch=False,
+                                                                        name='log_losses'
+                                                                        )
+                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                            log_losses = tf.reduce_sum(log_losses, axis=1, name='total log-loss') # sum along time dimension => (B,)
+                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                            log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
+                        else: ## Standard log perplexity (average per-word log perplexity)
+                            log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                                                                        targets=y_s,
+                                                                        weights=sequence_mask,
+                                                                        average_across_timesteps=True,
+                                                                        average_across_batch=False)
+                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                            log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
+                        assert K.int_shape(log_likelihood) == tuple()
+
+                    ################   Calculate the alpha penalty:   ################
+                    #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
+                    with tf.variable_scope('AlphaPenalty'):
+                        alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
+                        if self.C.MeanSumAlphaEquals1:
+                            mean_sum_alpha_i = 1.0
+                        else:
+                            mean_sum_alpha_i = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
+                            mean_sum_alpha_i = tf.expand_dims(mean_sum_alpha_i, axis=1) # (B, 1)
+
+                        #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
+                        #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (B, L)
+                        #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                        sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
+                        squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
+                        alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False) # (N, B)
+                        # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                        # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
+                        ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
+                        ase_max = tf.constant((L-1.0) / L*1.0 ) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype)) # (B,)
+                        ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
+                        normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
+                        mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
+                        alpha_penalty = self.C.pLambda * mean_norm_ase # scalar
+                        mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
+                        # mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
+                        # mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
+                        assert K.int_shape(alpha_penalty) == tuple()
+
+                    ################ Build CTC Cost Function ################
+                    ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
+                    ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
+                    ## Using CTC loss will have the following side-effect:
+                    ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
+                    ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
+                    ##     between tokens when printing out the predicted markup.
+                    with tf.variable_scope('CTC_Cost'):
+                        ## sparse tensor
+                    #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
+                        ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+                        assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+                        y_idx =    tf.where(ctc_mask)
+                        y_vals =   tf.gather_nd(y_ctc, y_idx)
+                        y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
+                        ctc_losses = tf.nn.ctc_loss(y_sparse,
+                                                yLogits,
+                                                sequence_lengths,
+                                                ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
+                                                time_major=False)
+                        ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
+                        assert K.int_shape(ctc_losses) == (B, )
+                        if self.C.sum_logloss:
+                            ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
+                        else: # mean loss per word
+                            ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
+                        assert K.int_shape(ctc_loss) == tuple()
+                    if self.C.use_ctc_loss:
+                        cost = ctc_loss + alpha_penalty #+ reg_losses
                     else:
-                        mean_sum_alpha_i = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
-                        mean_sum_alpha_i = tf.expand_dims(mean_sum_alpha_i, axis=1) # (B, 1)
-
-                    #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
-                    #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (B, L)
-                    #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                    sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
-                    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_i) # (N, B, L)
-                    alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False) # (N, B)
-                    # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                    # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
-                    ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
-                    ase_max = tf.constant((L-1.0) / L*1.0 ) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype)) # (B,)
-                    ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
-                    normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
-                    mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
-                    alpha_penalty = self.C.pLambda * mean_ase # scalar
-                    mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
-                    # mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
-                    # mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
-                    assert K.int_shape(alpha_penalty) == tuple()
-
-                ################ Build CTC Cost Function ################
-                ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
-                ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
-                ## Using CTC loss will have the following side-effect:
-                ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
-                ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
-                ##     between tokens when printing out the predicted markup.
-                with tf.variable_scope('CTC_Cost'):
-                    ## sparse tensor
-                #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
-                    ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
-                    assert K.int_shape(ctc_mask) == (B,None) # (B,T)
-                    y_idx =    tf.where(ctc_mask)
-                    y_vals =   tf.gather_nd(y_ctc, y_idx)
-                    y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
-                    ctc_losses = tf.nn.ctc_loss(y_sparse,
-                                              yLogits,
-                                              sequence_lengths,
-                                              ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
-                                              time_major=False)
-                    ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
-                    assert K.int_shape(ctc_losses) == (B, )
-                    if self.C.sum_logloss:
-                        ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
-                    else: # mean loss per word
-                        ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
-                    assert K.int_shape(ctc_loss) == tuple()
-                if self.C.use_ctc_loss:
-                    cost = ctc_loss + alpha_penalty + reg_losses
-                else:
-                    cost = log_likelihood + alpha_penalty + reg_losses
+                        cost = log_likelihood + alpha_penalty #+ reg_losses
 
                 ################ CTC Beamsearch Decoding ################
-                with tf.variable_scope('CTC_Decoder'):
+                with tf.variable_scope('Accuracy_Calculation'):
                     yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
                     ## ctc_beam_search_decoder sometimes produces ID values = -1
                     decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width, 
@@ -539,15 +556,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
-                tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
-                tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
-                tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
-                tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
-                tf.summary.scalar('training/total_cost/', cost, collections=['training'])
-                tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
-                tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
-                ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
-                tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
+                with tf.variable_scope('Instrumentation'):
+                    # tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
+                    tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
+                    tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
+                    tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
+                    tf.summary.scalar('training/total_cost/', cost, collections=['training'])
+                    tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
+                    tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
+                    ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
+                    tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):

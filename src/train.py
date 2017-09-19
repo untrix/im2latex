@@ -67,14 +67,14 @@ def printVars(logger):
             total_convnet += n
         elif 'CALSTM' in var.name:
             total_calstm += n
-        elif 'Im2LatexRNN/Output_Layer/' in var.name:
+        elif 'I2L_RNN/Output_Layer/' in var.name:
             total_output += n
         elif 'Initializer_MLP/' in var.name:
             total_init += n
-        elif 'Im2LatexRNN/Embedding/Embedding_Matrix' in var.name:
+        elif 'I2L_RNN/Embedding/Embedding_Matrix' in var.name:
             total_embedding += n
         else:
-            assert False
+            assert False, 'unrecognized variable %s'%var
         logger.info('%s %s num_params = %d'%(var.name, K.int_shape(var),n) )
 
     logger.info( 'Total number of trainable params = %d'%total_n)
@@ -159,27 +159,36 @@ def main(raw_data_folder,
 
         printVars(logger)
 
-        config=tf.ConfigProto(log_device_placement=True, allow_soft_placement=True)
+        config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=True)
         config.gpu_options.allow_growth = hyper.tf_session_allow_growth
 
         with tf.Session(config=config) as session:
-            logger.info( 'Flushing graph to disk')
+            tf_params = tf.constant(value=hyper.to_table(), dtype=tf.string, name='hyper_params')
+            tf_text = tf.summary.text('hyper_params_logger', tf_params)
+            logger.info('Hyper Table shape = %s', hyper.to_table().shape)
+            logger.info('Flushing graph to disk')
             tf_sw = tf.summary.FileWriter(args.logdir, graph=graph)
-            ph_params = tf.placeholder(tf.string, name='hyper_params')
-            log_params = session.run(tf.summary.text('hyper_params_logger', ph_params), feed_dict={ph_params:hyper.to_table()})
+            log_params = session.run(tf_text)
             tf_sw.add_summary(log_params, global_step=None)
             tf_sw.flush()
-            tf.global_variables_initializer().run()
 
             enqueue_threads = qr1.create_threads(session, coord=coord, start=True)
             enqueue_threads.extend(qr2.create_threads(session, coord=coord, start=True))
             if (args.make_training_accuracy_graph):
                 enqueue_threads.extend(qr3.create_threads(session, coord=coord, start=True))
 
+            saver = tf.train.Saver(max_to_keep=5, pad_step_number=True, save_relative_paths=True)
+            if args.restore_from_checkpoint:
+                saver.recover_last_checkpoints(args.logdir + '/checkpoints_list')
+                saver.restore(session, saver.last_checkpoints[-1])
+                step = train_ops.global_step.run()
+            else:
+                tf.global_variables_initializer().run()
+                step = 0
+
             start_time = time.time()
             ## Set metrics
             train_time = []; ctc_losses = []; logs = []
-            step = 0
             try:
                 while not coord.should_stop():
                     step_start_time = time.time()
@@ -253,6 +262,9 @@ def main(raw_data_folder,
                         logger.info( '############ RANDOM TRAINING BATCH ############')
                         logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_s, predicted_ids))
                         logger.info( '###################################\n')
+
+                        if do_validate(step, args, train_it, valid_it):
+                            saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
 
                         ## Reset metrics
                         train_time = []; ctc_losses = []; logs = []
