@@ -112,47 +112,64 @@ def main(raw_data_folder,
                                                 hyper,
                                                 args)
 
-        ##### Training Graph
+        ##### Training Graphs
         with tf.name_scope('Training'):
+            train_ops = []
+            hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+            tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
+            with tf.variable_scope('InputQueue'):
+                train_q = tf.FIFOQueue(self.C.input_queue_capacity,
+                                    (self.C.int_type, self.C.int_type,
+                                    self.C.int_type, self.C.int_type,
+                                    self.C.dtype))
+                enqueue_op = train_q.enqueue(train_it.get_pyfunc(), name='enqueue')
+                close_queue1 = train_q.close(cancel_pending_enqueues=True)
             with tf.device('/gpu:1'):
-                model = Im2LatexModel(hyper, reuse=False)
-                train_ops = model.build_training_graph()
-            with tf.variable_scope('QueueOps'):
-                enqueue_op = train_ops.inp_q.enqueue(train_it.get_pyfunc(), name='enqueue')
-                close_queue1 = train_ops.inp_q.close(cancel_pending_enqueues=True)
+                model = Im2LatexModel(hyper, train_q, reuse=False, )
+                train_ops.append( model.build_training_graph())
+            with tf.device('/gpu:0'):
+                model = Im2LatexModel(hyper, train_q, reuse=True)
+                train_ops.append(model.build_training_graph())
             trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
             hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
             ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
             ## assert trainable_vars_n == 23261206 if hyper.build_image_context
-        qr1 = tf.train.QueueRunner(train_ops.inp_q, [enqueue_op], cancel_op=[close_queue1])
+        qr1 = tf.train.QueueRunner(train_q, [enqueue_op], cancel_op=[close_queue1])
 
         ##### Validation Graph
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
+            with tf.variable_scope('InputQueue'):
+                valid_q = tf.FIFOQueue(self.C.input_queue_capacity,
+                                    (self.C.int_type, self.C.int_type,
+                                    self.C.int_type, self.C.int_type,
+                                    self.C.dtype))
+                enqueue_op2 = valid_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
+                close_queue2 = valid_q.close(cancel_pending_enqueues=True)
             with tf.device('/gpu:0'):
-                model_predict = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
-                valid_ops = model_predict.test()
-            with tf.variable_scope('QueueOps'):
-                enqueue_op2 = valid_ops.inp_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
-                close_queue2 = valid_ops.inp_q.close(cancel_pending_enqueues=True)
+                model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
+                valid_ops_0 = model_predict.test()
+            with tf.device('/gpu:1'):
+                model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
+                valid_ops_1 = model_predict.test()
             hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
             assert(num_trainable_vars() == trainable_vars_n)
-        qr2 = tf.train.QueueRunner(valid_ops.inp_q, [enqueue_op2], cancel_op=[close_queue2])
+        qr2 = tf.train.QueueRunner(valid_q, [enqueue_op2], cancel_op=[close_queue2])
 
-        ##### Training Accuracy Graph
-        if (args.make_training_accuracy_graph):
-            with tf.name_scope('TrainingAccuracy'):
-                hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
-                with tf.device('/gpu:1'):
-                    model_predict2 = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
-                    tr_acc_ops = model_predict2.test()
-                with tf.variable_scope('QueueOps'):
-                    enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
-                    close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
-                assert(num_trainable_vars() == trainable_vars_n)
-            qr3 = tf.train.QueueRunner(tr_acc_ops.inp_q, [enqueue_op3], cancel_op=[close_queue3])
-        else:
-            tr_acc_ops = None
+        # ##### Training Accuracy Graph
+        # if (args.make_training_accuracy_graph):
+        #     with tf.name_scope('TrainingAccuracy'):
+        #         hyper_predict2 = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
+        #         with tf.device('/gpu:1'):
+        #             model_predict2 = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
+        #             tr_acc_ops = model_predict2.test()
+        #         with tf.variable_scope('QueueOps'):
+        #             enqueue_op3 = tr_acc_ops.inp_q.enqueue(tr_acc_it.get_pyfunc(), name='enqueue')
+        #             close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
+        #         assert(num_trainable_vars() == trainable_vars_n)
+        #     qr3 = tf.train.QueueRunner(tr_acc_ops.inp_q, [enqueue_op3], cancel_op=[close_queue3])
+        # else:
+        tr_acc_ops = None
 
         coord = tf.train.Coordinator()
         # print train_ops
@@ -163,13 +180,12 @@ def main(raw_data_folder,
         config.gpu_options.allow_growth = hyper.tf_session_allow_growth
 
         with tf.Session(config=config) as session:
-            tf_params = tf.constant(value=hyper.to_table(), dtype=tf.string, name='hyper_params')
-            tf_text = tf.summary.text('hyper_params_logger', tf_params)
-            logger.info('Hyper Table shape = %s', hyper.to_table().shape)
             logger.info('Flushing graph to disk')
             tf_sw = tf.summary.FileWriter(args.logdir, graph=graph)
-            log_params = session.run(tf_text)
-            tf_sw.add_summary(log_params, global_step=None)
+            # tf_params = tf.constant(value=hyper.to_table(), dtype=tf.string, name='hyper_params')
+            # tf_text = tf.summary.text('hyper_params_logger', tf_params)
+            # log_params = session.run(tf_text)
+            # tf_sw.add_summary(log_params, global_step=None)
             tf_sw.flush()
 
             enqueue_threads = qr1.create_threads(session, coord=coord, start=True)
@@ -181,7 +197,7 @@ def main(raw_data_folder,
             if args.restore_from_checkpoint:
                 saver.recover_last_checkpoints(args.logdir + '/checkpoints_list')
                 saver.restore(session, saver.last_checkpoints[-1])
-                step = train_ops.global_step.run()
+                step = tf_train_step.eval()
             else:
                 tf.global_variables_initializer().run()
                 step = 0

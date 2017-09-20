@@ -83,7 +83,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, seq2seq_beam_width=1, reuse=True):
+    def __init__(self, params, inp_q, seq2seq_beam_width=1, reuse=True):
         """
         Args:
             params (Im2LatexModelParams)
@@ -92,13 +92,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
-        with tf.variable_scope('I2L_Outer_Scope', reuse=reuse) as outer_scope:
+        with tf.variable_scope('I2L', reuse=reuse) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
-                self._inp_q = tf.FIFOQueue(self.C.input_queue_capacity,
-                                           (self.C.int_type, self.C.int_type,
-                                            self.C.int_type, self.C.int_type,
-                                            self.C.dtype))
+                self._inp_q = inp_q
                 inp_tup = InpTup(*self._inp_q.dequeue())
                 self._y_s = tf.identity(inp_tup.y_s, name='y_s')
                 self._seq_len = tf.identity(inp_tup.seq_len, name='seq_len')
@@ -437,7 +434,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ################ Regularization Cost ################
                     with tf.variable_scope('Regularization_Cost'):
                         if self.C.weights_regularizer is not None:
-                            reg_losses = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(v) for v in tf.get_collection("REGULARIZED_WEIGHTS")])
+                            reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
 
                     ################ Build LogLoss ################
                     with tf.variable_scope('LogLoss'):
@@ -532,9 +529,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
                         assert K.int_shape(ctc_loss) == tuple()
                     if self.C.use_ctc_loss:
-                        cost = ctc_loss + alpha_penalty #+ reg_losses
+                        cost = ctc_loss + alpha_penalty + reg_loss
                     else:
-                        cost = log_likelihood + alpha_penalty #+ reg_losses
+                        cost = log_likelihood + alpha_penalty + reg_loss
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
@@ -556,30 +553,22 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
-                with tf.variable_scope('Instrumentation'):
-                    # tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
-                    tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
-                    tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
-                    tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
-                    tf.summary.scalar('training/total_cost/', cost, collections=['training'])
-                    tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
-                    tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
-                    ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
-                    tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
-
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
                     global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
-                    optimizer = tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
+                    optimizer = self.C.optimizer #or tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
+                    grads = optimizer.compute_gradients(cost)
                     train = optimizer.minimize(cost, global_step=global_step)
                     ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step,
                     ##                                                               name="optimizer")
 
                 return dlc.Properties({
+                        'grads': grads,
                         'train': train,
                         'log_likelihood': log_likelihood,
                         'ctc_loss': ctc_loss,
                         'alpha_penalty': alpha_penalty,
+                        'reg_loss': reg_loss,
                         'cost': cost,
                         'global_step':global_step,
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
@@ -624,7 +613,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             'seq_lens': final_sequence_lengths # (B, BW)
                             })
 
-    def test(self):
+    def build_testing_graph(self):
         """ Test one batch of input """
         B = self.C.B
         BW = self.Seq2SeqBeamWidth
@@ -792,3 +781,79 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'ph_valid_time': ph_valid_time,
                     'ph_num_hits': ph_num_hits
                     })
+
+def average_gradients(tower_grads):
+  """Calculate the average gradient for each shared variable across all towers.
+  Note that this function provides a synchronization point across all towers.
+  Args:
+    tower_grads: List of lists of (gradient, variable) tuples. The outer list
+      is over individual gradients. The inner list is over the gradient
+      calculation for each tower.
+  Returns:
+     List of pairs of (gradient, variable) where the gradient has been averaged
+     across all towers.
+  """
+  average_grads = []
+  for grad_and_vars in zip(*tower_grads):
+    # Note that each grad_and_vars looks like the following:
+    #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+    grads = []
+    for g, _ in grad_and_vars:
+      # Add 0 dimension to the gradients to represent the tower.
+      expanded_g = tf.expand_dims(g, 0)
+
+      # Append on a 'tower' dimension which we will average over below.
+      grads.append(expanded_g)
+
+    # Average over the 'tower' dimension.
+    grad = tf.concat(axis=0, values=grads)
+    grad = tf.reduce_mean(grad, 0)
+
+    # Keep in mind that the Variables are redundant because they are shared
+    # across towers. So .. we will just return the first tower's pointer to
+    # the Variable.
+    v = grad_and_vars[0][1]
+    grad_and_var = (grad, v)
+    average_grads.append(grad_and_var)
+  return average_grads
+
+def sync_training_towers(hyper, train_ops, global_step):
+    with tf.variable_scope('SyncTowers') as var_scope:
+        def gather(prop_name):
+            return [o[prop_name] for o in train_ops]
+        def get_mean(prop_name, op_name=None):
+            return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
+        def get_sum(prop_name, op_name=None):
+            return tf.reduce_sum(gather(prop_name), name=op_name or prop_name)
+        
+        log_likelihood = get_mean('log_likelihood')
+        ctc_loss = get_mean('ctc_loss')
+        alpha_penalty = get_mean('alpha_penalty')
+        reg_loss = get_sum('reg_loss')
+        if hyper.use_ctc_loss:
+            cost = ctc_loss + alpha_penalty + reg_loss
+        else:
+            cost = log_likelihood + alpha_penalty + reg_loss
+
+        grads = average_gradients(gather('grads'))
+        apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
+
+        with tf.variable_scope('Instrumentation'):
+            # tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
+            tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
+            tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
+            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
+            tf.summary.scalar('training/total_cost/', cost, collections=['training'])
+            tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
+            tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
+            ## tf.summary.scalar('training/ctc_mean_ed/', ctc_mean_ed)
+            tf.summary.histogram('training/ctc_ed/', ctc_ed, collections=['training'])
+
+    return Properties({
+        'log_likelihood': log_likelihood,
+        'ctc_loss': ctc_loss,
+        'alpha_penalty': alpha_penalty,
+        'reg_loss': reg_loss,
+        'cost': cost,
+        'apply_grads': apply_grads
+        })
