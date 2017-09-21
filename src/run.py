@@ -154,7 +154,8 @@ def main():
                                     'use_ctc_loss': False,
                                     "swap_memory": args.swap_memory,
                                     'tf_session_allow_growth': False,
-                                    'restore_from_checkpoint': args.restore_logdir is not None
+                                    'restore_from_checkpoint': args.restore_logdir is not None,
+                                    'num_gpus': 2
                                     })
     if args.batch_size is not None:
         globalParams.B = args.batch_size

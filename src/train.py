@@ -221,15 +221,15 @@ def main(raw_data_folder,
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs
                             ))
-                        predicted_ids = y_s = None
+                        predicted_ids_list = y_s_list = None
                     else:
-                        _, ctc_loss, log, y_s, predicted_ids = session.run(
+                        _, ctc_loss, log, y_s_list, predicted_ids_list = session.run(
                             (
                                 train_ops.train, 
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs,
-                                train_ops.y_s,
-                                train_ops.predicted_ids
+                                train_ops.y_s_list,
+                                train_ops.predicted_ids_list
                             ))
 
                     ## Accumulate metrics
@@ -238,8 +238,8 @@ def main(raw_data_folder,
                     train_time.append(time.time()-step_start_time)
 
                     if doLog:
-                        logger.info( 'Step %d',step)
-                        train_time_per100 = np.mean(train_time) * 100. / hyper.B
+                        logger.info('Step %d',step)
+                        train_time_per100 = np.mean(train_time) * 100. / (hyper.B*hyper.num_gpus)
                         accuracy_res = measure_accuracy(
                             session,
                             dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
@@ -280,10 +280,12 @@ def main(raw_data_folder,
                         tf_sw.flush()
                         
                         logger.info( '############ RANDOM TRAINING BATCH ############')
-                        logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_s, predicted_ids))
-                        logger.info( '###################################\n')
+                        str_list = ids2str_list(y_s_list, predicted_ids_list)
+                        for i in range(len(str_list)):
+                            logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
+                        logger.info( '############ END OF RANDOM TRAINING BATCH ############')
 
-                        if do_validate(step, args, train_it, valid_it):
+                        if do_validate(step, args, train_it, valid_it)[0]:
                             saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
 
                         ## Reset metrics
@@ -301,6 +303,16 @@ def main(raw_data_folder,
                 # close_queue2.run()
                 coord.join(enqueue_threads)
 
+def ids2str_list(target_ids, predicted_ids):
+    """
+    Same as id2str, except this works on multiple batches. The arguments are lists of numpy arrays
+    instead of straight numpy arrays as in the case of id2str.
+    """
+    l = []
+    for i in range(len(target_ids)):
+        l.append(ids2str(target_ids[i], predicted_ids[i]))
+    return l
+
 def ids2str(target_ids, predicted_ids):
     """
     Args:
@@ -312,19 +324,28 @@ def ids2str(target_ids, predicted_ids):
     return np.concatenate((predicted_str, target_str), axis=1)
 
 def do_validate(step, args, train_it, valid_it):
-    valid_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
-    valid_steps = int(valid_frac * train_it.epoch_size)
-    do_validate = (step % valid_steps == 0) or (step == train_it.max_steps)
-    num_valid_batches = valid_it.epoch_size if do_validate else 0
+    it_step = step*args.num_gpus
+    epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
+    period = int(epoch_frac * train_it.epoch_size)
+    if it_step < period:
+        do_validate = False
+    else:
+        do_validate = ((it_step % period >= 0) and (it_step % period < args.num_gpus)) or (it_step >= train_it.max_steps)
 
-    logger.debug('do_validate returning %s at step %d', do_validate, step)
+    num_valid_batches = valid_it.epoch_size if do_validate else 0
+    logger.debug('do_validate returning %s at step %d, it_step %d', do_validate, step, it_step)
 
     return do_validate, num_valid_batches
 
 def do_log(step, args, train_it, valid_it):
     validate, _ = do_validate(step, args, train_it, valid_it)
-    do_log = (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
-    logger.debug('do_log returning %s at step %d', do_log, step)
+    it_step = step*args.num_gpus
+    print_steps = args.print_steps*args.num_gpus
+    if it_step < print_steps:
+        do_log = False
+    else:
+        do_log = ((it_step % print_steps >= 0) and (it_step % print_steps < args.num_gpus) ) or (it_step == train_it.max_steps) or validate
+    logger.debug('do_log returning %s at step %d, it_step %d', do_log, step, it_step)
     return do_log
 
 def format_ids(predicted_ids, target_ids):
@@ -345,11 +366,11 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             tf_sw.add_summary(logs_topK, step)
             tf_sw.flush()
             metrics = dlc.Properties({
-                'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * hyper.seq2seq_beam_width))
+                'valid_time_per100': ((time.time() - valid_start_time) * 100. / (hyper.B * hyper.num_gpus))
                 })
-            logger.info( '############ RANDOM TRAINING BATCH ############')
+            logger.info( '############ RANDOM TRAINING ACCURACY BATCH ############')
             logger.info('bok ids=\n%s', bok_ids)
-            logger.info( '###################################\n')        
+            logger.info( '############ END OF RANDOM TRAINING ACCURACY BATCH ############')
             return metrics
         else:
             return None
@@ -375,22 +396,25 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits
                                     ))
+                top1_ids_list = y_s_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids, y_s = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
                                     valid_ops.top1_lens,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
-                                    valid_ops.top1_ids,
-                                    valid_ops.y_s
+                                    valid_ops.top1_ids_list,
+                                    valid_ops.y_s_list
                                     ))
                 logger.info( '############ RANDOM VALIDATION BATCH %d ############', n)
                 beam = 0
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
-                logger.info('[target_ids, predicted_ids]=\n%s', ids2str(y_s, top1_ids))
-                logger.info( '###################################\n')
+                str_list = ids2str_list(y_s_list, top1_ids_list)
+                for i in range(len(str_list)):
+                    logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
+                logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
             lens.append(l)
             eds.append(ed)
@@ -398,7 +422,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
             hits.append(num_hits)
 
         metrics = dlc.Properties({
-            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.seq2seq_beam_width)
+            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * hyper.B * hyper.num_gpus)
             })
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={

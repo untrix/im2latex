@@ -265,9 +265,10 @@ class FCLayer(object):
                 with tf.variable_scope(scope_name) as var_scope:
                     coll_w = scope_name + '/_weights_'
                     coll_b = scope_name + '/_biases_'
-                    var_colls = {'biases':[coll_b]}
-                    var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
-
+                    var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
+                    # var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
+                    assert params.weights_regularizer is not None
+                    
                     a = tf.contrib.layers.fully_connected(
                             inputs=inp,
                             num_outputs = params.num_units,
@@ -397,8 +398,9 @@ class ConvLayer(object):
                 with tf.variable_scope(scope_name) as var_scope:
                     coll_w = scope_name + '/_weights_'
                     coll_b = scope_name + '/_biases_'
-                    var_colls = {'biases':[coll_b]}
-                    var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
+                    var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
+                    # var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
+                    assert params.weights_regularizer is not None
 
                     a = tf.contrib.layers.conv2d(inputs=inp,
                                                 num_outputs=params.output_channels, 

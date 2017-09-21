@@ -157,8 +157,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     self._embedding_matrix = tf.get_variable('Embedding_Matrix',
                                                              (self.C.K, self.C.m),
                                                              initializer=self.C.embeddings_initializer,
-                                                             regularizer=self.C.embeddings_regularizer,
+                                                             ## regularizer=self.C.embeddings_regularizer,
                                                              trainable=True)
+                    tf.add_to_collection('REGULARIZED_WEIGHTS', self._embedding_matrix)
+                    assert self.C.embeddings_regularizer is not None
+
             ## Init State Model
             self._init_state_model = self._init_state()
 
@@ -398,13 +401,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                             self._y_ctc,
                                             self._ctc_len)
 
-                ## Summary Logs
-                tb_logs = tf.summary.merge(tf.get_collection('training'))
-                ## Placeholder for injecting training-time from outside
-                ph_train_time =  tf.placeholder(self.C.dtype)
+                if self.C.no_towers: ## Old Code without towers
+                    ## Summary Logs
+                    tb_logs = tf.summary.merge(tf.get_collection('training'))
+                    ## Placeholder for injecting training-time from outside
+                    ph_train_time =  tf.placeholder(self.C.dtype)
 
-                ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
-                log_time = tf.summary.scalar('training/time_per100', ph_train_time, collections=['training_aggregate'])
+                    ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
+                    log_time = tf.summary.scalar('training/time_per100', ph_train_time, collections=['training_aggregate'])
 
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q
@@ -436,6 +440,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     with tf.variable_scope('Regularization_Cost'):
                         if self.C.weights_regularizer is not None:
                             reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
+                        else:
+                            reg_loss = 0
 
                     ################ Build LogLoss ################
                     with tf.variable_scope('LogLoss'):
@@ -530,9 +536,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
                         assert K.int_shape(ctc_loss) == tuple()
                     if self.C.use_ctc_loss:
-                        cost = ctc_loss + alpha_penalty + (reg_loss if self.C.weights_regularizer is not None else 0)
+                        cost = ctc_loss + alpha_penalty + reg_loss
                     else:
-                        cost = log_likelihood + alpha_penalty + (reg_loss if self.C.weights_regularizer is not None else 0)
+                        cost = log_likelihood + alpha_penalty + reg_loss
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
@@ -554,28 +560,33 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
-                tf.summary.scalar('training/regLoss', reg_loss, collections=['training'])
-                tf.summary.scalar('training/logloss', log_likelihood, collections=['training'])
-                tf.summary.scalar('training/ctc_loss', ctc_loss, collections=['training'])
-                tf.summary.scalar('training/alpha_penalty', alpha_penalty, collections=['training'])
-                tf.summary.scalar('training/total_cost', cost, collections=['training'])
-                tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
-                tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
-                ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
-                tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
+                if self.C.no_towers: ## Old Code without towers
+                    tf.summary.scalar('training/regLoss', reg_loss, collections=['training'])
+                    tf.summary.scalar('training/logloss', log_likelihood, collections=['training'])
+                    tf.summary.scalar('training/ctc_loss', ctc_loss, collections=['training'])
+                    tf.summary.scalar('training/alpha_penalty', alpha_penalty, collections=['training'])
+                    tf.summary.scalar('training/total_cost', cost, collections=['training'])
+                    tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
+                    tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
+                    ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
+                    tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
-                    global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
-                    optimizer = self.C.optimizer #or tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
-                    grads = optimizer.compute_gradients(cost)
-                    train = optimizer.minimize(cost, global_step=global_step)
-                    ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step,
-                    ##                                                               name="optimizer")
+                    if self.C.no_towers: ## Old Code without towers
+                        ## Old code without towers
+                        global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
+                        train = optimizer.minimize(cost, global_step=global_step)
+                        ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step,
+                        ##                                                               name="optimizer")
+                    else:
+                        optimizer = self.C.optimizer #or tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
+                        grads = optimizer.compute_gradients(cost)
 
                 return dlc.Properties({
                         'grads': grads,
-                        'train': train,
+                        # 'train': train,
+                        # 'global_step':global_step, # scalar
                         'log_likelihood': log_likelihood, # scalar
                         'ctc_loss': ctc_loss, # scalar
                         'alpha_penalty': alpha_penalty, # scalar
@@ -585,12 +596,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'mean_ctc_ed': mean_ctc_ed, # scalar
                         'sequence_lengths': sequence_lengths, # (B,)
                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
-                        'global_step':global_step, # scalar
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len, # scalar
                         'predicted_ids': ctc_decoded_ids, # (B,T)
-                        'y_s': self._y_s # (B,T)
+                        'predicted_ids_list': [ctc_decoded_ids], # ((B,T),)
+                        'y_s': self._y_s, # (B,T)
+                        'y_s_list': [self._y_s] # ((B,T),)
                         })
 
     def _beamsearch(self):
@@ -673,8 +685,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     top1_seq_scores = seq_scores[:,0] # (B,)
                     top1_ids = bm_ids[:,0,:] # (B, T)
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
-                    tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
-                    tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
+                    if self.C.no_towers: ## Old Code without towers
+                        tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
+                        tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
 
                 ## Top K
                 with tf.name_scope('top_k'):
@@ -711,9 +724,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         top1_hits = tf.to_float(tf.equal(top1_ed, 0))
                         top1_accuracy = tf.reduce_mean(top1_hits) # scalar
                         top1_num_hits = tf.reduce_sum(top1_hits) # scalar
-                        tf.summary.scalar( 'edit_distance', top1_mean_ed, collections=['top1'])
-                        ## tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
-                        tf.summary.scalar('num_hits', top1_num_hits, collections=['top1'])
+
+                        if self.C.no_towers: ## Old Code without towers
+                            tf.summary.scalar( 'edit_distance', top1_mean_ed, collections=['top1'])
+                            ## tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
+                            tf.summary.scalar('num_hits', top1_num_hits, collections=['top1'])
 
                     with tf.name_scope('bestof_%d'%k):
                         ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
@@ -726,43 +741,45 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         bok_seq_scores = tf.squeeze(tfc.batch_slice(topK_seq_scores, bok_indices), axis=1) # (B, 1).squeeze => (B,)
                         bok_ids = tf.squeeze(tfc.batch_slice(topK_ids, bok_indices), axis=1) # (B, 1, T).squeeze => (B,T)
 
-                        tf.summary.scalar( 'edit_distance', bok_mean_ed, collections=['top_k'])
-                        tf.summary.scalar( 'accuracy', bok_accuracy, collections=['top_k'])
-                        tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
-                        tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
+                        if self.C.no_towers: ## Old Code without towers
+                            tf.summary.scalar( 'edit_distance', bok_mean_ed, collections=['top_k'])
+                            tf.summary.scalar( 'accuracy', bok_accuracy, collections=['top_k'])
+                            tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
+                            tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
 
-                logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
-                logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
+                if self.C.no_towers: ## Old Code without towers
+                    logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
+                    logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
 
-                ## Aggregate metrics injected into the graph from outside
-                with tf.name_scope('AggregateMetrics'):
-                    ph_top1_seq_lens = tf.placeholder(self.C.int_type)
-                    ph_edit_distance = tf.placeholder(self.C.dtype)
-                    ph_num_hits =  tf.placeholder(self.C.dtype)
-                    ph_accuracy =  tf.placeholder(self.C.dtype)
-                    ph_valid_time =  tf.placeholder(self.C.dtype)
+                    ## Aggregate metrics injected into the graph from outside
+                    with tf.name_scope('AggregateMetrics'):
+                        ph_top1_seq_lens = tf.placeholder(self.C.int_type)
+                        ph_edit_distance = tf.placeholder(self.C.dtype)
+                        ph_num_hits =  tf.placeholder(self.C.dtype)
+                        ph_accuracy =  tf.placeholder(self.C.dtype)
+                        ph_valid_time =  tf.placeholder(self.C.dtype)
 
-                    ph_BoK_distance =  tf.placeholder(self.C.int_type)
-                    ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
+                        ph_BoK_distance =  tf.placeholder(self.C.int_type)
+                        ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
 
-                    agg_num_hits = tf.reduce_sum(ph_num_hits)
-                    agg_accuracy = tf.reduce_mean(ph_accuracy)
-                    agg_ed = tf.reduce_mean(ph_edit_distance)
-                    agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
-                    agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
+                        agg_num_hits = tf.reduce_sum(ph_num_hits)
+                        agg_accuracy = tf.reduce_mean(ph_accuracy)
+                        agg_ed = tf.reduce_mean(ph_edit_distance)
+                        agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
+                        agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
-                    tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
-                    tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
-                    tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
-                    tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
-                    tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
-                    tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
+                        tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+                        tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
+                        tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
+                        tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
+                        tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
+                        tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
+                        tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
+                        tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
+                        tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
-                    logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
-                    logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
+                        logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
+                        logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
@@ -783,19 +800,41 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'bok_mean_ed': bok_mean_ed, # scalar
                     'bok_seq_lens': bok_seq_lens, # (B,)
                     'bok_seq_scores': bok_seq_scores, #(B,)
-                    'bok_ids': bok_ids, # (B,T)
+                    'bok_ids': bok_ids # (B,T)
                     # 'logs_tr_acc_top1': logs_tr_acc_top1,
                     # 'logs_tr_acc_topK': logs_tr_acc_topK,
                     # 'logs_agg_top1': logs_agg_top1,
                     # 'logs_agg_bok': logs_agg_bok,
-                    'ph_top1_seq_lens': ph_top1_seq_lens,
-                    'ph_edit_distance': ph_edit_distance,
-                    'ph_BoK_distance': ph_BoK_distance,
-                    'ph_accuracy': ph_accuracy,
-                    'ph_BoK_accuracy': ph_BoK_accuracy,
-                    'ph_valid_time': ph_valid_time,
-                    'ph_num_hits': ph_num_hits
+                    # 'ph_top1_seq_lens': ph_top1_seq_lens,
+                    # 'ph_edit_distance': ph_edit_distance,
+                    # 'ph_BoK_distance': ph_BoK_distance,
+                    # 'ph_accuracy': ph_accuracy,
+                    # 'ph_BoK_accuracy': ph_BoK_accuracy,
+                    # 'ph_valid_time': ph_valid_time,
+                    # 'ph_num_hits': ph_num_hits
                     })
+
+def sync_testing_towers2(hyper, tower_ops):
+    return dlc.Properties({
+        'top1_lens': None, # (n*B,)
+        'top1_mean_ed': None, # scalar
+        'top1_accuracy': None, # scalar
+        'top1_num_hits': None, # scalar
+        'top1_ids': None,# (n*B,)
+        'bok_ids': None,# (n*B,)
+        'y_s': None, # (n*B, T)
+        'logs_top1': None,
+        'logs_topK': None,
+        'ph_top1_seq_lens': None,
+        'ph_edit_distance': None,
+        'ph_num_hits': None,
+        'ph_accuracy': None,
+        'ph_valid_time': None,
+        'ph_BoK_distance': None,
+        'ph_BoK_accuracy': None,
+        'logs_agg_top1': None,
+        'logs_agg_bok': None
+        })
 
 def sync_testing_towers(hyper, tower_ops):
     n = len(tower_ops)
@@ -821,9 +860,9 @@ def sync_testing_towers(hyper, tower_ops):
         top1_accuracy = get_mean('top1_accuracy') # scalar
         bok_accuracy = get_mean('bok_accuracy') # scalar
         top1_num_hits = get_sum('top1_num_hits') # scalar
-        top1_ids = concat('top1_ids') # (B, T)
-        bok_ids = concat('bok_ids') # (B, T)
-        y_s = concat('y_s') # (B, T)
+        # top1_ids_list = gather('top1_ids') # (B, T)
+        # bok_ids_list = gather('bok_ids') # (B, T)
+        # y_s_list = gather('y_s') # (B, T)
 
         ## Batch Metrics
         tf.summary.histogram( 'scores/top_1', top1_scores, collections=['top1'])
@@ -842,14 +881,14 @@ def sync_testing_towers(hyper, tower_ops):
 
         ## Aggregate metrics injected into the graph from outside
         with tf.name_scope('AggregateMetrics'):
-            ph_top1_seq_lens = tf.placeholder(self.C.int_type) # (num_batches,B,)
-            ph_edit_distance = tf.placeholder(self.C.dtype) # (num_batches,)
-            ph_num_hits =  tf.placeholder(self.C.dtype) # (num_batches,)
-            ph_accuracy =  tf.placeholder(self.C.dtype) # (num_batches,)
-            ph_valid_time =  tf.placeholder(self.C.dtype) # scalar
+            ph_top1_seq_lens = tf.placeholder(hyper.int_type) # (num_batches,B,)
+            ph_edit_distance = tf.placeholder(hyper.dtype) # (num_batches,)
+            ph_num_hits =  tf.placeholder(hyper.dtype) # (num_batches,)
+            ph_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
+            ph_valid_time =  tf.placeholder(hyper.dtype) # scalar
 
-            ph_BoK_distance =  tf.placeholder(self.C.int_type) # (num_batches,)
-            ph_BoK_accuracy =  tf.placeholder(self.C.dtype) # (num_batches,)
+            ph_BoK_distance =  tf.placeholder(hyper.int_type) # (num_batches,)
+            ph_BoK_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
 
             agg_num_hits = tf.reduce_sum(ph_num_hits)
             agg_accuracy = tf.reduce_mean(ph_accuracy)
@@ -870,14 +909,14 @@ def sync_testing_towers(hyper, tower_ops):
             logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
             logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
-    return Properties({
+    return dlc.Properties({
         'top1_lens': top1_lens, # (n*B,)
         'top1_mean_ed': top1_mean_ed, # scalar
         'top1_accuracy': top1_accuracy, # scalar
         'top1_num_hits': top1_num_hits, # scalar
-        'top1_ids': top1_ids,# (n*B,)
-        'bok_ids': bok_ids,# (n*B,)
-        'y_s': y_s, # (n*B, T)
+        'top1_ids_list': gather('top1_ids'),# (n*B,)
+        'bok_ids_list': gather('bok_ids'),# (n*B,)
+        'y_s_list': gather('y_s'), # (n*B, T)
         'logs_top1': logs_top1,
         'logs_topK': logs_topK,
         'ph_top1_seq_lens': ph_top1_seq_lens,
@@ -912,7 +951,8 @@ def sync_training_towers(hyper, tower_ops, global_step):
             cost = log_likelihood + alpha_penalty + reg_loss
 
         grads = average_gradients(gather('grads'))
-        apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
+        with tf.variable_scope('optimizer'):
+            apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
 
         with tf.variable_scope('Instrumentation'):
             tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
@@ -938,7 +978,9 @@ def sync_training_towers(hyper, tower_ops, global_step):
         'alpha_penalty': alpha_penalty, # scalar
         'reg_loss': reg_loss, # scalar
         'cost': cost, # scalar
-        'apply_grads': apply_grads, # op
+        'train': apply_grads, # op
+        'predicted_ids_list': gather('predicted_ids'), # (num_batches*B,T)
+        'y_s_list': gather('y_s'), # (num_batches*B,T)
         'tb_logs':tb_logs, # summary string
         'ph_train_time': ph_train_time, # scalar
         'log_time': log_time # summary string

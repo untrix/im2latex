@@ -327,6 +327,13 @@ class Im2LatexModelParams(dlc.HyperParams):
                ## Value set in self._trickledown
                ## tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
                ),
+            PD('no_towers', 'Should be always set to False. Indicates code-switch to build without towers which will not work',
+               (False,),
+               False
+               ),
+            PD('num_gpus', 'Number of GPUs employed in parallel',
+               integer(1)
+               ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
                 iscallable(),
