@@ -317,6 +317,16 @@ class Im2LatexModelParams(dlc.HyperParams):
                 boolean,
                 False
                 ),
+            PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
+               instanceof(float),
+               0.0001 # default in tf.train.AdamOptimizer is 0.001
+              ),
+            PD('optimizer',
+               'tensorflow optimizer function (e.g. AdamOptimizer).',
+               instanceof(tf.train.Optimizer),
+               ## Value set in self._trickledown
+               ## tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+               ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 
                 iscallable(),
@@ -417,10 +427,6 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('pLambda', 'Lambda value for alpha penalty',
                decimal(0),
                0.0005), # default in the paper is 00001
-            PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
-               instanceof(float),
-               0.0001 # default in tf.train.AdamOptimizer is 0.001
-              ),
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),
                5)
@@ -429,7 +435,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         dlc.HyperParams.__init__(self, self.makeProto(GlobalParams(initVals).freeze()), initVals)
         self._trickledown()
     def _trickledown(self):
-        pass
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)

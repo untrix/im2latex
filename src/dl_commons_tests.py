@@ -6,7 +6,7 @@
 
 import unittest
 import dl_commons as dlc
-from dl_commons import PD, LambdaVal, integer, instanceof, equalto
+from dl_commons import PD, LambdaVal, integer, integerOrNone, instanceof, equalto
 #import tf_commons as tfc
 
 class Props(dlc.HyperParams):
@@ -33,7 +33,14 @@ class Props2(dlc.HyperParams):
                equalto('m', GLOBAL)),
             PD('D2', '',
                integer(),
-               equalto('D', GLOBAL))
+               equalto('D', GLOBAL)),
+            PD('j', '',
+               integerOrNone(),
+               ),
+            PD('k', '',
+               integerOrNone(),
+               1
+               ),
             )
     def __init__(self, initVals={}):
         dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
@@ -50,7 +57,19 @@ class Props3(dlc.HyperParams):
                equalto('m2', GLOBAL)),
             PD('D3', '',
                integer(),
-               equalto('D2', GLOBAL))
+               equalto('D2', GLOBAL)),
+            PD('j', '',
+               integerOrNone(),
+               2
+               ),
+            PD('k', '',
+               integerOrNone(),
+               2
+               ),
+            PD('l', '',
+               integerOrNone(),
+               2
+               ),
             )
     def __init__(self, initVals={}):
         dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
@@ -240,6 +259,9 @@ class PropertiesTest(TestCaseBase):
         self.assertEqual(p3.i, 512+128)
         self.assertEqual(p3.m3, 128)
         self.assertEqual(p3.D3, 512)
+        self.assertEqual(p3.j, None)
+        self.assertEqual(p3.k, 1)
+        self.assertEqual(p3.l, 2)
 
 
 unittest.TextTestRunner(verbosity=2).run(unittest.TestLoader().loadTestsFromTestCase(PropertiesTest))

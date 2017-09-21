@@ -135,7 +135,7 @@ class Properties(dict):
         Nested key names are appended consequtively using dot (.) as the separator.
         All values resolved but not validated.
         Used for debugging and pretty printing. Will not throw an exception
-        if invalid/unset values are detected in order to be useful for debugging.
+        if invalid/unset values are detected in order to be useful for debuggweing.
         Args:
             prefix: Name of a prefix to prepend to all key names. Its value is non-none when called recursively
             to expand a nested Property object.
@@ -356,13 +356,14 @@ class Params(Properties):
             if name not in props:
                 try:
                     props[name] = prop
-#                    _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
+                    # _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
                     val1 = vals1_._rvn(name)
                     val2 = vals2_._rvn(name)
-                    if (prop.validator is None) or (None not in prop.validator):
-                        _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
-                    else:
-                        _vals[name] = val1
+                    _vals[name] = val1 if (name in vals1_) else val2 if (name in vals2_) else prop.default
+                    # if (prop.validator is None) or (None not in prop.validator):
+                    #     _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
+                    # else:
+                    #     _vals[name] = val1
 
                     if isinstance(_vals[name], LambdaVal):
                         ## This is a case where a proxy function has been provided
@@ -538,7 +539,7 @@ class HyperParams(Params):
 ## Abstract parameter validator class.
 class _ParamValidator(object):
     def __contains__(self, val):
-        raise NotImplementedError('This is an abstract class.')
+        raise NotImplementedError('%s is an abstract class.'%self.__class__.__name__)
 
 ## Dynamic Value setter. Wrapper class
 class LambdaVal(object):

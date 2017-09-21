@@ -30,7 +30,7 @@ import logging
 import numpy as np
 import tensorflow as tf
 import tf_commons as tfc
-from Im2LatexModel import Im2LatexModel
+from Im2LatexModel import Im2LatexModel, sync_testing_towers, sync_training_towers
 from keras import backend as K
 import hyper_params
 from data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
@@ -115,17 +115,17 @@ def main(raw_data_folder,
         ##### Training Graphs
         train_tower_ops = []; train_ops = None
         with tf.name_scope('Training'):
-            hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+            ## hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
             tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
             with tf.variable_scope('InputQueue'):
-                train_q = tf.FIFOQueue(self.C.input_queue_capacity,
-                                    (self.C.int_type, self.C.int_type,
-                                    self.C.int_type, self.C.int_type,
-                                    self.C.dtype))
-                tf_train_enqueue = train_q.enqueue(train_it.get_pyfunc(), name='enqueue')
+                train_q = tf.FIFOQueue(hyper.input_queue_capacity,
+                                    (hyper.int_type, hyper.int_type,
+                                    hyper.int_type, hyper.int_type,
+                                    hyper.dtype))
+                tf_enqueue_train_queue = train_q.enqueue(train_it.get_pyfunc(), name='enqueue')
                 tf_close_train_queue = train_q.close(cancel_pending_enqueues=True)
             for i in range(2):
-                with tf.name_scope('gpu:%d'%i):
+                with tf.name_scope('gpu_%d'%i):
                     with tf.device('/gpu:%d'%i):
                         model = Im2LatexModel(hyper, train_q, reuse=(False if i==0 else True))
                         train_tower_ops.append( model.build_training_tower())
@@ -144,14 +144,14 @@ def main(raw_data_folder,
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
             with tf.variable_scope('InputQueue'):
-                valid_q = tf.FIFOQueue(self.C.input_queue_capacity,
-                                    (self.C.int_type, self.C.int_type,
-                                    self.C.int_type, self.C.int_type,
-                                    self.C.dtype))
+                valid_q = tf.FIFOQueue(hyper.input_queue_capacity,
+                                    (hyper.int_type, hyper.int_type,
+                                    hyper.int_type, hyper.int_type,
+                                    hyper.dtype))
                 enqueue_op2 = valid_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_q.close(cancel_pending_enqueues=True)
             for i in range(2):
-                with tf.name_scope('gpu:%d'%i):
+                with tf.name_scope('gpu_%d'%i):
                     with tf.device('/gpu:%d'%i):
                         model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
                         valid_tower_ops.append(model_predict.build_testing_tower())
