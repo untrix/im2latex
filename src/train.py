@@ -113,8 +113,8 @@ def main(raw_data_folder,
                                                 args)
 
         ##### Training Graphs
+        train_tower_ops = []; train_ops = None
         with tf.name_scope('Training'):
-            train_ops = []
             hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
             tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
             with tf.variable_scope('InputQueue'):
@@ -122,21 +122,25 @@ def main(raw_data_folder,
                                     (self.C.int_type, self.C.int_type,
                                     self.C.int_type, self.C.int_type,
                                     self.C.dtype))
-                enqueue_op = train_q.enqueue(train_it.get_pyfunc(), name='enqueue')
-                close_queue1 = train_q.close(cancel_pending_enqueues=True)
-            with tf.device('/gpu:1'):
-                model = Im2LatexModel(hyper, train_q, reuse=False, )
-                train_ops.append( model.build_training_graph())
-            with tf.device('/gpu:0'):
-                model = Im2LatexModel(hyper, train_q, reuse=True)
-                train_ops.append(model.build_training_graph())
-            trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
-            hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
-            ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
-            ## assert trainable_vars_n == 23261206 if hyper.build_image_context
-        qr1 = tf.train.QueueRunner(train_q, [enqueue_op], cancel_op=[close_queue1])
+                tf_train_enqueue = train_q.enqueue(train_it.get_pyfunc(), name='enqueue')
+                tf_close_train_queue = train_q.close(cancel_pending_enqueues=True)
+            for i in range(2):
+                with tf.name_scope('gpu:%d'%i):
+                    with tf.device('/gpu:%d'%i):
+                        model = Im2LatexModel(hyper, train_q, reuse=(False if i==0 else True))
+                        train_tower_ops.append( model.build_training_tower())
+                        if i == 0:
+                            trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
+                            hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
+                            ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
+                            ## assert trainable_vars_n == 23261206 if hyper.build_image_context
+                        else:
+                            assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
+            train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step)
+        qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
 
         ##### Validation Graph
+        valid_tower_ops = []; valid_ops = None
         with tf.name_scope('Validation'):
             hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
             with tf.variable_scope('InputQueue'):
@@ -146,14 +150,14 @@ def main(raw_data_folder,
                                     self.C.dtype))
                 enqueue_op2 = valid_q.enqueue(valid_it.get_pyfunc(), name='enqueue')
                 close_queue2 = valid_q.close(cancel_pending_enqueues=True)
-            with tf.device('/gpu:0'):
-                model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
-                valid_ops_0 = model_predict.test()
-            with tf.device('/gpu:1'):
-                model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
-                valid_ops_1 = model_predict.test()
+            for i in range(2):
+                with tf.name_scope('gpu:%d'%i):
+                    with tf.device('/gpu:%d'%i):
+                        model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=True)
+                        valid_tower_ops.append(model_predict.build_testing_tower())
             hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
-            assert(num_trainable_vars() == trainable_vars_n)
+            assert num_trainable_vars() == trainable_vars_n
+            valid_ops = sync_testing_towers(hyper, valid_tower_ops)
         qr2 = tf.train.QueueRunner(valid_q, [enqueue_op2], cancel_op=[close_queue2])
 
         # ##### Training Accuracy Graph
@@ -190,7 +194,7 @@ def main(raw_data_folder,
 
             enqueue_threads = qr1.create_threads(session, coord=coord, start=True)
             enqueue_threads.extend(qr2.create_threads(session, coord=coord, start=True))
-            if (args.make_training_accuracy_graph):
+            if args.make_training_accuracy_graph:
                 enqueue_threads.extend(qr3.create_threads(session, coord=coord, start=True))
 
             saver = tf.train.Saver(max_to_keep=5, pad_step_number=True, save_relative_paths=True)
@@ -213,7 +217,7 @@ def main(raw_data_folder,
                     if not doLog:
                         _, ctc_loss, log = session.run(
                             (
-                                train_ops.train, 
+                                train_ops.train,
                                 train_ops.ctc_loss,
                                 train_ops.tb_logs
                             ))
@@ -331,7 +335,7 @@ def measure_accuracy(session, ops, batch_its, hyper, args, step, tf_sw):
     validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
     valid_start_time = time.time()
     if not validate:
-        if args.make_training_accuracy_graph: # Run one training batch thought training_accuracy_graph
+        if args.make_training_accuracy_graph: # Run one training batch through training_accuracy_graph
             logs_top1, logs_topK, bok_ids = session.run((
                                 ops.tr_acc_ops.logs_tr_acc_top1,
                                 ops.tr_acc_ops.logs_tr_acc_topK,

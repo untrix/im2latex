@@ -34,6 +34,7 @@ from keras import backend as K
 from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
+from tf_tutorial_code import average_gradients
 BeamSearchDecoder = tf.contrib.seq2seq.BeamSearchDecoder
 
 def build_vgg_context(params, image_batch):
@@ -360,7 +361,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
         return self.ScanOut(yLogits_t, state_t)
 
-    def build_training_graph(self):
+    def build_training_tower(self):
+        """ Build the training graph of the model """
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
 #                with tf.variable_scope('TrainingGraph'):
@@ -373,7 +375,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## last token of y_s which is <eos> token (zero) will not appear in x_s
                 x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
 
-                """ Build the training graph of the model """
                 accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
@@ -403,13 +404,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ph_train_time =  tf.placeholder(self.C.dtype)
 
                 ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
-                log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
+                log_time = tf.summary.scalar('training/time_per100', ph_train_time, collections=['training_aggregate'])
 
                 return optimizer_ops.updated({
-                                              'inp_q':self._inp_q,
-                                              'tb_logs': tb_logs,
-                                              'ph_train_time': ph_train_time,
-                                              'log_time': log_time
+                                              'inp_q':self._inp_q
+                                            #   'tb_logs': tb_logs,
+                                            #   'ph_train_time': ph_train_time,
+                                            #   'log_time': log_time
                                               })
 
 
@@ -550,8 +551,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                         padding_token=0) # ((B,T), (B,))
                     ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
                                                  self.C.SpaceTokenID)
-                    ctc_mean_ed = tf.reduce_mean(ctc_ed) # scalar
+                    mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
+
+                tf.summary.scalar('training/regLoss', reg_losses, collections=['training'])
+                tf.summary.scalar('training/logloss', log_likelihood, collections=['training'])
+                tf.summary.scalar('training/ctc_loss', ctc_loss, collections=['training'])
+                tf.summary.scalar('training/alpha_penalty', alpha_penalty, collections=['training'])
+                tf.summary.scalar('training/total_cost', cost, collections=['training'])
+                tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
+                tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
+                ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
+                tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
@@ -570,6 +581,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'alpha_penalty': alpha_penalty,
                         'reg_loss': reg_loss,
                         'cost': cost,
+                        'ctc_ed': ctc_ed,
+                        'mean_ctc_ed': mean_ctc_ed,
+                        'sequence_lengths': sequence_lengths,
+                        'mean_norm_ase': mean_norm_ase,
                         'global_step':global_step,
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
@@ -613,7 +628,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             'seq_lens': final_sequence_lengths # (B, BW)
                             })
 
-    def build_testing_graph(self):
+    def build_testing_tower(self):
         """ Test one batch of input """
         B = self.C.B
         BW = self.Seq2SeqBeamWidth
@@ -769,10 +784,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'bok_seq_lens': bok_seq_lens, # (B,)
                     'bok_seq_scores': bok_seq_scores, #(B,)
                     'bok_ids': bok_ids, # (B,T)
-                    'logs_tr_acc_top1': logs_tr_acc_top1,
-                    'logs_tr_acc_topK': logs_tr_acc_topK,
-                    'logs_agg_top1': logs_agg_top1,
-                    'logs_agg_bok': logs_agg_bok,
+                    # 'logs_tr_acc_top1': logs_tr_acc_top1,
+                    # 'logs_tr_acc_topK': logs_tr_acc_topK,
+                    # 'logs_agg_top1': logs_agg_top1,
+                    # 'logs_agg_bok': logs_agg_bok,
                     'ph_top1_seq_lens': ph_top1_seq_lens,
                     'ph_edit_distance': ph_edit_distance,
                     'ph_BoK_distance': ph_BoK_distance,
@@ -782,45 +797,104 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'ph_num_hits': ph_num_hits
                     })
 
-def average_gradients(tower_grads):
-  """Calculate the average gradient for each shared variable across all towers.
-  Note that this function provides a synchronization point across all towers.
-  Args:
-    tower_grads: List of lists of (gradient, variable) tuples. The outer list
-      is over individual gradients. The inner list is over the gradient
-      calculation for each tower.
-  Returns:
-     List of pairs of (gradient, variable) where the gradient has been averaged
-     across all towers.
-  """
-  average_grads = []
-  for grad_and_vars in zip(*tower_grads):
-    # Note that each grad_and_vars looks like the following:
-    #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
-    grads = []
-    for g, _ in grad_and_vars:
-      # Add 0 dimension to the gradients to represent the tower.
-      expanded_g = tf.expand_dims(g, 0)
+def sync_testing_towers(hyper, tower_ops):
+    n = len(tower_ops)
+    BW = hyper.seq2seq_beam_width
+    k = min([hyper.k, BW])
 
-      # Append on a 'tower' dimension which we will average over below.
-      grads.append(expanded_g)
-
-    # Average over the 'tower' dimension.
-    grad = tf.concat(axis=0, values=grads)
-    grad = tf.reduce_mean(grad, 0)
-
-    # Keep in mind that the Variables are redundant because they are shared
-    # across towers. So .. we will just return the first tower's pointer to
-    # the Variable.
-    v = grad_and_vars[0][1]
-    grad_and_var = (grad, v)
-    average_grads.append(grad_and_var)
-  return average_grads
-
-def sync_training_towers(hyper, train_ops, global_step):
     with tf.variable_scope('SyncTowers') as var_scope:
         def gather(prop_name):
-            return [o[prop_name] for o in train_ops]
+            return [o[prop_name] for o in tower_ops]
+        def get_mean(prop_name, op_name=None):
+            return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
+        def get_sum(prop_name, op_name=None):
+            return tf.reduce_sum(gather(prop_name), name=op_name or prop_name)
+        def concat(prop_name, axis=0):
+            return tf.concat(gather(prop_name), axis=axis)
+
+        top1_lens = concat('top1_lens')
+        bok_seq_lens = concat('bok_seq_lens')
+        top1_scores = concat('top1_scores')
+        bok_seq_scores = concat('bok_seq_scores')
+        top1_mean_ed = get_mean('top1_mean_ed')
+        bok_mean_ed = get_mean('bok_mean_ed')
+        top1_accuracy = get_mean('top1_accuracy')
+        bok_accuracy = get_mean('bok_accuracy')
+        top1_num_hits = get_sum('top1_num_hits')
+        top1_ids = concat('top1_ids')
+        bok_ids = concat('bok_ids')
+        y_s = concat('y_s')
+
+        ## Batch Metrics
+        tf.summary.histogram( 'scores/top_1', top1_scores, collections=['top1'])
+        tf.summary.histogram( 'seq_lens/top_1', top1_lens, collections=['top1'])
+        tf.summary.scalar( 'edit_distances/top_1', top1_mean_ed, collections=['top1'])
+        ## tf.summary.scalar( 'accuracy/top_1', top1_accuracy, collections=['top1'])
+        tf.summary.scalar('num_hits/top_1', top1_num_hits, collections=['top1'])
+
+        tf.summary.scalar( 'edit_distances/top_%d'%k, bok_mean_ed, collections=['top_k'])
+        tf.summary.scalar( 'accuracy/top_%d'%k, bok_accuracy, collections=['top_k'])
+        tf.summary.histogram( 'seq_lens/top_%d'%k, bok_seq_lens, collections=['top_k'])
+        tf.summary.histogram( 'scores/top_%d'%k, bok_seq_scores, collections=['top_k'])
+
+        logs_top1 = tf.summary.merge(tf.get_collection('top1'))
+        logs_topK = tf.summary.merge(tf.get_collection('top_k'))
+
+        ## Aggregate metrics injected into the graph from outside
+        with tf.name_scope('AggregateMetrics'):
+            ph_top1_seq_lens = tf.placeholder(self.C.int_type)
+            ph_edit_distance = tf.placeholder(self.C.dtype)
+            ph_num_hits =  tf.placeholder(self.C.dtype)
+            ph_accuracy =  tf.placeholder(self.C.dtype)
+            ph_valid_time =  tf.placeholder(self.C.dtype)
+
+            ph_BoK_distance =  tf.placeholder(self.C.int_type)
+            ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
+
+            agg_num_hits = tf.reduce_sum(ph_num_hits)
+            agg_accuracy = tf.reduce_mean(ph_accuracy)
+            agg_ed = tf.reduce_mean(ph_edit_distance)
+            agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
+            agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
+
+            tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+            tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
+            tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
+            tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
+            tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
+            tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
+            tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
+            tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
+            tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
+
+            logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
+            logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
+
+    return Properties({
+        'top1_lens': top1_lens, # (n*B,)
+        'top1_mean_ed': top1_mean_ed, # scalar
+        'top1_accuracy': top1_accuracy, # scalar
+        'top1_num_hits': top1_num_hits, # scalar
+        'top1_ids': top1_ids,# (n*B,)
+        'bok_ids': bok_ids,# (n*B,)
+        'y_s': y_s, # (n*B, T)
+        'logs_top1': logs_top1,
+        'logs_topK': logs_topK,
+        'ph_top1_seq_lens': ph_top1_seq_lens,
+        'ph_edit_distance': ph_edit_distance,
+        'ph_num_hits': ph_num_hits,
+        'ph_accuracy': ph_accuracy,
+        'ph_valid_time': ph_valid_time,
+        'ph_BoK_distance': ph_BoK_distance,
+        'ph_BoK_accuracy': ph_BoK_accuracy,
+        'logs_agg_top1': logs_agg_top1,
+        'logs_agg_bok': logs_agg_bok
+        })
+
+def sync_training_towers(hyper, tower_ops, global_step):
+    with tf.variable_scope('SyncTowers') as var_scope:
+        def gather(prop_name):
+            return [o[prop_name] for o in tower_ops]
         def get_mean(prop_name, op_name=None):
             return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
         def get_sum(prop_name, op_name=None):
@@ -839,15 +913,22 @@ def sync_training_towers(hyper, train_ops, global_step):
         apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
 
         with tf.variable_scope('Instrumentation'):
-            # tf.summary.scalar('training/regLoss/', reg_losses, collections=['training'])
+            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
             tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
             tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
             tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
             tf.summary.scalar('training/total_cost/', cost, collections=['training'])
-            tf.summary.scalar('training/mean_norm_ase/', mean_norm_ase, collections=['training'])
-            tf.summary.histogram('training/seq_len/', sequence_lengths, collections=['training'])
-            ## tf.summary.scalar('training/ctc_mean_ed/', ctc_mean_ed)
-            tf.summary.histogram('training/ctc_ed/', ctc_ed, collections=['training'])
+            tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
+            tf.summary.histogram('training/seq_len/', gather('sequence_lengths'), collections=['training'])
+            ## tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'))
+            tf.summary.histogram('training/ctc_ed/', gather('ctc_ed'), collections=['training'])
+
+            tb_logs = tf.summary.merge(tf.get_collection('training'))
+
+            ## Placeholder for injecting training-time from outside
+            ph_train_time =  tf.placeholder(self.C.dtype)
+            ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
+            log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
 
     return Properties({
         'log_likelihood': log_likelihood,
@@ -855,5 +936,8 @@ def sync_training_towers(hyper, train_ops, global_step):
         'alpha_penalty': alpha_penalty,
         'reg_loss': reg_loss,
         'cost': cost,
-        'apply_grads': apply_grads
+        'apply_grads': apply_grads,
+        'tb_logs':tb_logs,
+        'ph_train_time': ph_train_time,
+        'log_time': log_time
         })
