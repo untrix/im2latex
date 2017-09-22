@@ -78,7 +78,8 @@ class GlobalParams(dlc.HyperParams):
            151 #get_max_seq_len(data_folder)
            ),
         PD('B',
-           '(integer): Size of mini-batch for training, validation and testing.',
+           '(integer): Size of mini-batch for training, validation and testing graphs/towers. '
+           'NOTE: Batch-size for the data-reader is different and set under property "data_reader_B"',
            integer(1),
            96
            ),
@@ -275,8 +276,9 @@ class Im2LatexModelParams(dlc.HyperParams):
                 True
                 ),
             PD('input_queue_capacity', 'Capacity of input queue.',
-                integer(),
-                5),
+                integer(1),
+                LambdaVal(lambda _, d: d.num_gpus * 3)
+                ),
             PD('DecodingSlack',
                 "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
                 "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
@@ -333,6 +335,10 @@ class Im2LatexModelParams(dlc.HyperParams):
                ),
             PD('num_gpus', 'Number of GPUs employed in parallel',
                integer(1)
+               ),
+            PD('data_reader_B', 'batch_size for the data_reader', 
+               integer(1),
+               LambdaVal(lambda _, d: d.B * d.num_gpus)
                ),
         ### Embedding Layer ###
             PD('embeddings_initializer', 'Initializer for embedding weights', 

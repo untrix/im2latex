@@ -26,7 +26,7 @@ Tested on python 2.7
 """
 import dl_commons as dlc
 import tf_commons as tfc
-import train
+import train_multi_gpu
 import logging
 import hyper_params
 import argparse
@@ -184,7 +184,7 @@ def main():
     logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())
     logger.info('##################################################################\n')
     
-    train.main(raw_data_folder,
+    train_multi_gpu.main(raw_data_folder,
           vgg16_folder,
           globalParams,
           hyper.freeze()

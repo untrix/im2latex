@@ -914,9 +914,9 @@ def sync_testing_towers(hyper, tower_ops):
         'top1_mean_ed': top1_mean_ed, # scalar
         'top1_accuracy': top1_accuracy, # scalar
         'top1_num_hits': top1_num_hits, # scalar
-        'top1_ids_list': gather('top1_ids'),# (n*B,)
-        'bok_ids_list': gather('bok_ids'),# (n*B,)
-        'y_s_list': gather('y_s'), # (n*B, T)
+        'top1_ids_list': gather('top1_ids'),# ((B,T),...)
+        'bok_ids_list': gather('bok_ids'),# ((B,T),...)
+        'y_s_list': gather('y_s'), # ((B,T),...)
         'logs_top1': logs_top1,
         'logs_topK': logs_topK,
         'ph_top1_seq_lens': ph_top1_seq_lens,
@@ -979,8 +979,8 @@ def sync_training_towers(hyper, tower_ops, global_step):
         'reg_loss': reg_loss, # scalar
         'cost': cost, # scalar
         'train': apply_grads, # op
-        'predicted_ids_list': gather('predicted_ids'), # (num_batches*B,T)
-        'y_s_list': gather('y_s'), # (num_batches*B,T)
+        'predicted_ids_list': gather('predicted_ids'), # ((B,T),...)
+        'y_s_list': gather('y_s'), # ((B,T),...)
         'tb_logs':tb_logs, # summary string
         'ph_train_time': ph_train_time, # scalar
         'log_time': log_time # summary string

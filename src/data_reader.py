@@ -124,7 +124,7 @@ class ImageProcessor3(object):
         Arguments:
             image_batch: (ndarray) Batch of images or a single image. Shape doesn't matter.
         """
-        assert image_ar.shape == (self._params.B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.B,) + self._params.image_shape)
+        assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
         return (image_ar - 127.5) / 255.0
 3
 class ImageProcessor3_RGB(ImageProcessor3):
@@ -150,7 +150,7 @@ class ImagenetProcessor3(ImageProcessor3_RGB):
             image_batch: (ndarray) Batch of images of shape (B, H, W, D) - i.e. 'channels-last' format.
             Also, must have 3 channels in order 'RGB' (i.e. mode='RGB')
         """
-        assert image_ar.shape == (self._params.B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.B,) + self._params.image_shape)
+        assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
         return preprocess_input(image_ar, data_format='channels_last')
 
 class VGGProcessor(object):
@@ -195,7 +195,7 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
 class ShuffleIterator(object):
     def __init__(self, df_, hyper, num_steps, num_epochs, name='ShuffleIterator'):
         self._df = df_.sample(frac=1)
-        self._batch_size = hyper.B
+        self._batch_size = hyper.data_reader_B
         self._batch_list = make_batch_list(self._df, self._batch_size, hyper.assert_whole_batch)
         self._next_pos = 0
         self._num_items = len(self._batch_list)
@@ -408,13 +408,23 @@ class BatchImageIterator3(ShuffleIterator):
 
     def get_pyfunc_with_split(self, num_splits):
         def split(a, num, size):
+            """
+            Splits a numpy array into num slices along dimension 0 and wraps them
+            with an additional dimension (0) of size num. For e.g. if a is shape (10, ...)
+            then splitting it into 5 splits will result in a array of shape (5,2,...).
+            """
             return np.asarray([ a[i*size:(i+1)*size] for i in range(num) ])
 
         def func(x=None):
             d = self.next()
-            return InpTup(split(d.y_s), split(d.seq_len), split(d.y_ctc), split(d.ctc_len), split(d.im))
+            return InpTup(split(d.y_s,      num_splits,split_size), 
+                          split(d.seq_len,  num_splits,split_size), 
+                          split(d.y_ctc,    num_splits,split_size), 
+                          split(d.ctc_len,  num_splits,split_size), 
+                          split(d.im,       num_splits,split_size))
 
-        assert (self._batch_size / num_splits) == (self._batch_size // num_splits), 'Batchsize:%d is not divisible by num_splits: %d'%(self._batch_size, num_splits)
+        split_size = self._batch_size // num_splits
+        assert (self._batch_size / num_splits) == split_size, 'Batchsize:%d is not divisible by num_splits: %d'%(self._batch_size, num_splits)
         int_type = self._hyper.int_type
         return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
 
@@ -485,7 +495,7 @@ def create_context_iterators(raw_data_dir_,
                              image_processor_=None):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
-                                       hyper.B,
+                                       hyper.data_reader_B,
                                        hyper.logger,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
@@ -522,7 +532,7 @@ def create_context_iterators(raw_data_dir_,
 def create_imagenet_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
-                                       hyper.B, 
+                                       hyper.data_reader_B, 
                                        hyper.logger,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
@@ -557,7 +567,7 @@ def create_imagenet_iterators(raw_data_dir_, hyper, args):
 def create_BW_image_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
-                                       hyper.B, 
+                                       hyper.data_reader_B, 
                                        hyper.logger,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
