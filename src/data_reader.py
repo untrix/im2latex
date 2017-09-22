@@ -387,15 +387,15 @@ class BatchImageIterator3(ShuffleIterator):
         ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
         # self._hyper.logger.debug('%s.next() obtained all batch_data. returning ...'%self._name)
         return dlc.Properties({'im':im_batch,
-                               'y_s':y_s,
-                               'seq_len': seq_len,
+                               'y_s':y_s, # (B,T)
+                               'seq_len': seq_len, #(B,)
                                ## 'y_s':y_ctc,
                                ## 'seq_len': ctc_len,
-                               'y_ctc':y_ctc,
-                               'ctc_len': ctc_len,
-                               'image_name': df_batch.image.values,
-                               'epoch': nxt.epoch,
-                               'step': nxt.step
+                               'y_ctc':y_ctc, #(B,T)
+                               'ctc_len': ctc_len, #(B,)
+                               'image_name': df_batch.image.values, #(B,)
+                               'epoch': nxt.epoch, # scalar
+                               'step': nxt.step # scalar
                                })
 
     def get_pyfunc(self):
@@ -403,6 +403,18 @@ class BatchImageIterator3(ShuffleIterator):
             d = self.next()
             return InpTup(d.y_s, d.seq_len, d.y_ctc, d.ctc_len, d.im)
 
+        int_type = self._hyper.int_type
+        return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
+
+    def get_pyfunc_with_split(self, num_splits):
+        def split(a, num, size):
+            return np.asarray([ a[i*size:(i+1)*size] for i in range(num) ])
+
+        def func(x=None):
+            d = self.next()
+            return InpTup(split(d.y_s), split(d.seq_len), split(d.y_ctc), split(d.ctc_len), split(d.im))
+
+        assert (self._batch_size / num_splits) == (self._batch_size // num_splits), 'Batchsize:%d is not divisible by num_splits: %d'%(self._batch_size, num_splits)
         int_type = self._hyper.int_type
         return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
 
