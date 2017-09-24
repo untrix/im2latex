@@ -62,6 +62,9 @@ def main():
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=None)
+    parser.add_argument("--r-lambda", "-r", dest="rLambda", type=float,
+                        help="Sets value of rLambda - lambda value used for regularization. Defaults to 00005.",
+                        default=0.00005)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
@@ -165,8 +168,9 @@ def main():
         globalParams.input_queue_capacity = args.queue_capacity
     if args.alpha is not None:
         globalParams.adam_alpha = args.alpha
-    globalParams.update({
-                        })
+    if args.rLambda is not None:
+        globalParams.rLambda = args.rLambda
+        
     hyper = hyper_params.make_hyper(globalParams)
 
     # Add logging file handler now that we have instantiated hyperparams.

@@ -359,6 +359,7 @@ class Params(Properties):
                     # _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
                     val1 = vals1_._rvn(name)
                     val2 = vals2_._rvn(name)
+                    ## TODO: Fix prop.default - use it only if a default value was set. Otherwise leave the value unset (i.e. do not insert the key into dict.)
                     _vals[name] = val1 if (name in vals1_) else val2 if (name in vals2_) else prop.default
                     # if (prop.validator is None) or (None not in prop.validator):
                     #     _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
