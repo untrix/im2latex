@@ -361,7 +361,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             Ex_t = self._embedding_lookup(x_t)
 
         ## RNN.__call__
-        yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
+        ## yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
+        yLogits_t, state_t = self(Ex_t, out_t_1.state, scope=self._rnn_scope)
         return self.ScanOut(yLogits_t, state_t)
 
     def build_training_tower(self):
@@ -378,7 +379,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## last token of y_s which is <eos> token (zero) will not appear in x_s
                 x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
 
-                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
+                ## accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
+                accum = self.ScanOut(None,
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
                                 initializer=accum, 
@@ -568,7 +570,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.scalar('training/total_cost', cost, collections=['training'])
                     tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
                     tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
-                    ## tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
+                    tf.summary.histogram('training/predicted_len_ratio', tf.divide(ctc_squashed_lens,ctc_len), collections=['training'])                    
+                    tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
                     tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
                 ################ Optimizer ################
@@ -595,6 +598,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'ctc_ed': ctc_ed, #(B,)
                         'mean_ctc_ed': mean_ctc_ed, # scalar
                         'sequence_lengths': sequence_lengths, # (B,)
+                        'ctc_len': ctc_len,
+                        'pred_squash_lens': ctc_squashed_lens,
                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
@@ -612,15 +617,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 with tf.variable_scope('BeamSearch'):
-                    begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
-                    class BeamSearchDecoder2(BeamSearchDecoder):
-                        def initialize(self, name=None):
-                            finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
-                            return tf.expand_dims(finished, axis=2), start_inputs, initial_state
+                    ## begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
+                    # class BeamSearchDecoder2(BeamSearchDecoder):
+                    #     def initialize(self, name=None):
+                    #         finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
+                    #         return tf.expand_dims(finished, axis=2), start_inputs, initial_state
 
-                    decoder =                    BeamSearchDecoder(self,
-                                                                self._embedding_lookup,
-                                                                begin_tokens,
+                    decoder =                 BeamSearchDecoder(self,
+                                                                self._embedding_matrix, ## self._embedding_lookup,
+                                                                1, ## begin_tokens,
                                                                 0,
                                                                 self._init_state_model,
                                                                 beam_width=self.Seq2SeqBeamWidth)

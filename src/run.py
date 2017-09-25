@@ -107,6 +107,9 @@ def main():
     parser.add_argument("--restore", dest="restore_logdir", type=str,
                         help="restore from checkpoint. Provide logdir path as argument",
                         default=None)
+    parser.add_argument("--use-ctc-loss", dest="use_ctc_loss", action='store_true',
+                        help="Sets the use_ctc_loss hyper parameter. Defaults to False.",
+                        default=False)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -154,7 +157,7 @@ def main():
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.005,
                                     'make_training_accuracy_graph': False,
-                                    'use_ctc_loss': False,
+                                    'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
                                     'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
