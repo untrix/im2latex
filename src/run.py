@@ -32,6 +32,17 @@ import hyper_params
 import argparse
 import os
 
+def makeLogfileName(logdir):
+    filenames = os.listdir(logdir)
+    if not 'training.log' in filenames:
+        return 'training.log'
+    else:
+        for i in xrange(2,101):
+            if 'training.log_%d'%i not in filenames:
+                return 'training.log_%d'%i
+
+    raise Exception('logfile number limit (100) reached.')
+
 def main():
     _data_folder = '../data'
     _logdir = 'tb_metrics'
@@ -110,6 +121,12 @@ def main():
     parser.add_argument("--use-ctc-loss", dest="use_ctc_loss", action='store_true',
                         help="Sets the use_ctc_loss hyper parameter. Defaults to False.",
                         default=False)
+    parser.add_argument("--validate", dest="doValidate", action='store_true',
+                        help="Run validation cycle only. --restore option should be provided along with this.",
+                        default=False)
+    parser.add_argument("--squash-input-seq", dest="squash_input_seq", action='store_true',
+                        help="(boolean) Set value of squash_input_seq hyper param. Defaults to whatever is set in hyper_params code.",
+                        default=False)
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -134,6 +151,9 @@ def main():
         tb = tfc.TensorboardParams({'tb_logdir':_logdir2})
     else:
         tb = tfc.TensorboardParams({'tb_logdir':_logdir})
+
+    if args.doValidate:
+        assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
 
     logger = hyper_params.makeLogger()
 
@@ -161,8 +181,15 @@ def main():
                                     "swap_memory": args.swap_memory,
                                     'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
-                                    'num_gpus': 2
+                                    'num_gpus': 2,
+                                    # 'StartTokenID': dlc.equalto('SpaceTokenID'),
+                                    'beamsearch_length_penalty': 1.0,
+                                    'doValidate': args.doValidate,
+                                    'doTrain': not args.doValidate,
+                                    'squash_input_seq': args.squash_input_seq,
+                                    'NOTE': 'CHECK # of LSTM LAYERS'
                                     })
+
     if args.batch_size is not None:
         globalParams.B = args.batch_size
     if args.partial_batch:
@@ -173,7 +200,7 @@ def main():
         globalParams.adam_alpha = args.alpha
     if args.rLambda is not None:
         globalParams.rLambda = args.rLambda
-        
+
     hyper = hyper_params.make_hyper(globalParams)
 
     # Add logging file handler now that we have instantiated hyperparams.
@@ -181,7 +208,7 @@ def main():
         globalParams.logdir = args.restore_logdir
     else:
         globalParams.logdir = tfc.makeTBDir(hyper.tb)
-    fh = logging.FileHandler(os.path.join(globalParams.logdir, 'training.log'))
+    fh = logging.FileHandler(os.path.join(globalParams.logdir, makeLogfileName(globalParams.logdir)))
     fh.setFormatter(hyper_params.makeFormatter())
     logger.addHandler(fh)
     hyper_params.setLogLevel(logger, args.logging_level)

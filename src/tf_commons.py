@@ -772,7 +772,7 @@ def printVars(name, coll):
     print '\nTotal number of variables = ', total_n
     return total_n
 
-def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None,  space_token=None):
     """Compute edit distance for matrix of shape (B,k,T) """
     with tf.name_scope('edit_distance3D'):
         p_shape = K.int_shape(predicted_ids)
@@ -783,7 +783,7 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         assert len(t_shape) == 3
         assert t_shape[:2] == (B, k)
         assert K.int_shape(target_lens) == (B, k)
-        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token)
+        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token, space_token)
         ## blank tokens should not be present in target_ids
         target_sparse = dense_to_sparse3D(B, target_ids, target_lens)
 
@@ -792,7 +792,7 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
-def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None):
+def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None, space_token=None):
     """
     Compute edit distance of predicted_ids (ignoring blank_tokens) with target_ids (which are assumed to have no blank tokens).
     The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
@@ -801,7 +801,7 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         B: batch-size
         predicted_ids: shape (B, T)
         target_ids: shape (B, T)
-        blank_token: blank token as defined by CTC. Space-token in our case.
+        blank_token: blank token as defined by CTC.
     """
     with tf.name_scope('edit_distance2D'):
         p_shape = K.int_shape(predicted_ids)
@@ -813,7 +813,7 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         assert t_shape[0] == B
         assert K.int_shape(target_lens) == (B,)
 
-        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token)
+        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token, space_token)
         
         ## blank tokens should not be present in target_ids, therefore we won't squash it
         target_sparse = dense_to_sparse2D(target_ids, target_lens)
@@ -823,6 +823,32 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
+def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens):
+    """
+    Compute edit distance of predicted_ids (ignoring blank_tokens) with target_ids (which are assumed to have no blank tokens).
+    The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
+    actually do that.
+    Args:
+        B: batch-size
+        predicted_sparse: sparse tensor of dense_shape (B, T)
+        target_ids: dense tensor of shape shape (B, T)
+        target_lens: lengths of id-sequences (rows of target_ids) - (B,)
+    """
+    with tf.name_scope('edit_distance2D'):
+        p_shape = predicted_sparse.get_shape().as_list()
+        t_shape = K.int_shape(target_ids)
+        assert len(p_shape) == 2
+        assert p_shape[0] == B
+        assert K.int_shape(predicted_lens) == (B,)
+        assert len(t_shape) == 2
+        assert t_shape[0] == B
+        assert K.int_shape(target_lens) == (B,)
+        
+        target_sparse = dense_to_sparse2D(target_ids, target_lens)
+            
+        d = tf.edit_distance(predicted_sparse, target_sparse)
+        d.set_shape(target_lens.shape) ## Reassert shape in case it got lost.
+        return d
 
 def squash_2d(B, m, lens, blank_token, padding_token=0):
     """
@@ -867,27 +893,29 @@ def squash_3d(B, k, m, lens, blank_token, padding_token=0):
             squashed_lens.append(s_l)
         return tf.stack(squashed), tf.stack(squashed_lens)
 
-def _dense_to_sparse(t, mask, blank_token=None):
+def _dense_to_sparse(t, mask, blank_token=None, space_token=None):
         if blank_token is not None:
             mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
+        if space_token is not None:
+            mask = tf.logical_and(mask, tf.not_equal(t, space_token))
         idx = tf.where(mask)
         vals = tf.gather_nd(t, idx)
         return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))    
 
-def dense_to_sparse2D(t, lens, blank_token=None):
+def dense_to_sparse2D(t, lens, blank_token=None, space_token=None):
     with tf.name_scope('dense_to_sparse2D'):
         assert len(K.int_shape(t)) == 2
         assert len(K.int_shape(lens)) == 1
         mask = tf.sequence_mask(lens, maxlen=tf.shape(t)[1])
-        return _dense_to_sparse(t, mask, blank_token)
+        return _dense_to_sparse(t, mask, blank_token, space_token)
 
-def dense_to_sparse3D(B, t, lens, blank_token=None):
+def dense_to_sparse3D(B, t, lens, blank_token=None, space_token=None):
     with tf.name_scope('dense_to_sparse3D'):
         assert K.int_shape(t)[0] == B
         assert len(K.int_shape(t)) == 3
         assert len(K.int_shape(lens)) == 2
         mask = tf.stack([tf.sequence_mask(lens[i], maxlen=tf.shape(t)[2]) for i in range(B)])
-        return _dense_to_sparse(t, mask, blank_token)
+        return _dense_to_sparse(t, mask, blank_token, space_token)
 
 def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
     # B = self.C.B

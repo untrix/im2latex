@@ -143,7 +143,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## First step of x_s is 1 - the begin-sequence token. Shape = (T, B); T==1
                 self._x_0 = tf.ones(shape=(1, self.C.B*seq2seq_beam_width),
                                     dtype=self.C.int_type,
-                                    name='begin_sequence')
+                                    name='begin_sequence')*self.C.StartTokenID
 
                 self._calstms = []
                 for i, rnn_params in enumerate(self.C.CALSTM_STACK, start=1):
@@ -379,8 +379,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## last token of y_s which is <eos> token (zero) will not appear in x_s
                 x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
 
-                ## accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),
-                accum = self.ScanOut(None,
+                # accum = self.ScanOut(None,
+                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # This init-value is not used
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
                                 initializer=accum, 
@@ -546,20 +546,23 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 with tf.variable_scope('Accuracy_Calculation'):
                     yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
                     ## ctc_beam_search_decoder sometimes produces ID values = -1
+                    ########### WARNING: ctc_beam_search_decoder will discard spaces when use_ctc_loss == False. Otherwise spaces will *not* be discarded. ###########
                     decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width, 
-                        top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
+                                                                          top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
                     print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
                     ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=0) # (B, T)
                     ctc_decoded_ids.set_shape((B, None))
                     ## assert len(K.int_shape(ctc_decoded_ids)) == (B, None), 'got ctc_decoded_ids shape = %s'%(K.int_shape(ctc_decoded_ids),)
                     ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B, 
-                                                                        ctc_decoded_ids, 
-                                                                        sequence_lengths, 
-                                                                        self.C.SpaceTokenID, 
+                                                                        ctc_decoded_ids,
+                                                                        sequence_lengths,
+                                                                        self.C.SpaceTokenID,
                                                                         padding_token=0) # ((B,T), (B,))
-                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
-                                                 self.C.SpaceTokenID)
+                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
+                    # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
                     mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
+                    num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
+                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
                     # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
 
                 if self.C.no_towers: ## Old Code without towers
@@ -570,7 +573,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf.summary.scalar('training/total_cost', cost, collections=['training'])
                     tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
                     tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
-                    tf.summary.histogram('training/predicted_len_ratio', tf.divide(ctc_squashed_lens,ctc_len), collections=['training'])                    
+                    tf.summary.histogram('training/predicted_len_ratio', pred_len_ratio, collections=['training'])                    
                     tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
                     tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
 
@@ -600,6 +603,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'sequence_lengths': sequence_lengths, # (B,)
                         'ctc_len': ctc_len,
                         'pred_squash_lens': ctc_squashed_lens,
+                        'pred_len_ratio': pred_len_ratio,
+                        'num_hits': num_hits,
                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
@@ -613,11 +618,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def _beamsearch(self):
         """ Build the prediction graph of the model using beamsearch """
         with tf.variable_scope(self.outer_scope) as var_scope:
-            assert var_scope.reuse == True
+            # assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 with tf.variable_scope('BeamSearch'):
-                    ## begin_tokens = tf.ones(shape=(self.C.B,), dtype=self.C.int_type)
                     # class BeamSearchDecoder2(BeamSearchDecoder):
                     #     def initialize(self, name=None):
                     #         finished, start_inputs, initial_state = BeamSearchDecoder.initialize(self, name)
@@ -625,10 +629,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     decoder =                 BeamSearchDecoder(self,
                                                                 self._embedding_matrix, ## self._embedding_lookup,
-                                                                1, ## begin_tokens,
-                                                                0,
+                                                                tf.ones(shape=(self.C.B,), dtype=self.C.int_type) * self.C.StartTokenID,
+                                                                self.C.NullTokenID,
                                                                 self._init_state_model,
-                                                                beam_width=self.Seq2SeqBeamWidth)
+                                                                beam_width=self.Seq2SeqBeamWidth,
+                                                                length_penalty_weight=self.C.beamsearch_length_penalty)
                     final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False, ## Setting this to true causes error
@@ -652,7 +657,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         k = min([self.C.k, BW])
         
         with tf.variable_scope(self.outer_scope) as var_scope:
-            assert var_scope.reuse == True
+            # assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
@@ -690,9 +695,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     top1_seq_scores = seq_scores[:,0] # (B,)
                     top1_ids = bm_ids[:,0,:] # (B, T)
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
+                    top1_len_ratio = tf.divide(top1_seq_lens,self._seq_len)
                     if self.C.no_towers: ## Old Code without towers
                         tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
-                        tf.summary.histogram( 'seq_len', top1_seq_lens, collections=['top1'])
+                        tf.summary.histogram( 'top1_len_ratio', top1_len_ratio, collections=['top1'])
 
                 ## Top K
                 with tf.name_scope('top_k'):
@@ -724,7 +730,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ctc_len_beams = tf.tile(tf.expand_dims(self._ctc_len, axis=1), multiples=[1,k])
 
                     with tf.name_scope('top_1'):
-                        top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.SpaceTokenID) #(B,)
+                        top1_ed = tfc.edit_distance2D(B, top1_ids, top1_seq_lens, self._y_ctc, self._ctc_len, self._params.CTCBlankTokenID, self.C.SpaceTokenID) #(B,)
                         top1_mean_ed = tf.reduce_mean(top1_ed) # scalar
                         top1_hits = tf.to_float(tf.equal(top1_ed, 0))
                         top1_accuracy = tf.reduce_mean(top1_hits) # scalar
@@ -736,7 +742,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             tf.summary.scalar('num_hits', top1_num_hits, collections=['top1'])
 
                     with tf.name_scope('bestof_%d'%k):
-                        ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.SpaceTokenID) #(B,k)
+                        ed = tfc.edit_distance3D(B, k, topK_ids, topK_seq_lens, y_ctc_beams, ctc_len_beams, self._params.CTCBlankTokenID, self.C.SpaceTokenID) #(B,k)
                         ## Best of top_k
                         # bok_ed = tf.reduce_min(ed, axis=1) # (B, 1)
                         bok_ed, bok_indices = tfc.batch_bottom_k_2D(ed, 1) # (B, 1)
@@ -792,6 +798,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_ids': top1_ids, # (B, T)
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
+                    'top1_len_ratio': top1_len_ratio,  # (B,)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
@@ -819,27 +826,27 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-def sync_testing_towers2(hyper, tower_ops):
-    return dlc.Properties({
-        'top1_lens': None, # (n*B,)
-        'top1_mean_ed': None, # scalar
-        'top1_accuracy': None, # scalar
-        'top1_num_hits': None, # scalar
-        'top1_ids': None,# (n*B,)
-        'bok_ids': None,# (n*B,)
-        'y_s': None, # (n*B, T)
-        'logs_top1': None,
-        'logs_topK': None,
-        'ph_top1_seq_lens': None,
-        'ph_edit_distance': None,
-        'ph_num_hits': None,
-        'ph_accuracy': None,
-        'ph_valid_time': None,
-        'ph_BoK_distance': None,
-        'ph_BoK_accuracy': None,
-        'logs_agg_top1': None,
-        'logs_agg_bok': None
-        })
+# def sync_testing_towers2(hyper, tower_ops):
+#     return dlc.Properties({
+#         'top1_lens': None, # (n*B,)
+#         'top1_mean_ed': None, # scalar
+#         'top1_accuracy': None, # scalar
+#         'top1_num_hits': None, # scalar
+#         'top1_ids': None,# (n*B,)
+#         'bok_ids': None,# (n*B,)
+#         'y_s': None, # (n*B, T)
+#         'logs_top1': None,
+#         'logs_topK': None,
+#         'ph_top1_seq_lens': None,
+#         'ph_edit_distance': None,
+#         'ph_num_hits': None,
+#         'ph_accuracy': None,
+#         'ph_valid_time': None,
+#         'ph_BoK_distance': None,
+#         'ph_BoK_accuracy': None,
+#         'logs_agg_top1': None,
+#         'logs_agg_bok': None
+#         })
 
 def sync_testing_towers(hyper, tower_ops):
     n = len(tower_ops)
@@ -856,10 +863,11 @@ def sync_testing_towers(hyper, tower_ops):
         def concat(prop_name, axis=0):
             return tf.concat(gather(prop_name), axis=axis)
 
-        top1_lens = concat('top1_lens') # (B,)
-        bok_seq_lens = concat('bok_seq_lens') # (B,)
-        top1_scores = concat('top1_scores') # (B,)
-        bok_seq_scores = concat('bok_seq_scores') # (B,)
+        top1_lens = concat('top1_lens') # (n*B,)
+        top1_len_ratio = concat('top1_len_ratio') #(n*B,)
+        bok_seq_lens = concat('bok_seq_lens') # (n*B,)
+        top1_scores = concat('top1_scores') # (n*B,)
+        bok_seq_scores = concat('bok_seq_scores') # (n*B,)
         top1_mean_ed = get_mean('top1_mean_ed') # scalar
         bok_mean_ed = get_mean('bok_mean_ed') # scalar
         top1_accuracy = get_mean('top1_accuracy') # scalar
@@ -871,7 +879,7 @@ def sync_testing_towers(hyper, tower_ops):
 
         ## Batch Metrics
         tf.summary.histogram( 'scores/top_1', top1_scores, collections=['top1'])
-        tf.summary.histogram( 'seq_lens/top_1', top1_lens, collections=['top1'])
+        tf.summary.histogram( 'top1_len_ratio/top_1', top1_len_ratio, collections=['top1'])
         tf.summary.scalar( 'edit_distances/top_1', top1_mean_ed, collections=['top1'])
         ## tf.summary.scalar( 'accuracy/top_1', top1_accuracy, collections=['top1'])
         tf.summary.scalar('num_hits/top_1', top1_num_hits, collections=['top1'])
@@ -886,7 +894,8 @@ def sync_testing_towers(hyper, tower_ops):
 
         ## Aggregate metrics injected into the graph from outside
         with tf.name_scope('AggregateMetrics'):
-            ph_top1_seq_lens = tf.placeholder(hyper.int_type) # (num_batches,B,)
+            ph_top1_seq_lens = tf.placeholder(hyper.int_type) # (num_batches,n*B,)
+            ph_top1_len_ratio = tf.placeholder(hyper.dtype) # (num_batches,n*B,)
             ph_edit_distance = tf.placeholder(hyper.dtype) # (num_batches,)
             ph_num_hits =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
@@ -901,7 +910,8 @@ def sync_testing_towers(hyper, tower_ops):
             agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
             agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
-            tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+            # tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+            tf.summary.histogram( 'top_1/top1_len_ratio', ph_top1_len_ratio, collections=['aggregate_top1'])
             # tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
             tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
             tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
@@ -916,6 +926,7 @@ def sync_testing_towers(hyper, tower_ops):
 
     return dlc.Properties({
         'top1_lens': top1_lens, # (n*B,)
+        'top1_len_ratio': top1_len_ratio, #(n*B,)
         'top1_mean_ed': top1_mean_ed, # scalar
         'top1_accuracy': top1_accuracy, # scalar
         'top1_num_hits': top1_num_hits, # scalar
@@ -967,8 +978,10 @@ def sync_training_towers(hyper, tower_ops, global_step):
             tf.summary.scalar('training/total_cost/', cost, collections=['training'])
             tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
             tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
-            ## tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'))
+            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
+            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
             tf.summary.histogram('training/ctc_ed/', concat('ctc_ed'), collections=['training'])
+            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
 
             tb_logs = tf.summary.merge(tf.get_collection('training'))
 

@@ -49,7 +49,7 @@ def initialize(data_dir, params):
         i2w_ufunc = np.frompyfunc(i2w, 1, 1)
     return i2w_ufunc
 
-def seq2str(arr, label):
+def seq2str(arr, label, separator=None):
     """
     Converts a matrix of id-sequences - shaped (B,T) - to an array of strings shaped (B,).
     Uses the supplied dict_id2word to map ids to words. The dictionary must map dtype of
@@ -57,7 +57,10 @@ def seq2str(arr, label):
     """
     assert i2w_ufunc is not None, "i2w_ufunc is None. Please call initialize first in order to setup i2w_ufunc."
     str_arr = i2w_ufunc(arr) # (B, T)
-    func1d = lambda vec: label + u" " + u"".join(vec)
+    if separator is None:
+        func1d = lambda vec: label + u" " + u"".join(vec)
+    else:
+        func1d = lambda vec: label + u" " + unicode(separator).join(vec)
     return [func1d(vec) for vec in str_arr]
 
 

@@ -126,7 +126,7 @@ class ImageProcessor3(object):
         """
         assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
         return (image_ar - 127.5) / 255.0
-3
+
 class ImageProcessor3_RGB(ImageProcessor3):
     def __init__(self, params, image_dir_):
         ImageProcessor3.__init__(self, params, image_dir_, grayscale=False)
@@ -371,21 +371,22 @@ class BatchImageIterator3(ShuffleIterator):
         # ]
         # a_batch = np.asarray(a_batch)
         df_batch = nxt.df_batch[['image', 'height', 'width', 'bin_len', 'seq_len', 'squashed_len']]
-        # self._hyper.logger.debug('%s.next() going to get image arrays'%self._name)
         im_batch = [
             self._image_processor.get_array(row[0], row[1], row[2], self._padded_im_dim)
             for row in df_batch.itertuples(index=False)
         ]
-        # self._hyper.logger.debug('%s.next() obtained image arrays'%self._name)
         im_batch = self._image_processor.whiten(np.asarray(im_batch))
-        # self._hyper.logger.debug('%s.next() whitened image arrays'%self._name)
 
         bin_len = df_batch.bin_len.iloc[0]
-        y_s   = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,     dtype=self._hyper.int_type_np)
         y_ctc = np.asarray(self._ctc_seq_data[bin_len].loc[df_batch.index].values, dtype=self._hyper.int_type_np)
-        seq_len = np.asarray(df_batch.seq_len.values,      dtype=self._hyper.int_type_np)
         ctc_len = np.asarray(df_batch.squashed_len.values, dtype=self._hyper.int_type_np)
-        # self._hyper.logger.debug('%s.next() obtained all batch_data. returning ...'%self._name)
+        if self._hyper.squash_input_seq:
+            y_s = y_ctc
+            seq_len = ctc_len
+        else:
+            y_s   = np.asarray(self._seq_data[bin_len].loc[df_batch.index].values,     dtype=self._hyper.int_type_np)
+            seq_len = np.asarray(df_batch.seq_len.values,      dtype=self._hyper.int_type_np)
+
         return dlc.Properties({'im':im_batch,
                                'y_s':y_s, # (B,T)
                                'seq_len': seq_len, #(B,)

@@ -32,7 +32,7 @@ import os
 import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
-from dl_commons import (PD, instanceof, integer, decimal, boolean, equalto, issequenceof,
+from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
 from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams)
 
@@ -86,22 +86,26 @@ class GlobalParams(dlc.HyperParams):
         PD('K',
            'Vocabulary size including zero',
            xrange(500,1000),
-           557 #get_vocab_size(data_folder)
+           LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
            ),
         PD('CTCBlankTokenID', 'ID of the space/blank token',
-           integer(),
+           integerOrNone(),
            ## By CTC requirement, blank token should be == K-1
-           ## In our case blank token == whitespace
-           LambdaVal(lambda _, p: p.K-1)
+           LambdaVal(lambda _, p: (p.K-1) if p.use_ctc_loss else None)
            ),
-        PD('SpaceTokenID', 'Synonym of CTCBlankTokenID',
+        PD('SpaceTokenID', 'Space Token ID',
            integer(),
-           equalto('CTCBlankTokenID')
+           556
            ),
         PD('NullTokenID',
-           'ID of the EOS token = Null Token',
+           'ID of the EOS token == Null Token',
            (0,),
            0
+           ),
+        PD('StartTokenID',
+           'ID of the begin-sequence token. Equal to either 1 or Whitespace.',
+           (1, 556), ## 1 or space
+           1
            ),
         PD('n',
            "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
@@ -184,6 +188,11 @@ class GlobalParams(dlc.HyperParams):
               tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
+        PD('use_ctc_loss',
+            "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
+            "ctc_loss will be logged.",
+            boolean,
+            False),
         PD('biases_regularizer',
               'L1 / L2 norm regularization',
               iscallable(noneokay=True), None),
@@ -240,7 +249,8 @@ class CALSTMParams(dlc.HyperParams):
                     'B': equalto('B', GLOBAL),
                     'i': None, ## size of input vector + z_t. Set dynamically.
                      ## paper uses a value of n=1000
-                    'layers_units': (equalto('n', GLOBAL),),
+                    ## 'layers_units': (equalto('n', GLOBAL),),
+                    'layers_units': (equalto('n', GLOBAL), equalto('n', GLOBAL),),
                     ## 'dropout': None # No dropout by default
                     })
                 )
@@ -275,6 +285,10 @@ class Im2LatexModelParams(dlc.HyperParams):
                 boolean,
                 True
                 ),
+            PD('squash_input_seq', '(boolean): Remove whitespace from target sequences',
+                boolean,
+                False
+                ),
             PD('input_queue_capacity', 'Capacity of input queue.',
                 integer(1),
                 LambdaVal(lambda _, d: d.num_gpus * 3)
@@ -294,13 +308,8 @@ class Im2LatexModelParams(dlc.HyperParams):
                 integer(151),
                 LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
                 ),
-            PD('use_ctc_loss',
-               "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
-               "ctc_loss will be logged.",
-               boolean,
-               False),
             PD('no_ctc_merge_repeated',
-               "(boolean): Negated value of ctc_merge_repeated argument for ctc operations",
+               "(boolean): Negated value of ctc_merge_repeated argubeamsearch_length_penatlyment for ctc operations",
                boolean,
                True),
             PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
@@ -308,6 +317,12 @@ class Im2LatexModelParams(dlc.HyperParams):
                 ),
             PD('seq2seq_beam_width', 'Beam Width to use for seq2seq.BeamSearchDecoder, which is different from the ctc_beamsearch_decoder',
                 integer(1)
+                ),
+            PD('beamsearch_length_penalty',
+                'length_penalty_weight used by beamsearch decoder. Same as alpha value of length-penalty described in https://arxiv.org/pdf/1609.08144.pdf'
+                'In the paper they used a value of alpha in the range [0.6,0.7]. A value of 0 turns length-penalty off.',
+                decimal(0.,1.),
+                0.6
                 ),
             PD('swap_memory',
                'swap_memory option to tf.scan',
@@ -353,7 +368,9 @@ class Im2LatexModelParams(dlc.HyperParams):
               ),
         ### ConvNet Params ###
             PD('CONVNET', 'ConvStackParams for the convent',
-                instanceof(ConvStackParams)),
+                instanceofOrNone(ConvStackParams),
+                ## Value is set dynamically inside make_hyper
+                ),
             PD('image_frame_width',
                 'Width of an extra padding frame around the (possibly already padded) image. This extra padding is used '
                 'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
@@ -465,44 +482,48 @@ def make_hyper(initVals={}):
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
 
-    VGG_D = ConvStackParams({
-        'op_name': 'Convnet',
-        'tb': globals.tb,
-        'activation_fn': tf.nn.relu,
-        'weights_initializer': globals.weights_initializer,
-        'biases_initializer': globals.biases_initializer,
-        'weights_regularizer': globals.weights_regularizer,
-        'biases_regularizer': globals.biases_regularizer,
-        'padding': 'SAME',
-        'layers': (
-            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
-            ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+    if globals.build_image_context != 2:
+        CONVNET = None
+    else:
+        ## Conv and Maxpool architecture lifted from VGG16
+        CONVNET = ConvStackParams({
+            'op_name': 'Convnet',
+            'tb': globals.tb,
+            'activation_fn': tf.nn.relu,
+            'weights_initializer': globals.weights_initializer,
+            'biases_initializer': globals.biases_initializer,
+            'weights_regularizer': globals.weights_regularizer,
+            'biases_regularizer': globals.biases_regularizer,
+            'padding': 'SAME',
+            'layers': (
+                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
+                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
 
-            ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
 
-            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
 
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
 
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-            # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
-        )
-    })
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
+                # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+            )
+        })
     
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),
-        'CONVNET': VGG_D
+        'CONVNET': CONVNET
         }).freeze()
 
 #    print 'Hyper Params = '
