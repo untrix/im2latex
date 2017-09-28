@@ -936,6 +936,7 @@ def sync_testing_towers(hyper, tower_ops):
         'logs_top1': logs_top1,
         'logs_topK': logs_topK,
         'ph_top1_seq_lens': ph_top1_seq_lens,
+        'ph_top1_len_ratio': ph_top1_len_ratio,
         'ph_edit_distance': ph_edit_distance,
         'ph_num_hits': ph_num_hits,
         'ph_accuracy': ph_accuracy,

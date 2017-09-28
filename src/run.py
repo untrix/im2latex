@@ -125,7 +125,7 @@ def main():
                         help="Run validation cycle only. --restore option should be provided along with this.",
                         default=False)
     parser.add_argument("--squash-input-seq", dest="squash_input_seq", action='store_true',
-                        help="(boolean) Set value of squash_input_seq hyper param. Defaults to whatever is set in hyper_params code.",
+                        help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
                         default=False)
 
     args = parser.parse_args()

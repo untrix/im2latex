@@ -227,7 +227,7 @@ class CALSTMParams(dlc.HyperParams):
             PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
                tfc.MLPParams(GLOBAL).updated({
                     # Number of units in all layers of the attention model = D in the paper"s source-code.
-                    'layers_units': (equalto('D', GLOBAL),),
+                    'layers_units': (equalto('D', GLOBAL), ),
                     'activation_fn': tf.nn.tanh # = tanh in the paper's source code
                     ## 'dropout': None # Remove dropout in the attention model
                        }).freeze()
@@ -237,8 +237,8 @@ class CALSTMParams(dlc.HyperParams):
                boolean,
                True),
             PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-               "model from (B,L,dim) to (B,L,1). I don't think this is helpful since there is no nonlinearity here."
-               "Therefore I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
+               "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
+               "I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
                "Default value however, is True in conformance with the paper's implementation.",
                (True, False),
                True),
@@ -477,7 +477,7 @@ def make_hyper(initVals={}):
     initVals = dlc.Properties(initVals)
     ## initVals.image_frame_width = 1
     globals = GlobalParams(initVals)
-    assert (globals.weights_regularizer is None) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
+    assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
     ## CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})

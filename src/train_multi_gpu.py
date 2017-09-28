@@ -372,7 +372,7 @@ def ids2str(target_ids, predicted_ids, hyper):
         target_ids: Numpy array of shape (B,T)
         predicted_ids: Numpy array of same shape as target_ids
     """
-    separator = u'\t' if hyper.use_ctc_loss else None
+    separator = None #"\t" if not hyper.use_ctc_loss else None
     target_str = np.expand_dims(dtc.seq2str(target_ids, 'Target:', separator), axis=1)
     predicted_str = np.expand_dims(dtc.seq2str(predicted_ids, 'Prediction:', separator),axis=1)
     return np.concatenate((predicted_str, target_str), axis=1)
