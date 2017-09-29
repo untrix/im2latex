@@ -318,8 +318,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     with tf.variable_scope('Output_Layers'):
                         self._init_FC_scope = tf.get_variable_scope()
-                        init_state = self.zero_state(batchsize, dtype=self.C.dtype)
-                        init_state = zero_to_init_state(init_state, counter)
+                        zero_state = self.zero_state(batchsize, dtype=self.C.dtype)
+                        init_state = zero_to_init_state(zero_state, counter)
 
         return init_state
 
@@ -380,7 +380,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
 
                 # accum = self.ScanOut(None,
-                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # This init-value is not used
+                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # The init-value is not used
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
                                 initializer=accum, 
@@ -440,10 +440,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ################ Regularization Cost ################
                     with tf.variable_scope('Regularization_Cost'):
-                        if self.C.weights_regularizer is not None:
+                        if (self.C.weights_regularizer is not None) and self.C.rLambda > 0:
                             reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
                         else:
-                            reg_loss = 0
+                            reg_loss = 0.
 
                     ################ Build LogLoss ################
                     with tf.variable_scope('LogLoss'):
@@ -640,7 +640,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                     maximum_iterations=self.C.MaxDecodeLen,
                                                                     swap_memory=self.C.swap_memory)
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.Seq2SeqBeamWidth)
-                    assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth)
+                    assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth) # (B, T, Seq2SeqBeamWidth)
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
                     # print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
                     # ids = tf.not_equal(final_outputs.predicted_ids, 0)
@@ -663,9 +663,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 outputs = self._beamsearch()
                 T = tf.shape(outputs.ids)[1]
                 bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, Seq2SeqBeamWidth, T)
+                assert bm_ids.get_shape().as_list() == [B, BW, None], 'bm_ids shape %s != %s'%(bm_ids.get_shape().as_list(), [B, BW, None])
                 bm_seq_lens = outputs.seq_lens # (B, BW)
                 assert K.int_shape(bm_seq_lens) == (B, BW)
                 bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, Seq2SeqBeamWidth, T)
+                assert bm_scores.get_shape().as_list() == [B, BW, None]
 
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
@@ -694,6 +696,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Top 1. I verified that beams in beamsearch_outputs are already sorted by seq_scores.
                     top1_seq_scores = seq_scores[:,0] # (B,)
                     top1_ids = bm_ids[:,0,:] # (B, T)
+                    assert top1_ids.get_shape().as_list() == [B, None]
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
                     top1_len_ratio = tf.divide(top1_seq_lens,self._seq_len)
                     if self.C.no_towers: ## Old Code without towers
@@ -720,7 +723,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 # with tf.name_scope('BLEU'):
                 #     ## BLEU score is calculated outside of TensorFlow and then injected back in via. a placeholder
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
-                #     tf.summary.histogram( 'predicted/bleu', ph_bleu, collections=['bleu'])
+                #     tf.summary.histogram( 'predicted/bleu', ph_bleu, collections=['bleu'])BW
                 #     tf.summary.scalar( 'predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
                 #     logs_b = tf.summary.merge(tf.get_collection('bleu'))
 
@@ -802,12 +805,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
-                    'all_ids': bm_ids, # (B, Seq2SeqBeamWidth, T),
+                    'output_ids': outputs.ids, # (B, T, Seq2SeqBeamWidth)
+                    'all_ids': bm_ids, # (B, Seq2SeqBeamWidth, T)
                     'all_id_scores': scores,
                     'all_seq_lens': bm_seq_lens, # (B, Seq2SeqBeamWidth)
                     'top1_num_hits': top1_num_hits, # scalar
                     'top1_accuracy': top1_accuracy, # scalar
-                    'top1_mean_ed': top1_mean_ed, # scalar
+                    'top1_mean_ed': top1_mean_ed, # scalartop1_ids
                     'bok_accuracy': bok_accuracy, # scalar
                     'bok_mean_ed': bok_mean_ed, # scalar
                     'bok_seq_lens': bok_seq_lens, # (B,)
@@ -933,6 +937,8 @@ def sync_testing_towers(hyper, tower_ops):
         'top1_ids_list': gather('top1_ids'),# ((B,T),...)
         'bok_ids_list': gather('bok_ids'),# ((B,T),...)
         'y_s_list': gather('y_s'), # ((B,T),...)
+        'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)
+        'output_ids_list': gather('output_ids'),
         'logs_top1': logs_top1,
         'logs_topK': logs_topK,
         'ph_top1_seq_lens': ph_top1_seq_lens,

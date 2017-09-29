@@ -377,6 +377,24 @@ def ids2str(target_ids, predicted_ids, hyper):
     predicted_str = np.expand_dims(dtc.seq2str(predicted_ids, 'Prediction:', separator),axis=1)
     return np.concatenate((predicted_str, target_str), axis=1)
 
+def ids2str3D_list(ids_list, hyper):
+    strs = []
+    for i in range(len(ids_list)):
+        strs.append(ids2str3D(ids_list[i], hyper))
+    return strs
+
+def ids2str3D(ids, hyper):
+    """
+    Args:
+        target_ids: Numpy array of shape (B,T)
+        predicted_ids: Numpy array of same shape as target_ids
+    """
+    separator = None #"\t" if not hyper.use_ctc_loss else None
+    strs = []
+    for i in range(len(ids)):
+        strs.append(dtc.seq2str(ids[i], 'Sample %d:'%i, separator))
+    return strs
+
 def do_validate(step, args, train_it, valid_it):
     if args.doValidate:
         do_validate = True
@@ -427,22 +445,30 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     ))
                 top1_ids_list = y_s_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, all_ids_list, output_ids_list = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
-                                    valid_ops.y_s_list
+                                    valid_ops.y_s_list,
+                                    valid_ops.all_ids_list,
+                                    valid_ops.output_ids_list
                                     ))
-                logger.info( '############ RANDOM VALIDATION BATCH %d ############', n)
+                logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
                 beam = 0
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
                 str_list = ids2str_list(y_s_list, top1_ids_list, hyper)
+                str_list2 = ids2str3D_list(all_ids_list, hyper)
                 for i in range(len(str_list)):
                     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
+
+                dtc.dump(top1_ids_list[0], os.path.join(args.logdir, 'top1_ids.pkl'))
+                dtc.dump(all_ids_list[0], os.path.join(args.logdir, 'bm_ids.pkl'))
+                dtc.dump(output_ids_list[0], os.path.join(args.logdir, 'output_ids.pkl'))
+
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
             lens.append(l)
