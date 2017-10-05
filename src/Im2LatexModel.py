@@ -286,7 +286,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ## Broadcast im_context to Seq2SeqBeamWidth
                     if self.Seq2SeqBeamWidth > 1:
-                        a = K.tile(self._a, (self.Seq2SeqBeamWidth,1,1))
+                        a = tf.contrib.seq2seq.tile_batch(self._a, self.Seq2SeqBeamWidth)
                         batchsize = self.RuntimeBatchSize
                     else:
                         a = self._a

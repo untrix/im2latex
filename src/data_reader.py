@@ -28,6 +28,7 @@ import logging
 import pandas as pd
 from six.moves import cPickle as pickle
 import dl_commons as dlc
+import data_commons as dtc
 import threading
 import numpy as np
 from scipy import ndimage
@@ -441,7 +442,14 @@ class BatchContextIterator(BatchImageIterator3):
                  name='BatchContextIterator'):
         BatchImageIterator3.__init__(self, df, raw_data_dir_, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
 
-def split_dataset(df_, batch_size_, logger, assert_whole_batch=True, validation_frac=None, validation_size=None):
+def get_stored_state(*paths):
+    state = dtc.load(*paths)
+    return state.props, state.df_train_idx, state.df_validation_idx
+
+def store_state(props, df_train, df_validation, *paths):
+    dtc.dump(dlc.Properties({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index}), *paths)
+
+def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, validation_frac=None, validation_size=None):
     if validation_frac is None and validation_size is None:
         raise ValueError('Either validation_frac or validation_size must be specified.')
     elif validation_frac is not None and validation_size is not None:
@@ -455,39 +463,49 @@ def split_dataset(df_, batch_size_, logger, assert_whole_batch=True, validation_
     if num_val_batches == 0:
         logger.warn('number of validation batches set to 0.')
 
-    ## Shuffle the dataframe
-    df_ = df_.sample(frac=1)
-
-    ## Make overall list of batches
-    batch_list = make_batch_list(df_, batch_size_, assert_whole_batch)
-    ## Since batch_list is already randomized, just take num_batch_list
-    ## values from it.
-    val_batches = batch_list[:num_val_batches]
-
-    def get_bin_counts(batch_list):
-        bin_counts = {}
-        for batch_idx in batch_list:
-            if batch_idx[0] in bin_counts:
-                bin_counts[batch_idx[0]] += 1
-            else:
-                bin_counts[batch_idx[0]] = 1
-        return bin_counts
-
-    ## Separate out the training and validation samples
-    df_train = df_
-    df_val = None
-    if (num_val_batches > 0):
-        val_bin_counts = get_bin_counts(val_batches)
-        for bin_len, num_batches in val_bin_counts.iteritems():
-            df_val_bin = df_[df_.bin_len == bin_len].iloc[:num_batches*batch_size_]
-            df_val = df_val_bin if df_val is None else df_val.append(df_val_bin)
-
-        df_train = df_train.drop(df_val.index)
-        assert df_train.shape[0] + df_val.shape[0] == df_.shape[0]
+    if dtc.exists(args.logdir, 'split_state.pkl'):
+        split_props, df_train_idx, df_validation_idx = get_stored_state(args.logdir, 'split_state.pkl')
+        assert split_props['batch_size'] == batch_size_, 'batch_size in HD5 store (%d) is different from that specified (%d)'%(split_props['batch_size'], batch_size_)
+        assert split_props['num_val_batches'] == num_val_batches, 'num_val_batches in HD5 store (%d) is different from that specified (%d)'%(split_props['num_val_batches'] , num_val_batches)
+        logger.info('split_dataset: loaded df_train and df_validate from hd5 store.')
+        return df_.loc[df_train_idx], df_.loc[df_validation_idx]
     else:
-        assert df_train.shape[0] == df_.shape[0]
+        logger.info('split_dataset: generating a new train/validate split')
 
-    return df_train, df_val
+        ## Shuffle the dataframe
+        df_ = df_.sample(frac=1)
+
+        ## Make overall list of batches
+        batch_list = make_batch_list(df_, batch_size_, assert_whole_batch)
+        ## Since batch_list is already randomized, just take num_batch_list
+        ## values from it.
+        val_batches = batch_list[:num_val_batches]
+
+        def get_bin_counts(batch_list):
+            bin_counts = {}
+            for batch_idx in batch_list:
+                if batch_idx[0] in bin_counts:
+                    bin_counts[batch_idx[0]] += 1
+                else:
+                    bin_counts[batch_idx[0]] = 1
+            return bin_counts
+
+        ## Separate out the training and validation samples
+        df_train = df_
+        df_validation = None
+        if (num_val_batches > 0):
+            val_bin_counts = get_bin_counts(val_batches)
+            for bin_len, num_batches in val_bin_counts.iteritems():
+                df_val_bin = df_[df_.bin_len == bin_len].iloc[:num_batches*batch_size_]
+                df_validation = df_val_bin if df_validation is None else df_validation.append(df_val_bin)
+
+            df_train = df_train.drop(df_validation.index)
+            assert df_train.shape[0] + df_validation.shape[0] == df_.shape[0]
+        else:
+            assert df_train.shape[0] == df_.shape[0]
+
+        store_state({'batch_size': batch_size_, 'num_val_batches': num_val_batches}, df_train, df_validation, args.logdir, 'split_state.pkl')
+        return df_train, df_validation
 
 def create_context_iterators(raw_data_dir_,
                              image_feature_dir_,
@@ -498,6 +516,7 @@ def create_context_iterators(raw_data_dir_,
     df_train, df_valid = split_dataset(df, 
                                        hyper.data_reader_B,
                                        hyper.logger,
+                                       args,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     batch_iterator_train = BatchContextIterator(df_train,
@@ -534,7 +553,8 @@ def create_imagenet_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
                                        hyper.data_reader_B, 
-                                       hyper.logger,
+                                       hyper.logger, 
+                                       args,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     image_processor = ImagenetProcessor3(hyper, args.image_dir)
@@ -570,6 +590,7 @@ def create_BW_image_iterators(raw_data_dir_, hyper, args):
     df_train, df_valid = split_dataset(df, 
                                        hyper.data_reader_B, 
                                        hyper.logger,
+                                       args,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
     image_processor = ImageProcessor3_BW(hyper, args.image_dir)

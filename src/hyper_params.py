@@ -473,7 +473,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
-def make_hyper(initVals={}):
+def make_hyper(initVals={}, freeze=True):
     initVals = dlc.Properties(initVals)
     ## initVals.image_frame_width = 1
     globals = GlobalParams(initVals)
@@ -524,7 +524,10 @@ def make_hyper(initVals={}):
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),
         'CONVNET': CONVNET
-        }).freeze()
+        })
+        
+    if freeze:
+        HYPER.freeze()
 
 #    print 'Hyper Params = '
 #    print HYPER

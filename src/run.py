@@ -26,22 +26,14 @@ Tested on python 2.7
 """
 import dl_commons as dlc
 import tf_commons as tfc
+import data_commons as dtc
 import train_multi_gpu
 import logging
 import hyper_params
 import argparse
 import os
-
-def makeLogfileName(logdir):
-    filenames = os.listdir(logdir)
-    if not 'training.log' in filenames:
-        return 'training.log'
-    else:
-        for i in xrange(2,101):
-            if 'training.log_%d'%i not in filenames:
-                return 'training.log_%d'%i
-
-    raise Exception('logfile number limit (100) reached.')
+import pandas as pd
+import h5py
 
 def main():
     _data_folder = '../data'
@@ -155,8 +147,6 @@ def main():
     if args.doValidate:
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
 
-    logger = hyper_params.makeLogger()
-
     globalParams = dlc.Properties({
                                     'tb': tb,
                                     'print_steps': args.print_steps,
@@ -165,7 +155,7 @@ def main():
                                     'data_dir': data_folder,
                                     'generated_data_dir': os.path.join(data_folder, 'generated2'),
                                     'image_dir': image_folder,
-                                    'logger': logger,
+                                    # 'logger': logger,
                                     'ctc_beam_width': args.ctc_beam_width,
                                     'seq2seq_beam_width': args.seq2seq_beam_width,
                                     'valid_frac': args.valid_frac,
@@ -201,14 +191,27 @@ def main():
     if args.rLambda is not None:
         globalParams.rLambda = args.rLambda
 
-    hyper = hyper_params.make_hyper(globalParams)
-
-    # Add logging file handler now that we have instantiated hyperparams.
+    hyper = hyper_params.make_hyper(globalParams, freeze=False)
     if args.restore_logdir is not None:
         globalParams.logdir = args.restore_logdir
     else:
         globalParams.logdir = tfc.makeTBDir(hyper.tb)
-    fh = logging.FileHandler(os.path.join(globalParams.logdir, makeLogfileName(globalParams.logdir)))
+
+    globalParams.storedir = dtc.makeLogDir(globalParams.logdir, 'store')
+    dtc.dump(globalParams, dtc.makeLogfileName(globalParams.logdir, 'args.pkl'))
+
+    # Add logging file handler now that we have instantiated hyperparams.
+    if args.restore_logdir is not None:
+        dtc.dump(hyper, dtc.makeLogfileName(globalParams.logdir, 'hyper.pkl'))
+    else:
+        dtc.dump(hyper, globalParams.logdir, 'hyper.pkl')
+
+    logger = hyper_params.makeLogger()
+    globalParams.logger = logger
+    hyper.logger = logger
+    # globalParams.store = pd.HDFStore(dtc.makeLogfileName(globalParams.logdir, 'store.h5'), mode='a')
+    # globalParams.store = h5py.File(dtc.makeLogfileName(globalParams.logdir, 'store.h5py'), "w")
+    fh = logging.FileHandler(dtc.makeLogfileName(globalParams.logdir, 'training.log'))
     fh.setFormatter(hyper_params.makeFormatter())
     logger.addHandler(fh)
     hyper_params.setLogLevel(logger, args.logging_level)

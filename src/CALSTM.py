@@ -56,6 +56,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 self._beamsearch_width = beamsearch_width
 
                 self._a = context ## Image features from the Conv-Net
+                assert self._a.get_shape().as_list() == [self.C.B, self.C.L, self.C.D]
 
                 self._LSTM_stack = tfc.RNNWrapper(self.C.decoder_lstm,
                                                   beamsearch_width=beamsearch_width)
@@ -213,7 +214,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
                 ## to the input batch.
                 if self.BeamWidth > 1:
-                    a = K.tile(self._a, (self.BeamWidth,1,1))
+                    a = tf.contrib.seq2seq.tile_batch(self._a, self.BeamWidth)
 
                 CONF = self.C
                 B = CONF.B*self.BeamWidth

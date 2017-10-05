@@ -28,6 +28,7 @@ import pandas as pd
 from six.moves import cPickle as pickle
 import dl_commons as dlc
 import numpy as np
+import h5py
 
 dict_id2word = None
 i2w_ufunc = None
@@ -39,6 +40,10 @@ def initialize(data_dir, params):
         logger = params.logger
     if i2w_ufunc is None:
         dict_id2word = pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
+        K = len(dict_id2word.keys())
+        if params.CTCBlankTokenID is not None:
+            assert params.CTCBlankTokenID == K
+        dict_id2word[K] = u'<>' ## CTC Blank Token
         dict_id2word[-1] = u'<-1>' ## Catch -1s that beamsearch emits after EOS.
         def i2w(id):
             try:
@@ -63,12 +68,68 @@ def seq2str(arr, label, separator=None):
         func1d = lambda vec: label + u" " + unicode(separator).join(vec)
     return [func1d(vec) for vec in str_arr]
 
+def join(*paths):
+    return os.path.join(*paths)
 
-def dump(ar, path):
-    if not os.path.exists(path):
-        with open(path, 'wb') as f:
-            pickle.dump(ar, f, pickle.HIGHEST_PROTOCOL)
+def dump(ar, *paths):
+    path = join(*paths)
+    assert not os.path.exists(path), 'A file already exists at path %s'%path
+    with open(path, 'wb') as f:
+        pickle.dump(ar, f, pickle.HIGHEST_PROTOCOL)
 
-def load(path):
-    with open(path, 'rb') as f:
+def load(*paths):
+    with open(join(*paths), 'rb') as f:
         return pickle.load(f)
+
+class Storer(object):
+    def __init__(self, args, prefix, step):
+        self._path = os.path.join(args.storedir, '%s_%d.h5'%(prefix, step))
+        self._h5 = h5py.File(self._path, "w")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *err):
+        self.close()
+
+    def _append(self, key, ar, dtype):
+        if dtype is not None:
+            try:
+                ar = ar.astype(dtype)
+            except Exception as e:
+                logger.warn(e)
+
+        self._h5.create_dataset(key, data=ar)
+
+    def append(self, key, np_ar, dtype):
+        if isinstance(np_ar, tuple) or isinstance(np_ar, list):
+            for i, ar in enumerate(np_ar, start=1):
+                self._append('%s_%d'%(key,i), ar, dtype)
+        else:
+            self._append(key, np_ar, dtype)
+
+    def flush(self):
+        self._h5.flush()
+
+    def close(self):
+        self._h5.close()
+
+def makeLogfileName(logdir, name):
+    prefix, ext = os.path.splitext(os.path.basename(name))
+    filenames = os.listdir(logdir)
+    if not (prefix + ext) in filenames:
+        return os.path.join(logdir, prefix + ext)
+    else:
+        for i in xrange(2,101):
+            if '%s_%d%s'%(prefix,i,ext) not in filenames:
+                return os.path.join(logdir, '%s_%d%s'%(prefix,i,ext))
+
+    raise Exception('logfile number limit (100) reached.')
+
+def exists(*paths):
+    return os.path.exists(os.path.join(*paths))
+
+def makeLogDir(root, dirname):
+    dirpath = makeLogfileName(root, dirname)
+    os.makedirs(dirpath)
+    return dirpath

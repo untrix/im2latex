@@ -279,6 +279,14 @@ def main(raw_data_folder,
                         if doLog:
                             logger.info('Step %d',step)
                             train_time_per100 = np.mean(train_time) * 100. / (hyper.data_reader_B)
+
+                            if do_validate(step, args, train_it, valid_it)[0]:
+                                saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
+
+                            with dtc.Storer(args, 'training', step) as storer:
+                                storer.append('predicted_ids', predicted_ids_list, np.int16)
+                                storer.append('y', y_s_list, np.int16)
+
                             accuracy_res = evaluate(
                                 session,
                                 dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
@@ -321,18 +329,14 @@ def main(raw_data_folder,
                             tf_sw.add_summary(log_time, global_step=log_step(step))
                             tf_sw.flush()
                             
-                            logger.info( '############ RANDOM TRAINING BATCH ############')
-                            str_list = ids2str_list(y_s_list, predicted_ids_list, hyper)
-                            for i in range(len(str_list)):
-                                logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
-                            logger.info( '############ END OF RANDOM TRAINING BATCH ############')
-
-                            if do_validate(step, args, train_it, valid_it)[0]:
-                                saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
+                            # logger.info( '############ RANDOM TRAINING BATCH ############')
+                            # str_list = ids2str_list(y_s_list, predicted_ids_list, hyper)
+                            # for i in range(len(str_list)):
+                            #     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
+                            # logger.info( '############ END OF RANDOM TRAINING BATCH ############')
 
                             ## Reset metrics
                             train_time = []; ctc_losses = []; logs = []
-
 
                 ############################# Validation Only ##############################
                 elif args.doValidate:
@@ -445,29 +449,29 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     ))
                 top1_ids_list = y_s_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, all_ids_list, output_ids_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
-                                    valid_ops.all_ids_list,
-                                    valid_ops.output_ids_list
+                                    # valid_ops.all_ids_list,
+                                    # valid_ops.output_ids_list
                                     ))
                 logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
                 beam = 0
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
-                str_list = ids2str_list(y_s_list, top1_ids_list, hyper)
-                str_list2 = ids2str3D_list(all_ids_list, hyper)
-                for i in range(len(str_list)):
-                    logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
+                # str_list = ids2str_list(y_s_list, top1_ids_list, hyper)
+                # str_list2 = ids2str3D_list(all_ids_list, hyper)
+                # for i in range(len(str_list)):
+                #     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
 
-                dtc.dump(top1_ids_list[0], os.path.join(args.logdir, 'top1_ids.pkl'))
-                dtc.dump(all_ids_list[0], os.path.join(args.logdir, 'bm_ids.pkl'))
-                dtc.dump(output_ids_list[0], os.path.join(args.logdir, 'output_ids.pkl'))
+                with dtc.Storer(args, 'validation', step) as storer:
+                    storer.append('predicted_ids', top1_ids_list, np.int16)
+                    storer.append('y', y_s_list, np.int16)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
@@ -491,4 +495,3 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
         tf_sw.flush()
         hyper.logger.info('validation cycle finished')
         return metrics
-
