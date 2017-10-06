@@ -442,12 +442,12 @@ class BatchContextIterator(BatchImageIterator3):
                  name='BatchContextIterator'):
         BatchImageIterator3.__init__(self, df, raw_data_dir_, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
 
-def get_stored_state(*paths):
+def restore_state(*paths):
     state = dtc.load(*paths)
     return state.props, state.df_train_idx, state.df_validation_idx
 
 def store_state(props, df_train, df_validation, *paths):
-    dtc.dump(dlc.Properties({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index}), *paths)
+    dtc.dump(dlc.Properties({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index if df_validation is not None else None}), *paths)
 
 def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, validation_frac=None, validation_size=None):
     if validation_frac is None and validation_size is None:
@@ -464,11 +464,14 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         logger.warn('number of validation batches set to 0.')
 
     if dtc.exists(args.logdir, 'split_state.pkl'):
-        split_props, df_train_idx, df_validation_idx = get_stored_state(args.logdir, 'split_state.pkl')
+        split_props, df_train_idx, df_validation_idx = restore_state(args.logdir, 'split_state.pkl')
         assert split_props['batch_size'] == batch_size_, 'batch_size in HD5 store (%d) is different from that specified (%d)'%(split_props['batch_size'], batch_size_)
         assert split_props['num_val_batches'] == num_val_batches, 'num_val_batches in HD5 store (%d) is different from that specified (%d)'%(split_props['num_val_batches'] , num_val_batches)
         logger.info('split_dataset: loaded df_train and df_validate from hd5 store.')
-        return df_.loc[df_train_idx], df_.loc[df_validation_idx]
+        if df_validation_idx is not None:
+            return df_.loc[df_train_idx], df_.loc[df_validation_idx]
+        else:
+            return df_
     else:
         logger.info('split_dataset: generating a new train/validate split')
 

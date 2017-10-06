@@ -84,7 +84,7 @@ def load(*paths):
 class Storer(object):
     def __init__(self, args, prefix, step):
         self._path = os.path.join(args.storedir, '%s_%d.h5'%(prefix, step))
-        self._h5 = h5py.File(self._path, "w")
+        self._h5 = h5py.File(self._path, "w", swmr=False)
 
     def __enter__(self):
         return self
@@ -92,27 +92,33 @@ class Storer(object):
     def __exit__(self, *err):
         self.close()
 
-    def _append(self, key, ar, dtype):
-        if dtype is not None:
-            try:
-                ar = ar.astype(dtype)
-            except Exception as e:
-                logger.warn(e)
-
-        self._h5.create_dataset(key, data=ar)
-
-    def append(self, key, np_ar, dtype):
-        if isinstance(np_ar, tuple) or isinstance(np_ar, list):
-            for i, ar in enumerate(np_ar, start=1):
-                self._append('%s_%d'%(key,i), ar, dtype)
-        else:
-            self._append(key, np_ar, dtype)
-
     def flush(self):
         self._h5.flush()
 
     def close(self):
         self._h5.close()
+
+    def write(self, key, ar, dtype):
+        if isinstance(ar, tuple) or isinstance(ar, list):
+            return self._write(key, ar, dtype)
+        else:
+            return self._write(key, [ar], dtype)
+
+    def _write(self, key, np_ar_list, dtype):
+        ## Assuming all arrays have same rank, find the max dims
+        shapes = [ar.shape for ar in np_ar_list]
+        dims = zip(*shapes)
+        max_shape = [max(d) for d in dims]
+        ## We'll concatenate all arrays along axis 0
+        max_shape[0] = sum(dims[0])
+        dataset = self._h5.create_dataset(key, max_shape, dtype=dtype, fillvalue=-2 if np.issubdtype(dtype, np.integer) else np.nan)
+
+        row = 0
+        for ar in np_ar_list:
+            s = (slice(row, row+len(ar)), ) + tuple([slice(0,d) for d in ar.shape[1:]])
+            dataset[s] = ar
+            # dataset[slice(row, row+len(ar))] = ar
+            row += len(ar)
 
 def makeLogfileName(logdir, name):
     prefix, ext = os.path.splitext(os.path.basename(name))

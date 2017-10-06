@@ -162,7 +162,7 @@ def main(raw_data_folder,
 
         ##### Validation Graph
         valid_tower_ops = []; valid_ops = None
-        if args.doTrain or args.doValidate:
+        if valid_it and (args.doTrain or args.doValidate):
             with tf.name_scope('Validation'):
                 hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.variable_scope('InputQueue'):
@@ -247,6 +247,7 @@ def main(raw_data_folder,
                 start_time = time.time()
                 ############################# Training (with Validation) Cycle ##############################
                 if args.doTrain:
+                    logger.info('Starting training')
                     ## Set metrics
                     train_time = []; ctc_losses = []; logs = []
                     while not coord.should_stop():
@@ -284,8 +285,8 @@ def main(raw_data_folder,
                                 saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
 
                             with dtc.Storer(args, 'training', step) as storer:
-                                storer.append('predicted_ids', predicted_ids_list, np.int16)
-                                storer.append('y', y_s_list, np.int16)
+                                storer.write('predicted_ids', predicted_ids_list, np.int16)
+                                storer.write('y', y_s_list, np.int16)
 
                             accuracy_res = evaluate(
                                 session,
@@ -400,12 +401,15 @@ def ids2str3D(ids, hyper):
     return strs
 
 def do_validate(step, args, train_it, valid_it):
-    if args.doValidate:
+    if valid_it is None:
+        do_validate = False
+    elif args.doValidate:
         do_validate = True
     else:
         epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
         period = int(epoch_frac * train_it.epoch_size)
         do_validate = (step % period == 0) or (step == train_it.max_steps)
+        
     num_valid_batches = valid_it.epoch_size if do_validate else 0
     logger.debug('do_validate returning %s at step %d', do_validate, step)
     return do_validate, num_valid_batches
@@ -470,8 +474,8 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                 #     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
 
                 with dtc.Storer(args, 'validation', step) as storer:
-                    storer.append('predicted_ids', top1_ids_list, np.int16)
-                    storer.append('y', y_s_list, np.int16)
+                    storer.write('predicted_ids', top1_ids_list, np.int16)
+                    storer.write('y', y_s_list, np.int16)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
