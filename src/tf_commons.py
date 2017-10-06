@@ -616,6 +616,19 @@ def get_nested_shape(obj):
     else:
         return tuple(get_nested_shape(o) for o in obj)
 
+def nested_tf_shape(s):
+    """
+    Get tf.TensorShape for each tensor in a nested structure of tuples/named tuples.
+    TensorShape objects are returned nested within the same tuple/named-tuple structure.
+    """
+    if dlc.issequence(s):
+        lst = [nested_tf_shape(e) for e in s]
+        if hasattr(s, '_make'):
+            return s._make(lst)
+        else:
+            return tuple(lst)
+    else:
+        return s.shape
 
 
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):

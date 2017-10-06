@@ -263,13 +263,14 @@ def main(raw_data_folder,
                                 ))
                             predicted_ids_list = y_s_list = None
                         else:
-                            _, ctc_loss, log, y_s_list, predicted_ids_list = session.run(
+                            _, ctc_loss, log, y_s_list, predicted_ids_list, alpha = session.run(
                                 (
                                     train_ops.train, 
                                     train_ops.ctc_loss,
                                     train_ops.tb_logs,
                                     train_ops.y_s_list,
-                                    train_ops.predicted_ids_list
+                                    train_ops.predicted_ids_list,
+                                    train_ops.alpha
                                 ))
 
                         ## Accumulate metrics
@@ -287,6 +288,7 @@ def main(raw_data_folder,
                             with dtc.Storer(args, 'training', step) as storer:
                                 storer.write('predicted_ids', predicted_ids_list, np.int16)
                                 storer.write('y', y_s_list, np.int16)
+                                storer.write('alpha', alpha, np.float32)
 
                             accuracy_res = evaluate(
                                 session,
@@ -460,6 +462,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
+                                    
                                     # valid_ops.all_ids_list,
                                     # valid_ops.output_ids_list
                                     ))

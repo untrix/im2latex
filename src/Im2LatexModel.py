@@ -591,6 +591,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return dlc.Properties({
                         'grads': grads,
+                        'alpha':  tf.reshape(alpha, (N, B, -1, self.C.H, self.C.W)), #(N, B, T, L) -> (N, B, T, H, W)
                         # 'train': train,
                         # 'global_step':global_step, # scalar
                         'log_likelihood': log_likelihood, # scalar
@@ -634,6 +635,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                 self._init_state_model,
                                                                 beam_width=self.Seq2SeqBeamWidth,
                                                                 length_penalty_weight=self.C.beamsearch_length_penalty)
+                    self.C.logger.info('Decoder.output_size=%s', decoder.output_size)
                     final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False, ## Setting this to true causes error
@@ -642,8 +644,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.Seq2SeqBeamWidth)
                     assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth) # (B, T, Seq2SeqBeamWidth)
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
-                    # print('final_outputs:%s\n, final_seq_lens:%s'%(final_outputs, final_sequence_lengths))
-                    # ids = tf.not_equal(final_outputs.predicted_ids, 0)
+                    self.C.logger.info('final_state.cell_state.shape=%s, log_probs=%s, finished=%s, lengths=%s',
+                        tfc.nested_tf_shape(final_state.cell_state),
+                        final_state.log_probs.shape.as_list(),
+                        final_state.finished.shape.as_list(),
+                        final_state.lengths.shape.as_list()
+                        )
+
                     return dlc.Properties({
                             'ids': final_outputs.predicted_ids, # (B, T, BW)
                             'scores': final_outputs.beam_search_decoder_output.scores, # (B, T, BW)
@@ -998,6 +1005,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
             log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
 
     return dlc.Properties({
+        'alpha': concat('alpha', axis=1),
         'log_likelihood': log_likelihood, # scalar
         'ctc_loss': ctc_loss, # scalar
         'alpha_penalty': alpha_penalty, # scalar
