@@ -98,27 +98,40 @@ class Storer(object):
     def close(self):
         self._h5.close()
 
-    def write(self, key, ar, dtype):
+    def write(self, key, ar, dtype=None, batch_axis=0):
         if isinstance(ar, tuple) or isinstance(ar, list):
-            return self._write(key, ar, dtype)
+            return self._write(key, ar, dtype, batch_axis)
         else:
-            return self._write(key, [ar], dtype)
+            return self._write(key, [ar], dtype, batch_axis)
 
-    def _write(self, key, np_ar_list, dtype):
+    def _write(self, key, np_ar_list, dtype, batch_axis):
+        """
+        Stacks the tensors in the list along axis=batch_axis and writes them to disk.
+        Dimensions along axis=batch_axis are summed up. Other dimensions are padded to the maximum size
+        with a dtype-suitable value (np.nan for float, -2 for integer)
+        """
         ## Assuming all arrays have same rank, find the max dims
         shapes = [ar.shape for ar in np_ar_list]
         dims = zip(*shapes)
         max_shape = [max(d) for d in dims]
-        ## We'll concatenate all arrays along axis 0
-        max_shape[0] = sum(dims[0])
+        ## We'll concatenate all arrays along axis=batch_axis
+        max_shape[batch_axis] = sum(dims[batch_axis])
         dataset = self._h5.create_dataset(key, max_shape, dtype=dtype, fillvalue=-2 if np.issubdtype(dtype, np.integer) else np.nan)
+
+        def make_slice(row, shape, batch_axis):
+            """
+            Create a slice to place shape into the receiving dataset starting at rownum along axis=batch_axis,
+            and starting at 0 along all other axes
+            """
+            s = [slice(0,d) for d in shape]
+            s[batch_axis] = slice(row, row+shape[batch_axis])
+            return tuple(s), row+shape[batch_axis]
 
         row = 0
         for ar in np_ar_list:
-            s = (slice(row, row+len(ar)), ) + tuple([slice(0,d) for d in ar.shape[1:]])
+            s, row = make_slice(row, ar.shape, batch_axis)
+            logger.info('row=%d, slice=%s', row, s)
             dataset[s] = ar
-            # dataset[slice(row, row+len(ar))] = ar
-            row += len(ar)
 
 def makeLogfileName(logdir, name):
     prefix, ext = os.path.splitext(os.path.basename(name))

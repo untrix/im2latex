@@ -56,6 +56,9 @@ def printVars(logger):
     total_calstm = 0
     total_lstm_0 = 0
     total_lstm_1 = 0
+    total_calstm2 = 0
+    total_lstm2_0 = 0
+    total_lstm2_1 = 0
     total_output = 0
     total_embedding = 0
 
@@ -67,12 +70,18 @@ def printVars(logger):
             total_vggnet += n
         elif 'Convnet/' in var.name:
             total_convnet += n
-        elif 'CALSTM' in var.name:
+        elif 'CALSTM_1' in var.name:
             total_calstm += n
             if 'multi_rnn_cell/cell_0' in var.name:
                 total_lstm_0 += n
             elif 'multi_rnn_cell/cell_1' in var.name:
                 total_lstm_1 += n
+        elif 'CALSTM_2' in var.name:
+            total_calstm2 += n
+            if 'multi_rnn_cell/cell_0' in var.name:
+                total_lstm2_0 += n
+            elif 'multi_rnn_cell/cell_1' in var.name:
+                total_lstm2_1 += n
         elif 'I2L_RNN/Output_Layer/' in var.name:
             total_output += n
         elif 'Initializer_MLP/' in var.name:
@@ -87,9 +96,12 @@ def printVars(logger):
     logger.info( 'Vggnet: %d (%2.2f%%)'%(total_vggnet, total_vggnet*100./total_n))
     logger.info( 'Convnet: %d (%2.2f%%)'%(total_convnet, total_vggnet*100./total_n))
     logger.info( 'Initializer: %d (%2.2f%%)'%(total_init, total_init*100./total_n))
-    logger.info( 'CALSTM: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
-    logger.info( 'LSTM_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
-    logger.info( 'LSTM_1: %d (%2.2f%%)'%(total_lstm_1, total_lstm_1*100./total_n))
+    logger.info( 'CALSTM_1: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
+    logger.info( 'LSTM1_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
+    logger.info( 'LSTM1_1: %d (%2.2f%%)'%(total_lstm_1, total_lstm_1*100./total_n))
+    logger.info( 'CALSTM_2: %d (%2.2f%%)'%(total_calstm2, total_calstm2*100./total_n))
+    logger.info( 'LSTM2_0: %d (%2.2f%%)'%(total_lstm2_0, total_lstm2_0*100./total_n))
+    logger.info( 'LSTM2_1: %d (%2.2f%%)'%(total_lstm2_1, total_lstm2_1*100./total_n))
     logger.info( 'Output Layer: %d (%2.2f%%)'%(total_output, total_output*100./total_n))
     logger.info( 'Embedding Matrix: %d (%2.2f%%)'%(total_embedding, total_embedding*100./total_n))
 
@@ -455,14 +467,14 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     ))
                 top1_ids_list = y_s_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
-                                    
+                                    valid_ops.top1_alpha_list,
                                     # valid_ops.all_ids_list,
                                     # valid_ops.output_ids_list
                                     ))
@@ -479,6 +491,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                 with dtc.Storer(args, 'validation', step) as storer:
                     storer.write('predicted_ids', top1_ids_list, np.int16)
                     storer.write('y', y_s_list, np.int16)
+                    storer.write('alpha', top1_alpha_list, batch_axis=1)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 

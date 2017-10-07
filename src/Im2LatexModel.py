@@ -35,7 +35,9 @@ from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
 from tf_tutorial_code import average_gradients
-BeamSearchDecoder = tf.contrib.seq2seq.BeamSearchDecoder
+from tensorflow.contrib.seq2seq import BeamSearchDecoder
+from tf_dynamic_decode import dynamic_decode
+from tensorflow.contrib.framework import nest as tf_nest
 
 def build_vgg_context(params, image_batch):
     ## Conv-net
@@ -427,6 +429,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 Kv =self.C.K
                 L = self.C.L
                 N = self._num_calstm_layers
+                H = self.C.H
+                W = self.C.W
+                T = None
 
                 assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
                 assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
@@ -509,6 +514,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         # mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
                         # mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)
                         assert K.int_shape(alpha_penalty) == tuple()
+                        ## Reshape alpha for debugging output
+                        self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha))
+                        alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
+                        self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha_out))
+                        alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2)) # (N, B, T, H, W)->(N, B, H, W, T)
+                        assert K.int_shape(alpha_out) == (N, B, H, W, T)
+
 
                     ################ Build CTC Cost Function ################
                     ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
@@ -591,7 +603,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return dlc.Properties({
                         'grads': grads,
-                        'alpha':  tf.reshape(alpha, (N, B, -1, self.C.H, self.C.W)), #(N, B, T, L) -> (N, B, T, H, W)
+                        'alpha':  alpha_out, #(N, B, H, W, T)
                         # 'train': train,
                         # 'global_step':global_step, # scalar
                         'log_likelihood': log_likelihood, # scalar
@@ -635,8 +647,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                 self._init_state_model,
                                                                 beam_width=self.Seq2SeqBeamWidth,
                                                                 length_penalty_weight=self.C.beamsearch_length_penalty)
-                    self.C.logger.info('Decoder.output_size=%s', decoder.output_size)
-                    final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
+                    # self.C.logger.info('Decoder.output_size=%s', decoder.output_size)
+                    # self.C.logger.info('Decoder.initial_state.shape=%s', tfc.nested_tf_shape(self._init_state_model))
+                    final_outputs, final_state, final_sequence_lengths, final_states = dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False, ## Setting this to true causes error
                                                                     maximum_iterations=self.C.MaxDecodeLen,
@@ -644,17 +657,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.Seq2SeqBeamWidth)
                     assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth) # (B, T, Seq2SeqBeamWidth)
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
-                    self.C.logger.info('final_state.cell_state.shape=%s, log_probs=%s, finished=%s, lengths=%s',
-                        tfc.nested_tf_shape(final_state.cell_state),
-                        final_state.log_probs.shape.as_list(),
-                        final_state.finished.shape.as_list(),
-                        final_state.lengths.shape.as_list()
-                        )
+                    tf_nest.assert_same_structure(final_states, final_state)
+
+                    self.C.logger.info('final_states.shape=%s', tfc.nested_tf_shape(final_states))
+                    # self.C.logger.info('final_state.shape=%s', tfc.nested_tf_shape(final_state))
+                    self.C.logger.info('final_outputs.shape=%s', tfc.nested_tf_shape(final_outputs))
 
                     return dlc.Properties({
                             'ids': final_outputs.predicted_ids, # (B, T, BW)
                             'scores': final_outputs.beam_search_decoder_output.scores, # (B, T, BW)
-                            'seq_lens': final_sequence_lengths # (B, BW)
+                            'seq_lens': final_sequence_lengths, # (B, BW),
+                            'states': final_states.cell_state # Im2LatexState structure. Element shape = (B, T, BW, ...)
                             })
 
     def build_testing_tower(self):
@@ -662,13 +675,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         B = self.C.B
         BW = self.Seq2SeqBeamWidth
         k = min([self.C.k, BW])
+        N = self._num_calstm_layers
+        T = None,
+        H = self.C.H
+        W = self.C.W
         
         with tf.variable_scope(self.outer_scope) as var_scope:
             # assert var_scope.reuse == True
             ## ugly, but only option to get proper tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
                 outputs = self._beamsearch()
-                T = tf.shape(outputs.ids)[1]
+                T_shape = tf.shape(outputs.ids)[1]
                 bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, Seq2SeqBeamWidth, T)
                 assert bm_ids.get_shape().as_list() == [B, BW, None], 'bm_ids shape %s != %s'%(bm_ids.get_shape().as_list(), [B, BW, None])
                 bm_seq_lens = outputs.seq_lens # (B, BW)
@@ -676,11 +693,21 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, Seq2SeqBeamWidth, T)
                 assert bm_scores.get_shape().as_list() == [B, BW, None]
 
+                ## Extract Alpha Values for Debugging
+                ## states.shape=Im2LatexState(calstm_states=(CALSTMState(lstm_state=(LSTMStateTuple(c=[B, T, BW, n], h=[20, None, 10, 1000]), LSTMStateTuple(c=[20, None, 10, 1000], h=[20, None, 10, 1000])), alpha=[B, T, BW, L], ztop=[20, None, 10, 512]),), yProbs=[20, None, 10, 557])
+                alphas = []
+                for i in range(N):
+                    alpha = tf.transpose(outputs.states.calstm_states[i].alpha, (0,2,3,1)) ## (B, T, BW, L) -> (B, BW, L, T)
+                    alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1)) # (B, BW, L, T) -> (B, BW, H, W, T)
+                    alphas.append(alpha)
+                alphas = tf.stack(alphas, axis=0) # (N, B, BW, H, W, T)
+                assert alphas.shape.as_list() == [N, B, BW, H, W, None], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, None])
+
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
                     seq_lens_flat = tf.reshape(bm_seq_lens, shape=[-1]) # (B*Seq2SeqBeamWidth,)
                     assert K.int_shape(seq_lens_flat) == (B*BW,)
-                    seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T, dtype=tf.int32) # (B*Seq2SeqBeamWidth, T)
+                    seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T_shape, dtype=tf.int32) # (B*Seq2SeqBeamWidth, T)
                     assert K.int_shape(seq_mask_flat) == (B*BW, None)
 
                     # scores are log-probabilities which are negative values
@@ -718,6 +745,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         # assert K.int_shape(topK_ids) == (B, k, None)
                         # topK_seq_lens = tfc.batch_slice(seq_lens, topK_score_indices) # (B, k)
                         # assert K.int_shape(topK_seq_lens) == (B, k)
+                    self.C.logger.info('seq_scores.shape=%s', tfc.nested_tf_shape(seq_scores))
                     topK_seq_scores = seq_scores[:,:k] # (B, k)
                     topK_ids = bm_ids[:,:k,:] # (B, k, T)
                     topK_seq_lens = bm_seq_lens[:, :k] # (B, k)
@@ -809,6 +837,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
                     'top1_len_ratio': top1_len_ratio,  # (B,)
+                    'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
@@ -942,6 +971,7 @@ def sync_testing_towers(hyper, tower_ops):
         'top1_accuracy': top1_accuracy, # scalar
         'top1_num_hits': top1_num_hits, # scalar
         'top1_ids_list': gather('top1_ids'),# ((B,T),...)
+        'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
         'bok_ids_list': gather('bok_ids'),# ((B,T),...)
         'y_s_list': gather('y_s'), # ((B,T),...)
         'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)

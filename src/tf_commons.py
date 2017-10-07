@@ -628,7 +628,7 @@ def nested_tf_shape(s):
         else:
             return tuple(lst)
     else:
-        return s.shape
+        return s.shape.as_list()
 
 
 class RNNWrapper(tf.nn.rnn_cell.RNNCell):
