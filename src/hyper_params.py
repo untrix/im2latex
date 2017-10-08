@@ -480,7 +480,7 @@ def make_hyper(initVals={}, freeze=True):
     assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
-    CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
+    ##CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
 
     if globals.build_image_context != 2:
         CONVNET = None

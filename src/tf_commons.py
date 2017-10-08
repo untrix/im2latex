@@ -653,6 +653,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
             self._batch_state_shape = expand_nested_shape(self._cell.state_size,
                                                           self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
+            print('RNNWrapper.__init__: batch input shape = %s'%(self.batch_input_shape,))
 
     @property
     def state_size(self):

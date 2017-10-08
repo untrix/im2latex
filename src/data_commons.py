@@ -24,11 +24,11 @@ Created on Mon Jul 17 19:58:00 2017
 """
 import os
 import logging
-import pandas as pd
 from six.moves import cPickle as pickle
 import dl_commons as dlc
 import numpy as np
 import h5py
+from pprint import pprint, pformat
 
 dict_id2word = None
 i2w_ufunc = None
@@ -39,7 +39,7 @@ def initialize(data_dir, params):
     if logger is None:
         logger = params.logger
     if i2w_ufunc is None:
-        dict_id2word = pd.read_pickle(os.path.join(data_dir, 'dict_id2word.pkl'))
+        dict_id2word = load(data_dir, 'dict_id2word.pkl')
         K = len(dict_id2word.keys())
         if params.CTCBlankTokenID is not None:
             assert params.CTCBlankTokenID == K

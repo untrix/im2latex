@@ -143,12 +143,14 @@ class Properties(dict):
             if isinstance(val, Properties):
                 resolved[key] = val.to_dict()
             elif issequence(val):
-                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
+                # resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
+                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else repr(v) ) for v in val]
 
             # elif isinstance(val, dict):
             #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
             else:
-                resolved[key] = val if not isFunction(val) else repr(val)
+                # resolved[key] = val if not isFunction(val) else repr(val)
+                resolved[key] = repr(val)
 
         return resolved
 
@@ -170,24 +172,8 @@ class Properties(dict):
         d = self.to_dict()
         return _flatten('', d, {})
 
-    def diff(self, other):
-        """
-        Returns a numpy string array with differing values between the two dictionaries.
-        Meant for importing into pandas for quick viewing.
-        """
-        def extract_keys(s):
-            return set([''.join(e.split(':')[:-1]) for e in s])
-        s1 = self.to_set()
-        s2 = other.to_set()
-        keys = extract_keys(s1^s2)
-
-        d1 = self.to_flat_dict()
-        d2 = other.to_flat_dict()
-        return np.asarray([ ['%s:%s'%(k, d1[k] if d1.has_key(k) else None) , '%s:%s'%(k,d2[k] if d2.has_key(k) else None)] for k in keys])
-
-
-    def to_set(self):
-        return set(['%s:%s'%i for i in self.to_flat_dict().iteritems()])
+    def to_set(self, sep=' ===> '):
+        return set(['%s%s%s'%(e[0],sep,e[1]) for e in self.to_flat_dict().iteritems()])
 
     # def to_set(self):
     #     """
@@ -206,6 +192,22 @@ class Properties(dict):
     #         return f
     #     d = self.to_dict()
     #     return _flatten('', d, set())
+
+    def diff_table(self, other):
+        """
+        Returns a numpy string array with differing values between the two dictionaries.
+        Meant for importing into pandas for quick viewing.
+        """
+        sep = ' ===> '
+        def extract_keys(s):
+            return set([''.join(e.split(sep)[:-1]) for e in s])
+        s1 = self.to_set(sep)
+        s2 = other.to_set(sep)
+        keys = extract_keys(s1^s2)
+
+        d1 = self.to_flat_dict()
+        d2 = other.to_flat_dict()
+        return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else None) , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else None)] for k in keys])
 
     def to_table(self, prefix=None):
         """
@@ -824,3 +826,30 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
 
     return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)
+
+def diff_dict(left, right):
+    f = {}
+    f2 = {}
+    for k,v in left.iteritems():
+        if k in right:
+            v2 = right[k]
+            if isinstance(v, dict) and isinstance(v2, dict):
+                diff, diff2 = diff_dict(v, v2)
+                if diff != {}:
+                    f[k] = diff
+                if diff2 != {}:
+                    f2[k] = diff2
+            elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)) and issequence(v2) and all((isinstance(v_i, dict) for v_i in v2)) and len(v) == len(v2):
+                for i, v_i in enumerate(v):
+                    k_i = '%s_%d'%(k,i+1)
+                    diff, diff2 = diff_dict(v_i, v2[i])
+                    if diff != {}:
+                        f[k_i] = diff
+                    if diff2 != {}:
+                        f2[k_i] = diff2
+            elif v != v2:
+                if isinstance(v, str) and v.startswith('<function'):
+                    f2[k] = (v, v2)
+                else:
+                    f[k] = (v, v2)
+    return f, f2
