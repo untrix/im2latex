@@ -522,7 +522,7 @@ def make_hyper(initVals={}, freeze=True):
         })
     
     HYPER = Im2LatexModelParams(initVals).updated({
-        'CALSTM_STACK':(CALSTM_1,CALSTM_2),
+        'CALSTM_STACK':(CALSTM_1,),
         'CONVNET': CONVNET
         })
         

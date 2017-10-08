@@ -98,6 +98,23 @@ class Properties(dict):
         ## Shallow copy
         return self.__class__(self)
 
+    def __getstate__(self):
+        """
+        Returns pickle_state by invoking to_dict() - i.e. all values resolved but not validated.
+        Will not throw an exception if invalid/unset values are detected in order to be useful for debugging. The output file can be passed to 'from_pickle'.
+        NOTE however, that all functions (isCallable types) are reduced to their printable string representation before storing and can't be recovered
+        later by a call to 'from_pickle'. Lambda functions embedde within LambdaVal objects are also invoked and resolved and therefore are not pickled.abs
+        Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the 
+        LambdaVals and function values.
+        """
+        return self.to_dict()
+
+    def __setstate__(self, d):
+        return self.updated(d)
+        
+    def __reduce__(self):
+        return (Properties_Factory, tuple(), self.__getstate__())
+
     def copy(self, other={}):
         ## Shallow copy
         return self.__class__(self).updated(other)
@@ -126,31 +143,69 @@ class Properties(dict):
             if isinstance(val, Properties):
                 resolved[key] = val.to_dict()
             elif issequence(val):
-                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not inspect.isfunction(v) else repr(v))) for v in val]
+                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
 
             # elif isinstance(val, dict):
             #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
             else:
-                resolved[key] = val if not inspect.isfunction(val) else repr(val)
+                resolved[key] = val if not isFunction(val) else repr(val)
 
         return resolved
 
-    def __getstate__(self):
+    def to_flat_dict(self):
         """
-        Returns pickle_state by invoking to_dict() - i.e. all values resolved but not validated.
-        Will not throw an exception if invalid/unset values are detected in order to be useful for debugging. The output file can be passed to 'from_pickle'.
-        NOTE however, that all functions (isCallable types) are reduced to their printable string representation before storing and can't be recovered
-        later by a call to 'from_pickle'. Lambda functions embedde within LambdaVal objects are also invoked and resolved and therefore are not pickled.abs
-        Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the 
-        LambdaVals and function values.
+        Returns the result of flattening self.to_dict().
         """
-        return self.to_dict()
+        def _flatten(prefix, d, f):
+            for k in d.keys():
+                v = d[k]
+                if isinstance(v, dict):
+                    _flatten(prefix+k+'.', v, f)
+                elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
+                    for i, v_i in enumerate(v, start=1):
+                        _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
+                else:
+                    f[prefix+k] = v
+            return f
+        d = self.to_dict()
+        return _flatten('', d, {})
 
-    def __setstate__(self, d):
-        return self.updated(d)
-        
-    def __reduce__(self):
-        return (Properties_Factory, tuple(), self.__getstate__())
+    def diff(self, other):
+        """
+        Returns a numpy string array with differing values between the two dictionaries.
+        Meant for importing into pandas for quick viewing.
+        """
+        def extract_keys(s):
+            return set([''.join(e.split(':')[:-1]) for e in s])
+        s1 = self.to_set()
+        s2 = other.to_set()
+        keys = extract_keys(s1^s2)
+
+        d1 = self.to_flat_dict()
+        d2 = other.to_flat_dict()
+        return np.asarray([ ['%s:%s'%(k, d1[k] if d1.has_key(k) else None) , '%s:%s'%(k,d2[k] if d2.has_key(k) else None)] for k in keys])
+
+
+    def to_set(self):
+        return set(['%s:%s'%i for i in self.to_flat_dict().iteritems()])
+
+    # def to_set(self):
+    #     """
+    #     Returns the result of flattening self.to_dict()
+    #     """
+    #     def _flatten(prefix, d, f):
+    #         for k in d.keys():
+    #             v = d[k]
+    #             if isinstance(v, dict):
+    #                 _flatten(prefix+k+'.', v, f)
+    #             elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
+    #                 for i, v_i in enumerate(v, start=1):
+    #                     _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
+    #             else:
+    #                 f.add('%s%s:%s'%(prefix, k, v))
+    #         return f
+    #     d = self.to_dict()
+    #     return _flatten('', d, set())
 
     def to_table(self, prefix=None):
         """
@@ -167,7 +222,7 @@ class Properties(dict):
         if prefix is None:
             rows.append(['NAME','VALUE'])
 
-        for key in self.keys():
+        for key in sorted(self.keys()):
             row_name = key if prefix is None else prefix + '.' + key
             ## Resolve LambdaVals but do not validate them because we
             ## need this method to work for debugging purposes, therefore we need to
@@ -660,6 +715,9 @@ def issequence(v):
 
 def isTupleOrList(v):
     return isinstance(v, tuple) or isinstance(v, list)
+
+def isFunction(v):
+    return inspect.isfunction(v) or isinstance(v, LambdaVal)
 
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):

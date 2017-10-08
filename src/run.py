@@ -172,7 +172,7 @@ def main():
                                     'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
-                                    # 'StartTokenID': dlc.equalto('SpaceTokenID'),
+                                    'StartTokenID': dlc.equalto('SpaceTokenID'),
                                     'beamsearch_length_penalty': 1.0,
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
