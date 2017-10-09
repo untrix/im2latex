@@ -137,87 +137,33 @@ class Properties(dict):
         """ Called after update is invoked. Allows subclasses to update any dependant variables. """
         pass
 
-    # def to_dict(self):
-    #     """
-    #     Returns a dictionary with all values resolved but not validated.
-    #     Used for debugging and pretty printing. Will not throw an exception
-    #     if invalid/unset values are detected in order to be useful for debugging.
-    #     All functions (isCallable types) are reduced to their printable string representation.
-    #     """
-    #     resolved = {}
-    #     for key in self.keys():
-    #         ## Resolve LambdaVals but do not validate them because we
-    #         ## need this method to work for debugging purposes, therefore we need to
-    #         ## see the state of the dictionary - especially the invalid values.
-    #         val = self._get_unvalidated_val(key)
-    #         if isinstance(val, Properties):
-    #             resolved[key] = val.to_dict()
-    #         elif issequence(val):
-    #             # resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
-    #             resolved[key] = [(v.to_dict() if isinstance(v, Properties) else repr(v) ) for v in val]
+    def to_dict(self):
+        return to_dict(self)
 
-    #         # elif isinstance(val, dict):
-    #         #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
-    #         else:
-    #             # resolved[key] = val if not isFunction(val) else repr(val)
-    #             resolved[key] = repr(val)
-
-    #     return resolved
-
-    def to_flat_dict(self):
+    def to_dict_old(self):
         """
-        Returns the result of flattening to_dict(self).
+        Returns a dictionary with all values resolved but not validated and functions converted to strings
+        via 'repr'. Suitable for pickling but suitable for debugging and pretty printing only. Will not throw an exception
+        if invalid/unset values are detected in order to be useful for debugging.
+        All functions (isCallable types) are reduced to their printable string representation.
         """
-        def _flatten(prefix, d, f):
-            for k in d.keys():
-                v = d[k]
-                if isinstance(v, dict):
-                    _flatten(prefix+k+'.', v, f)
-                elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
-                    for i, v_i in enumerate(v, start=1):
-                        _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
-                else:
-                    f[prefix+k] = v
-            return f
-        d = to_dict(self)
-        return _flatten('', d, {})
+        resolved = {}
+        for key in self.keys():
+            ## Resolve LambdaVals but do not validate them because we
+            ## need this method to work for debugging purposes, therefore we need to
+            ## see the state of the dictionary - especially the invalid values.
+            val = self._get_unvalidated_val(key)
+            if isinstance(val, Properties):
+                resolved[key] = val.to_dict_old()
+            elif issequence(val):
+                resolved[key] = [(v.to_dict_old() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
 
-    def to_set(self, sep=' ===> '):
-        return set(['%s%s%s'%(e[0],sep,e[1]) for e in self.to_flat_dict().iteritems()])
+            # elif isinstance(val, dict):
+            #     resolved[key] = {k : (v.to_dict_old() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
+            else:
+                resolved[key] = val if not isFunction(val) else repr(val)
 
-    # def to_set(self):
-    #     """
-    #     Returns the result of flattening self.to_dict()
-    #     """
-    #     def _flatten(prefix, d, f):
-    #         for k in d.keys():
-    #             v = d[k]
-    #             if isinstance(v, dict):
-    #                 _flatten(prefix+k+'.', v, f)
-    #             elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
-    #                 for i, v_i in enumerate(v, start=1):
-    #                     _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
-    #             else:
-    #                 f.add('%s%s:%s'%(prefix, k, v))
-    #         return f
-    #     d = self.to_dict()
-    #     return _flatten('', d, set())
-
-    def diff_table(self, other):
-        """
-        Returns a numpy string array with differing values between the two dictionaries.
-        Meant for importing into pandas for quick viewing.
-        """
-        sep = ' ===> '
-        def extract_keys(s):
-            return set([''.join(e.split(sep)[:-1]) for e in s])
-        s1 = self.to_set(sep)
-        s2 = other.to_set(sep)
-        keys = extract_keys(s1^s2)
-
-        d1 = self.to_flat_dict()
-        d2 = other.to_flat_dict()
-        return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else None) , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else None)] for k in keys])
+        return resolved
 
     def to_table(self, prefix=None):
         """
@@ -320,8 +266,11 @@ class ParamDesc(Properties):
         without fear of modification.
         """
 
-        if isinstance(default, dict) or issequence(default):
-            raise AttributeError('Setting container type default value for property %s. Default values can only be scalar types!'%name)
+        if isinstance(default, Properties):
+            if not default.isFrozen():
+                raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
+        elif isMutable(default):
+            raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
         # elif isinstance(default, LambdaVal):
         #     raise AttributeError('Attempt to set LambdaVal as default for property %s. Not allowed.'%name)
 
@@ -367,7 +316,7 @@ class Params(Properties):
     from class Properties.
     """
 
-    def __init__(self, prototype, initVals=None):
+    def __init__(self, prototype, initVals=None, seal=True):
         """
         Takes property descriptors and their values. After initialization, no new params
         may be created - i.e. the object is sealed (see class Properties). The
@@ -387,6 +336,9 @@ class Params(Properties):
             May specify a subset of the object's properties, or none at all. Unspecified
             property values will be initialized from the prototype object.
             Should be either a dictionary of name:value pairs or unspecified (None).
+
+        @param seal (bool): seals the object after initialization. Not really needed but
+            maintained in order to keep the old behaviour.
 
         If a value (even default value) is a callable (i.e. function-like) but is
         expected to be a non-callable (i.e. validator does not derive from _iscallable)
@@ -428,47 +380,44 @@ class Params(Properties):
         Properties.__init__(self)
         descriptors = prototype
         props = Properties()
-        vals1_ = Properties()
-        vals2_ = Properties()
+        vals_init_ = Properties()
+        vals_params_ = Properties()
         _vals = {}
 
         if initVals is not None:
-            vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
+            vals_init_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
 
         if isinstance(prototype, Params):
             descriptors = prototype.protoS
-            vals2_ = prototype
+            vals_params_ = prototype
 
         object.__setattr__(self, '_desc_list', tuple(descriptors) )
 
-        def warn_shallow_copy(v):
+        def check_immutable(v):
             ## warn if doing shallow-copy of a dictionary
             if isinstance(v, Properties):
-                raise ParamsValueError('Shallow initializing Properties object not allowed: %s'%(v.pformat(),))
-                logging.warn('Shallow copying properties object: %s', v.pformat())
-            elif isinstance(v, dict):
-                logging.warn('Shallow initializing dictionary value: %s', dtc.pformat(v))
+                if not v.isFrozen():
+                    raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(v.pformat(),))
+            elif isMutable(v):
+                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(v.pformat(),))
+
+            return v
 
         for prop in descriptors:
             name = prop.name
             if name not in props:
                 try:
                     props[name] = prop
-                    # _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
-                    val1 = vals1_._rvn(name)
-                    val2 = vals2_._rvn(name)
+                    # _vals[name] = vals_init_[name] if (name in vals_init_) else vals_params_[name] if (name in vals_params_) else prop.default
+                    val_init = vals_init_._rvn(name)
+                    val_param = vals_params_._rvn(name)
                     ## TODO: Fix prop.default - use it only if a default value was set. Otherwise leave the value unset (i.e. do not insert the key into dict.)
-                    if name in vals1_:
-                        warn_shallow_copy(val1)
-                        _vals[name] = val1
-                    elif name in vals2_:
-                        warn_shallow_copy(val2)
-                        _vals[name] = val2
+                    if name in vals_init_:
+                        _vals[name] = check_immutable(val_init)
+                    elif name in vals_params_:
+                        _vals[name] = check_immutable(val_param)
                     elif prop.defaultIsSet():
-                        warn_shallow_copy(prop.default)
-                        _vals[name] = prop.default
-
-                    # _vals[name] = val1 if (name in vals1_) else val2 if (name in vals2_) else prop.default
+                        _vals[name] = check_immutable(prop.default)
 
                 except:
                     print('##### Error while processing property: \n', prop, '\n')
@@ -493,7 +442,8 @@ class Params(Properties):
                 raise
 
         # Finally, seal the object so that no new properties may be added.
-        self.seal()
+        if seal:
+            self.seal()
 
     def _init_old_(self, prototype, initVals=None):
         """
@@ -864,6 +814,9 @@ def isTupleOrList(v):
 def isFunction(v):
     return inspect.isfunction(v) or isinstance(v, LambdaVal)
 
+def isMutable(v):
+    return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet)
+
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):
         assert lst is None or issequence(lst)
@@ -992,19 +945,34 @@ def diff_dict(left, right):
                         f2[k_i] = diff2
             elif v != v2:
                 if isinstance(v, str) and (v.startswith('<function') or v.startswith('<tensorflow')):
-                    f2[k] = (v, v2)
+                    f2[k] = '%s != %s'%(v, v2)
                 else:
-                    f[k] = (v, v2)
+                    f[k] = '%s != %s'%(v, v2)
     return f, f2
 
-def to_dict(props):
+def to_dict(props, to_str=True):
     """
     Returns a dictionary with all values resolved but not validated.
     Used for debugging and pretty printing. Will not throw an exception
     if invalid/unset values are detected in order to be useful for debugging.
-    All functions (isCallable types) are reduced to their printable string representation.
+    All non-scalar keys and values are reduced to their printable string representation unless to_str
+    is True in which case all values are converted.
+
+    Args:
+        props: A instance of dict or Properties.
+        to_strs: If True, all values will be converted into their string representations.
+    Returns:
+        A picklable dict object.
     """
-    resolved = {}
+    def get_repr(v):
+        if isinstance(v, str):
+            return v
+        elif (not to_str) and ( isinstance(v,int) or isinstance(v, float) ):
+            return v
+        else:
+            return repr(v)
+
+    resolved = {} ## Very important to return a dict, not Properties. Otherwise pickle will go into a loop.
     for key in props.keys():
         ## Resolve LambdaVals but do not validate them because we
         ## need this method to work for debugging purposes, therefore we need to
@@ -1017,8 +985,87 @@ def to_dict(props):
         if isinstance(val, dict):
             resolved[key] = to_dict(val)
         elif issequence(val):
-            resolved[key] = [(to_dict(v) if isinstance(v, dict) else '%s'%v ) for v in val]
+            resolved[key] = [(to_dict(v) if isinstance(v, dict) else get_repr(v) ) for v in val]
         else:
-            resolved[key] = '%s'%val
+            resolved[key] = get_repr(val)
 
     return resolved
+
+def to_flat_dict(dict_obj):
+    """
+    Returns the result of flattening to_dict(self).
+    Args:
+        dict_obj: A dict object (including subclasses).
+    """
+    def _flatten(prefix, d, f):
+        for k in d.keys():
+            v = d[k]
+            if isinstance(v, dict):
+                _flatten(prefix+k+'.', v, f)
+            elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
+                for i, v_i in enumerate(v, start=1):
+                    _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
+            else:
+                f[prefix+k] = v
+        return f
+    d = to_dict(dict_obj)
+    return _flatten('', d, {})
+
+def to_set(dict_obj, sep=' ===> '):
+    """ 
+    Returns:
+        set(['key1 ==> val1', 'key2 ==> val2', ...])
+
+    Returns a set of key-value pair strings separated by the sep argument. All keys
+    and values are converted to their string representations. Key value pairs are
+    derived by calling self.to_flat_dict.
+
+    """
+    return set(['%s%s%s'%(e[0],sep,e[1]) for e in to_flat_dict(dict_obj).iteritems()])
+
+# def to_set(self):
+#     """
+#     Returns the result of flattening self.to_dict()
+#     """
+#     def _flatten(prefix, d, f):
+#         for k in d.keys():
+#             v = d[k]
+#             if isinstance(v, dict):
+#                 _flatten(prefix+k+'.', v, f)
+#             elif issequence(v) and all((isinstance(v_i, dict) for v_i in v)):
+#                 for i, v_i in enumerate(v, start=1):
+#                     _flatten(prefix+'%s_%d.'%(k,i), v_i, f)
+#             else:
+#                 f.add('%s%s:%s'%(prefix, k, v))
+#         return f
+#     d = self.to_dict()
+#     return _flatten('', d, set())
+
+def diff_table(dict_obj, other):
+    """
+    Returns two numpy string array with differing values between the two dictionaries.
+    Meant for importing into pandas for quick viewing. The first array has the more
+    important differences whereas the second one has the less important diffs.
+    """
+    sep = ' ===> '
+    def extract_keys(s):
+        return set([''.join(e.split(sep)[:-1]) for e in s])    
+
+    s1 = to_set(dict_obj, sep)
+    s2 = to_set(other, sep)
+    keys = extract_keys(s1^s2)
+
+    d1 = to_flat_dict(dict_obj)
+    d2 = to_flat_dict(other)
+
+    ## Move all function and tensorflow objects to end of the list since these are spurious differences.
+    def cullKey(k):
+        v = d1[k] if (k in d1) else d2[k]
+        return isinstance(v, str) and (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger'))
+
+    tail_keys = filter(cullKey, keys)
+    head_keys = filter(lambda k: k not in tail_keys, keys)
+    keys = head_keys + tail_keys
+
+    return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in head_keys ]), np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in tail_keys ])
+

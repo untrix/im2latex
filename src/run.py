@@ -138,11 +138,11 @@ def main():
         vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
     if args.restore_logdir is not None:
-        tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.restore_logdir)})
+        tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.restore_logdir)}).freeze()
     elif args.logdir2:
-        tb = tfc.TensorboardParams({'tb_logdir':_logdir2})
+        tb = tfc.TensorboardParams({'tb_logdir':_logdir2}).freeze()
     else:
-        tb = tfc.TensorboardParams({'tb_logdir':_logdir})
+        tb = tfc.TensorboardParams({'tb_logdir':_logdir}).freeze()
 
     if args.doValidate:
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
