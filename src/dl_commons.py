@@ -134,7 +134,12 @@ class Properties(dict):
         return self
 
     def _trickledown(self):
-        """ Called after update is invoked. Allows subclasses to update any dependant variables. """
+        """
+        Trickle changes down to depending parameters in sub-tree(s).
+        (For same level dependencies use LambdaFunctions instead.). Useful in auto-updting complex parameter hierarchies
+        where LambdaVals won't work or would make the logic too complex.
+        Call at the end of __init__ and end of update.
+        """
         pass
 
     def to_dict(self):

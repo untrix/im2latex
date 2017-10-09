@@ -285,13 +285,15 @@ class CALSTMParams(dlc.HyperParams):
        ## "appropriately adjusted for upper CALSTM layers."
         assert initVals['m'] is not None        
         dlc.HyperParams.__init__(self, self.proto, initVals, seal=False)
+        ## No dropout within CALSTM
+        self.dropout = None
         self._trickledown()
 
     def _trickledown(self):
         """
-        Trickle down parameters from GlobalParams down the params-tree. Strictly, this should be done
-        inside __init__ because prototype is supposed to be static. However, I decided to do this inside
-        proto so that all parameter updates are located in one place.
+        Trickle changes down to depending parameters in sub-tree(s).
+        (For same level dependencies use LambdaFunctions instead.)
+        Call at the end of __init__ and end of update.
         """
         self.att_layers = tfc.MLPParams(self).updated({
             # Number of units in all layers of the attention model = D in the paper"s source-code.
@@ -677,6 +679,11 @@ class Im2LatexModelParams(dlc.HyperParams):
         self._trickledown()
 
     def _trickledown(self):
+        """
+        Trickle changes down to depending parameters in sub-tree(s).
+        (For same level dependencies use LambdaFunctions instead.)
+        Call at the end of __init__ and end of update.
+        """
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
         self.output_layers = tfc.MLPParams(self).updated({
             ## One layer with num_units = m is added if output_follow_paper == True
