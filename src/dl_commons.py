@@ -26,6 +26,8 @@ import inspect
 import pprint
 import numpy as np
 import data_commons as dtc
+import logging
+
 class AccessDeniedError(Exception):
     def __init__(self, msg):
         Exception.__init__(self, msg)
@@ -119,6 +121,10 @@ class Properties(dict):
         ## Shallow copy
         return self.__class__(self).updated(other)
 
+    def update(self, other):
+        dict.update(self, other)
+        self._trickledown()
+        
     def updated(self, other):
         """ chain-update
         Same as dict.update except that it returns self and therefore
@@ -127,36 +133,40 @@ class Properties(dict):
         dict.update(self, other)
         return self
 
-    def to_dict(self):
-        """
-        Returns a dictionary with all values resolved but not validated.
-        Used for debugging and pretty printing. Will not throw an exception
-        if invalid/unset values are detected in order to be useful for debugging.
-        All functions (isCallable types) are reduced to their printable string representation.
-        """
-        resolved = {}
-        for key in self.keys():
-            ## Resolve LambdaVals but do not validate them because we
-            ## need this method to work for debugging purposes, therefore we need to
-            ## see the state of the dictionary - especially the invalid values.
-            val = self._get_unvalidated_val(key)
-            if isinstance(val, Properties):
-                resolved[key] = val.to_dict()
-            elif issequence(val):
-                # resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
-                resolved[key] = [(v.to_dict() if isinstance(v, Properties) else repr(v) ) for v in val]
+    def _trickledown(self):
+        """ Called after update is invoked. Allows subclasses to update any dependant variables. """
+        pass
 
-            # elif isinstance(val, dict):
-            #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
-            else:
-                # resolved[key] = val if not isFunction(val) else repr(val)
-                resolved[key] = repr(val)
+    # def to_dict(self):
+    #     """
+    #     Returns a dictionary with all values resolved but not validated.
+    #     Used for debugging and pretty printing. Will not throw an exception
+    #     if invalid/unset values are detected in order to be useful for debugging.
+    #     All functions (isCallable types) are reduced to their printable string representation.
+    #     """
+    #     resolved = {}
+    #     for key in self.keys():
+    #         ## Resolve LambdaVals but do not validate them because we
+    #         ## need this method to work for debugging purposes, therefore we need to
+    #         ## see the state of the dictionary - especially the invalid values.
+    #         val = self._get_unvalidated_val(key)
+    #         if isinstance(val, Properties):
+    #             resolved[key] = val.to_dict()
+    #         elif issequence(val):
+    #             # resolved[key] = [(v.to_dict() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
+    #             resolved[key] = [(v.to_dict() if isinstance(v, Properties) else repr(v) ) for v in val]
 
-        return resolved
+    #         # elif isinstance(val, dict):
+    #         #     resolved[key] = {k : (v.to_dict() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
+    #         else:
+    #             # resolved[key] = val if not isFunction(val) else repr(val)
+    #             resolved[key] = repr(val)
+
+    #     return resolved
 
     def to_flat_dict(self):
         """
-        Returns the result of flattening self.to_dict().
+        Returns the result of flattening to_dict(self).
         """
         def _flatten(prefix, d, f):
             for k in d.keys():
@@ -169,7 +179,7 @@ class Properties(dict):
                 else:
                     f[prefix+k] = v
             return f
-        d = self.to_dict()
+        d = to_dict(self)
         return _flatten('', d, {})
 
     def to_set(self, sep=' ===> '):
@@ -252,7 +262,7 @@ class Properties(dict):
         return np.asarray(rows, dtype=np.unicode_)
 
     def pformat(self):
-        return pprint.pformat(self.to_dict())
+        return pprint.pformat(to_dict(self))
 
     def __getattr__(self, key):
         return self._get_val_(key)
@@ -310,10 +320,15 @@ class ParamDesc(Properties):
         without fear of modification.
         """
 
+        if isinstance(default, dict) or issequence(default):
+            raise AttributeError('Setting container type default value for property %s. Default values can only be scalar types!'%name)
+        # elif isinstance(default, LambdaVal):
+        #     raise AttributeError('Attempt to set LambdaVal as default for property %s. Not allowed.'%name)
+
         Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
         self.freeze()
 
-    def defaultIsSet():
+    def defaultIsSet(self):
         """
         Returns True if a default value has been set else returns False.
         Note that if the default value was None and if None was a valid value (per the validator if set)
@@ -353,6 +368,134 @@ class Params(Properties):
     """
 
     def __init__(self, prototype, initVals=None):
+        """
+        Takes property descriptors and their values. After initialization, no new params
+        may be created - i.e. the object is sealed (see class Properties). The
+        property values can be modified however (unless you call freeze()).
+
+        @param prototype (sequence of ParamDesc): Sequence of ParamDesc objects which serve as the list of
+            valid properties. Can be a sequence of ParamDesc objects or another Params object.
+            If it was a Params object, then descriptors would be derived
+            from prototype.protoS.
+            This object will also provide the property values if not specified in
+            the vals argument (below). If this was a list of ParamDesc objects,
+            then the default property values would be used (ParamDesc.default). If
+            on the other hand, this was a Params object, then its property
+            value would be used (i.e. the return value of Params['prop_name']).
+
+        @param initVals (dict): provides initial values of the properties of this object.
+            May specify a subset of the object's properties, or none at all. Unspecified
+            property values will be initialized from the prototype object.
+            Should be either a dictionary of name:value pairs or unspecified (None).
+
+        If a value (even default value) is a callable (i.e. function-like) but is
+        expected to be a non-callable (i.e. validator does not derive from _iscallable)
+        then it will
+        be called in order to get the actual value of the parameter. The callable function will
+        be passed in name of the property and a dictionary of all the properties
+        with their initVals or default vals as appropriate. Callables are called
+        in a second pass - after the initVals and default-values of all the properties
+        have been resolved (this happens in the first pass). However, at this point the callable
+        objects are not invoked and therefore (internally) show up as values of the property.
+        In the second pass, the callable objects are
+        are invoked in the order in which the properties were declared in the prototype.
+        The final value of a property will be set to the return value of the callable.
+        Hence the callable function should expect that properties that occur
+        later in the prototype sequence will still have their values set to
+        callable objects (if any). Both initVal and default values maybe
+        callables. Just don't get into loops. also, the dictionary passed into
+        the callable is a copy of the resolved values, and therefore changing
+        some other property's value will have no impact. This feature is used
+        to set one property's value based on others. See the example below.
+
+        Examples:
+        o1 = Params(
+                    [
+                     ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
+                     ParamDesc('layer_type', 'Type of layers to be created'),
+                     ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1),
+                     ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers',
+                               xrange(1, 10000),
+                               lambda name, props: 10000 // props["num_layers"]), ## Lambda function will be invoked
+                     ParamDesc('activation_fn', 'tensorflow activation function',
+                               iscallable(tf.nn.relu, tf.nn.tanh, None),
+                               tf.nn.relu) ## Function will not be invoked because the param-type is callable.
+                    ])
+        o2 = Params(o1) # copies prototype from o1, uses default values
+        o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
+            initializes with val from vals if available otherwise with default from o1.protoS
+        """
+        Properties.__init__(self)
+        descriptors = prototype
+        props = Properties()
+        vals1_ = Properties()
+        vals2_ = Properties()
+        _vals = {}
+
+        if initVals is not None:
+            vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
+
+        if isinstance(prototype, Params):
+            descriptors = prototype.protoS
+            vals2_ = prototype
+
+        object.__setattr__(self, '_desc_list', tuple(descriptors) )
+
+        def warn_shallow_copy(v):
+            ## warn if doing shallow-copy of a dictionary
+            if isinstance(v, Properties):
+                raise ParamsValueError('Shallow initializing Properties object not allowed: %s'%(v.pformat(),))
+                logging.warn('Shallow copying properties object: %s', v.pformat())
+            elif isinstance(v, dict):
+                logging.warn('Shallow initializing dictionary value: %s', dtc.pformat(v))
+
+        for prop in descriptors:
+            name = prop.name
+            if name not in props:
+                try:
+                    props[name] = prop
+                    # _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
+                    val1 = vals1_._rvn(name)
+                    val2 = vals2_._rvn(name)
+                    ## TODO: Fix prop.default - use it only if a default value was set. Otherwise leave the value unset (i.e. do not insert the key into dict.)
+                    if name in vals1_:
+                        warn_shallow_copy(val1)
+                        _vals[name] = val1
+                    elif name in vals2_:
+                        warn_shallow_copy(val2)
+                        _vals[name] = val2
+                    elif prop.defaultIsSet():
+                        warn_shallow_copy(prop.default)
+                        _vals[name] = prop.default
+
+                    # _vals[name] = val1 if (name in vals1_) else val2 if (name in vals2_) else prop.default
+
+                except:
+                    print('##### Error while processing property: \n', prop, '\n')
+                    raise
+            else:
+                raise ParamsValueError('property %s has already been initialized with value %s'%(name,
+                                                                                                 _vals[name]))
+
+        object.__setattr__(self, '_descr_dict', props.freeze())
+
+        # Validation: Now insert the property values one by one. Doing so will invoke
+        # self._set_val_ which will validate their values against self._descr_dict.
+        for prop in descriptors:
+            try:
+                _name = prop.name
+                if _name in _vals:
+                    self[_name] = _vals[_name]
+            except ParamsValueError:
+                raise
+            except:
+                print('##### Error while processing property: \n', prop, '\n')
+                raise
+
+        # Finally, seal the object so that no new properties may be added.
+        self.seal()
+
+    def _init_old_(self, prototype, initVals=None):
         """
         Takes property descriptors and their values. After initialization, no new params
         may be created - i.e. the object is sealed (see class Properties). The
@@ -848,8 +991,34 @@ def diff_dict(left, right):
                     if diff2 != {}:
                         f2[k_i] = diff2
             elif v != v2:
-                if isinstance(v, str) and v.startswith('<function'):
+                if isinstance(v, str) and (v.startswith('<function') or v.startswith('<tensorflow')):
                     f2[k] = (v, v2)
                 else:
                     f[k] = (v, v2)
     return f, f2
+
+def to_dict(props):
+    """
+    Returns a dictionary with all values resolved but not validated.
+    Used for debugging and pretty printing. Will not throw an exception
+    if invalid/unset values are detected in order to be useful for debugging.
+    All functions (isCallable types) are reduced to their printable string representation.
+    """
+    resolved = {}
+    for key in props.keys():
+        ## Resolve LambdaVals but do not validate them because we
+        ## need this method to work for debugging purposes, therefore we need to
+        ## see the state of the dictionary - especially the invalid values.
+        if isinstance(props, Properties):
+            val = props._get_unvalidated_val(key)
+        else:
+            val = props[key]
+
+        if isinstance(val, dict):
+            resolved[key] = to_dict(val)
+        elif issequence(val):
+            resolved[key] = [(to_dict(v) if isinstance(v, dict) else '%s'%v ) for v in val]
+        else:
+            resolved[key] = '%s'%val
+
+    return resolved

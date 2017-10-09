@@ -11,6 +11,11 @@ import hyper_params as hp
 # s2 = h2.to_set()
 # s3 = h3.to_set()
 
+hyper = hp.make_hyper({'num_gpus':2, 'build_image_context':0})
+cal1 = hp.CALSTMParams({'m':64})
+cal2 = hp.CALSTMParams({'m':cal1.decoder_lstm.layers_units[-1]})
+
+
 orig_args = dlc.Properties({
     'B': 40,
     'MeanSumAlphaEquals1': False,

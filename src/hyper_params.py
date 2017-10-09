@@ -139,7 +139,7 @@ class GlobalParams(dlc.HyperParams):
            512),
         PD('tb', "Tensorboard Params.",
            instanceof(tfc.TensorboardParams),
-           tfc.TensorboardParams()
+        #    tfc.TensorboardParams()
            ),
         PD('dropout',
            'Dropout parameters if any - global. Absence of this property '
@@ -214,6 +214,27 @@ class GlobalParams(dlc.HyperParams):
         return self.__class__(self).updated(override_vals)
 
 class CALSTMParams(dlc.HyperParams):
+    proto = GlobalParams.proto + (
+        ### Attention Model Params ###
+            PD('att_layers', 'MLP parameters for attention model', 
+                instanceof(tfc.MLPParams),
+                ),
+            PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
+               'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
+               boolean,
+               True),
+            PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
+               "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
+               "I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
+               "Default value however, is True in conformance with the paper's implementation.",
+               (True, False),
+               True),
+        ### Decoder LSTM Params ###
+            PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
+               instanceof(tfc.RNNParams),
+               )
+        )
+
     @staticmethod
     def makeProto(GLOBAL=GlobalParams()):
         """
@@ -260,13 +281,23 @@ class CALSTMParams(dlc.HyperParams):
        ## "therefore their input dimensionality will not be equal to the embedding dimensionality, rather "
        ## " it will be equal to output_size of the previous CALSTM. That's why the value of m needs to be "
        ## "appropriately adjusted for upper CALSTM layers."
-        assert initVals['m'] is not None
-#        proto = self.proto if GLOBALS is None else self.makeProto(GLOBALS)
-        GLOBALS = GlobalParams(initVals)
-        dlc.HyperParams.__init__(self, self.makeProto(GLOBALS), initVals)
-        self._trickledown(GLOBALS)
-    def _trickledown(self, GLOBAL):
-        self.decoder_lstm.i = LambdaVal(lambda _, __: self.m + GLOBAL.D)
+        assert initVals['m'] is not None        
+        dlc.HyperParams.__init__(self, self.proto, initVals)
+        """
+        Trickle down parameters from GlobalParams down the params-tree. Strictly, this should be done
+        inside __init__ because prototype is supposed to be static. However, I decided to do this inside
+        proto so that all parameter updates are located in one place.
+        """
+        GLOBAL = GLOBAL.copy() ## No dropout within CALSTM
+
+
+
+
+        self._trickledown()
+
+    def _trickledown(self):
+        self.decoder_lstm.i = self.m + self.D
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -479,8 +510,9 @@ def make_hyper(initVals={}, freeze=True):
     globals = GlobalParams(initVals)
     assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
 
-    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
-    ##CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
+    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m}))
+    # CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
+    CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]}))
 
     if globals.build_image_context != 2:
         CONVNET = None
