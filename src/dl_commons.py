@@ -105,7 +105,7 @@ class Properties(dict):
         Returns pickle_state by invoking to_dict() - i.e. all values resolved but not validated.
         Will not throw an exception if invalid/unset values are detected in order to be useful for debugging. The output file can be passed to 'from_pickle'.
         NOTE however, that all functions (isCallable types) are reduced to their printable string representation before storing and can't be recovered
-        later by a call to 'from_pickle'. Lambda functions embedde within LambdaVal objects are also invoked and resolved and therefore are not pickled.abs
+        later by a call to 'from_pickle'. Lambda functions embedded within LambdaVal objects are also invoked and resolved and therefore are not pickled.
         Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the 
         LambdaVals and function values.
         """
@@ -820,6 +820,7 @@ def isFunction(v):
     return inspect.isfunction(v) or isinstance(v, LambdaVal)
 
 def isMutable(v):
+    # TODO: Ensure that all values inside a sequence are immutable as well. i.e. add the following clause: isinstance(v, collections.Sequence) and any(isMutable, v)
     return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet)
 
 class iscallable(_ParamValidator):
@@ -955,7 +956,7 @@ def diff_dict(left, right):
                     f[k] = '%s != %s'%(v, v2)
     return f, f2
 
-def to_dict(props, to_str=True):
+def to_dict(props, to_str=False):
     """
     Returns a dictionary with all values resolved but not validated.
     Used for debugging and pretty printing. Will not throw an exception

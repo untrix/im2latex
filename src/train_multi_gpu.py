@@ -467,14 +467,15 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     ))
                 top1_ids_list = y_s_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list = session.run((
+                # l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
-                                    valid_ops.top1_alpha_list,
+                                    # valid_ops.top1_alpha_list,
                                     # valid_ops.all_ids_list,
                                     # valid_ops.output_ids_list
                                     ))
@@ -491,7 +492,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                 with dtc.Storer(args, 'validation', step) as storer:
                     storer.write('predicted_ids', top1_ids_list, np.int16)
                     storer.write('y', y_s_list, np.int16)
-                    storer.write('alpha', top1_alpha_list, batch_axis=1)
+                    # storer.write('alpha', top1_alpha_list, batch_axis=1)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
