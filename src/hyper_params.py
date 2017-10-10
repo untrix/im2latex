@@ -691,7 +691,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
             'layers_units': (self.m, self.K),
             'activation_fn': tf.nn.relu, # paper has it set to relu
-            'op_name': 'yLogits'
+            'op_name': 'yLogits_MLP'
             }).freeze()
 
         self.init_model = tfc.MLPParams(self).updated({

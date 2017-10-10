@@ -240,7 +240,7 @@ def main(raw_data_folder,
             #     enqueue_threads.extend(qr3.create_threads(session, coord=coord, start=True))
             logger.info('Created enqueue threads')
 
-            saver = tf.train.Saver(max_to_keep=5, pad_step_number=True, save_relative_paths=True)
+            saver = tf.train.Saver(max_to_keep=10, pad_step_number=True, save_relative_paths=True)
             if args.restore_from_checkpoint:
                 latest_checkpoint = tf.train.latest_checkpoint(args.logdir, latest_filename='checkpoints_list')
                 logger.info('Restoring session from checkpoint %s', latest_checkpoint)

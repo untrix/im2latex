@@ -469,7 +469,9 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         assert split_props['num_val_batches'] == num_val_batches, 'num_val_batches in HD5 store (%d) is different from that specified (%d)'%(split_props['num_val_batches'] , num_val_batches)
         logger.info('split_dataset: loaded df_train and df_validate from hd5 store.')
         if df_validation_idx is not None:
-            return df_.loc[df_train_idx], df_.loc[df_validation_idx]
+            print 'type(df_train_index)=', type(df_train_idx)
+            print 'df_train_index=', df_train_idx
+            return df_.loc[df_train_idx], df_.loc[df_validation_idx] if df_validation_idx is not None else None
         else:
             return df_
     else:
