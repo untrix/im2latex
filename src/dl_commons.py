@@ -102,14 +102,14 @@ class Properties(dict):
 
     def __getstate__(self):
         """
-        Returns pickle_state by invoking to_dict() - i.e. all values resolved but not validated.
+        Returns pickle_state by invoking to_picklable_dict() - i.e. all values resolved but not validated.
         Will not throw an exception if invalid/unset values are detected in order to be useful for debugging. The output file can be passed to 'from_pickle'.
         NOTE however, that all functions (isCallable types) are reduced to their printable string representation before storing and can't be recovered
         later by a call to 'from_pickle'. Lambda functions embedded within LambdaVal objects are also invoked and resolved and therefore are not pickled.
         Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the 
         LambdaVals and function values.
         """
-        return self.to_dict()
+        return self.to_picklable_dict()
 
     def __setstate__(self, d):
         return self.updated(d)
@@ -142,8 +142,8 @@ class Properties(dict):
         """
         pass
 
-    def to_dict(self):
-        return to_dict(self)
+    def to_picklable_dict(self):
+        return to_picklable_dict(self)
 
     def to_dict_old(self):
         """
@@ -213,7 +213,7 @@ class Properties(dict):
         return np.asarray(rows, dtype=np.unicode_)
 
     def pformat(self):
-        return pprint.pformat(to_dict(self))
+        return pprint.pformat(to_picklable_dict(self))
 
     def __getattr__(self, key):
         return self._get_val_(key)
@@ -816,8 +816,8 @@ def issequence(v):
 def isTupleOrList(v):
     return isinstance(v, tuple) or isinstance(v, list)
 
-def isFunction(v):
-    return inspect.isfunction(v) or isinstance(v, LambdaVal)
+# def isFunction(v):
+#     return inspect.isfunction(v) or isinstance(v, LambdaVal)
 
 def isMutable(v):
     # TODO: Ensure that all values inside a sequence are immutable as well. i.e. add the following clause: isinstance(v, collections.Sequence) and any(isMutable, v)
@@ -956,13 +956,12 @@ def diff_dict(left, right):
                     f[k] = '%s != %s'%(v, v2)
     return f, f2
 
-def to_dict(props, to_str=False):
+def to_picklable_dict(props, to_str=False):
     """
     Returns a dictionary with all values resolved but not validated.
     Used for debugging and pretty printing. Will not throw an exception
     if invalid/unset values are detected in order to be useful for debugging.
-    All non-scalar keys and values are reduced to their printable string representation unless to_str
-    is True in which case all values are converted.
+    If to_str is True all values are converted to their string representations.
 
     Args:
         props: A instance of dict or Properties.
@@ -971,12 +970,10 @@ def to_dict(props, to_str=False):
         A picklable dict object.
     """
     def get_repr(v):
-        if isinstance(v, str):
-            return v
-        elif (not to_str) and ( isinstance(v,int) or isinstance(v, float) ):
-            return v
-        else:
+        if to_str and (not isinstance(v, str)):
             return repr(v)
+        else:
+            return v
 
     resolved = {} ## Very important to return a dict, not Properties. Otherwise pickle will go into a loop.
     for key in props.keys():
@@ -989,9 +986,9 @@ def to_dict(props, to_str=False):
             val = props[key]
 
         if isinstance(val, dict):
-            resolved[key] = to_dict(val)
+            resolved[key] = to_picklable_dict(val)
         elif issequence(val):
-            resolved[key] = [(to_dict(v) if isinstance(v, dict) else get_repr(v) ) for v in val]
+            resolved[key] = [(to_picklable_dict(v) if isinstance(v, dict) else get_repr(v) ) for v in val]
         else:
             resolved[key] = get_repr(val)
 
@@ -999,7 +996,7 @@ def to_dict(props, to_str=False):
 
 def to_flat_dict(dict_obj):
     """
-    Returns the result of flattening to_dict(self).
+    Returns the result of flattening to_picklable_dict(self).
     Args:
         dict_obj: A dict object (including subclasses).
     """
@@ -1014,7 +1011,7 @@ def to_flat_dict(dict_obj):
             else:
                 f[prefix+k] = v
         return f
-    d = to_dict(dict_obj)
+    d = to_picklable_dict(dict_obj)
     return _flatten('', d, {})
 
 def to_set(dict_obj, sep=' ===> '):
@@ -1031,7 +1028,7 @@ def to_set(dict_obj, sep=' ===> '):
 
 # def to_set(self):
 #     """
-#     Returns the result of flattening self.to_dict()
+#     Returns the result of flattening self.to_picklable_dict()
 #     """
 #     def _flatten(prefix, d, f):
 #         for k in d.keys():
@@ -1044,7 +1041,7 @@ def to_set(dict_obj, sep=' ===> '):
 #             else:
 #                 f.add('%s%s:%s'%(prefix, k, v))
 #         return f
-#     d = self.to_dict()
+#     d = self.to_picklable_dict()
 #     return _flatten('', d, set())
 
 def diff_table(dict_obj, other):

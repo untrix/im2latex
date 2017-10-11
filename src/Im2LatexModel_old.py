@@ -35,7 +35,8 @@ from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
 from tf_tutorial_code import average_gradients
-from tf_dynamic_decode import dynamic_decode
+# from tensorflow.contrib.seq2seq import BeamSearchDecoder
+# from tf_dynamic_decode import dynamic_decode
 # from tensorflow.contrib.framework import nest as tf_nest
 
 def build_vgg_context(params, image_batch):
@@ -648,8 +649,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                                                 length_penalty_weight=self.C.beamsearch_length_penalty)
                     # self.C.logger.info('Decoder.output_size=%s', decoder.output_size)
                     # self.C.logger.info('Decoder.initial_state.shape=%s', tfc.nested_tf_shape(self._init_state_model))
-                    final_outputs, final_state, final_sequence_lengths, final_states = dynamic_decode(
-                    # final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
+                    # final_outputs, final_state, final_sequence_lengths, final_states = dynamic_decode(
+                    final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
                                                                     decoder,
                                                                     impute_finished=False, ## Setting this to true causes error
                                                                     maximum_iterations=self.C.MaxDecodeLen,

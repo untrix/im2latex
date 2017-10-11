@@ -24,7 +24,8 @@ Created on Mon Jul 17 19:58:00 2017
 """
 import os
 import logging
-from six.moves import cPickle as pickle
+# from six.moves import cPickle as pickle
+import dill as pickle
 import dl_commons as dlc
 import numpy as np
 import h5py

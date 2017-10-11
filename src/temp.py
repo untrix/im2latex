@@ -3,13 +3,15 @@
 import pandas as pd
 import numpy as np
 import data_commons as dtc
-# import dl_commons as dlc
-# import hyper_params as hp
+import dl_commons as dlc
+import hyper_params as hp
+import os
 
-# hyper = hp.make_hyper({'num_gpus':2, 'build_image_context':0})
+
+hyper = hp.make_hyper({'num_gpus':2, 'build_image_context':0})
 # cal1 = hp.CALSTMParams({'m':64})
 # cal2 = hp.CALSTMParams({'m':cal1.decoder_lstm.layers_units[-1]})
-
+f = '../data/scratch.pkl'
 
 # orig_args = dlc.Properties({
 #     'B': 40,
