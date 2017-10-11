@@ -416,7 +416,6 @@ class Params(Properties):
                     # _vals[name] = vals_init_[name] if (name in vals_init_) else vals_params_[name] if (name in vals_params_) else prop.default
                     val_init = vals_init_._rvn(name)
                     val_param = vals_params_._rvn(name)
-                    ## TODO: Fix prop.default - use it only if a default value was set. Otherwise leave the value unset (i.e. do not insert the key into dict.)
                     if name in vals_init_:
                         _vals[name] = check_immutable(val_init)
                     elif name in vals_params_:
@@ -821,7 +820,7 @@ def isTupleOrList(v):
 
 def isMutable(v):
     # TODO: Ensure that all values inside a sequence are immutable as well. i.e. add the following clause: isinstance(v, collections.Sequence) and any(isMutable, v)
-    return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet)
+    return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet) or (issequence(v) and any(isMutable, v))
 
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):
