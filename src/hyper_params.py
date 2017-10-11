@@ -305,7 +305,7 @@ class CALSTMParams(dlc.HyperParams):
             'B': self.B,
             'i': self.m + self.D, ## size of input vector + z_t.
                 ## paper uses a value of n=1000
-            'layers_units': (self.n, self.n,),
+            'layers_units': (self.n, self.n, self.K),
             ## 'dropout': None # No dropout in LSTM
             }).freeze()
 
@@ -465,7 +465,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                instanceof(tfc.FCLayerParams),
                 ## Value set dynamically inside self._trickledown()
                ),
-        ### Loss / Cost Layer ###
+        ### Loss / Cost Layer ###decoder_lstm
             PD('sum_logloss',
                'Whether to normalize log-loss per sample as in standard log perplexity '
                'calculation or whether to just sum up log-losses as in the paper. Defaults'
@@ -722,7 +722,7 @@ def make_hyper(initVals={}, freeze=True):
 
     CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m}))
     # CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
-    CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]}))
+    # CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]}))
 
     if globals.build_image_context != 2:
         CONVNET = None
