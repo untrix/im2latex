@@ -123,10 +123,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
 
-                        TODO: We could also
-                        use 2D convolution here with a kernel of size (1,D) and stride=1 resulting in
-                        an output dimension of (L,1,depth) or (B, L, 1, depth) including the batch dimension.
-                        That may be more efficient.
+                        TODO: This tantamounts to a 
+                        1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D. Using 'dim' kernels of size (1,1) and 
+                        stride=1 resulting in an output shape of (L,1,dim) [or (B, L, 1, dim) with the batch dimension included].
+                        Using a convnet layer of this type may actually be more efficient (and easier to code).
                         """
                         ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
                         ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)

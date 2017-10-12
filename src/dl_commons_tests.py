@@ -141,7 +141,7 @@ class PropertiesTest(TestCaseBase):
     def test_good_params(self):
         sealed = dlc.Params((
                 dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN']),
+                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN'], 'LSTM'),
                 dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
                 dlc.ParamDesc('unset', 'Unset property', range(1,11), None)
                 )
@@ -155,7 +155,7 @@ class PropertiesTest(TestCaseBase):
         self.assertEqual(sealed['layer_type'], 'CNN')
 
         self.assertEqual(frozen.model_name, 'im2latex')
-        self.assertEqual(frozen.layer_type, None)
+        self.assertEqual(frozen.layer_type, 'LSTM')
         self.assertEqual(frozen['num_layers'], 10)
         self.assertEqual(frozen.num_layers, 10)
 
@@ -183,7 +183,7 @@ class PropertiesTest(TestCaseBase):
     def test_good_hyperparams(self):
         sealed = dlc.HyperParams((
                 dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN']),
+                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN'], 'LSTM'),
                 dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
                 dlc.ParamDesc('unset', 'Unset property', range(1,11), None),
                 dlc.ParamDesc('none', 'None property', (None,), None)
