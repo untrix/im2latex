@@ -66,20 +66,31 @@ def summarize_layer(weights, biases, activations, coll_name):
 
 class TensorboardParams(HyperParams):
     proto = (
-        PD('tb_logdir', '', None, "tb_metrics"),
+        PD('tb_logdir',
+            'Top-level/Root logdir under which run-specific dirs are created', 
+            instanceof(str),
+            default="tb_metrics"
+            ),
+        PD('logdir_tag',
+            'Extra tag-name to attach to the run-specific  logdir name (after the date portion).',
+            instanceofOrNone(str),
+            default=None
+            ),
         PD('tb_weights',
-              'Section name under which weight summaries show up on tensorboard',
-              None, 'Weights'
-              ),
+            'Section name under which weight summaries show up on tensorboard',
+            None,
+            default='Weights'
+            ),
         PD('tb_biases',
-              'Section name under which bias summaries show up on tensorboard',
-              None,
-              'Biases'
-              ),
+            'Section name under which bias summaries show up on tensorboard',
+            None,
+            default='Biases'
+            ),
         PD('tb_activations',
-              'Section name under which activation summaries show up on tensorboard',
-              None, 'Activations'
-              )
+            'Section name under which activation summaries show up on tensorboard',
+            None, 
+            default='Activations'
+            )
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
@@ -768,7 +779,11 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
 
 
 def makeTBDir(params):
-    dir = params.tb_logdir + '/' + time.strftime('%Y-%m-%d %H-%M-%S %Z')
+    if params.logdir_tag is None:
+        dir = os.path.join(params.tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z'))
+    else:
+        dir = os.path.join(params.tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z') + ' ' + params.logdir_tag)
+
     os.makedirs(dir)
     return dir
 

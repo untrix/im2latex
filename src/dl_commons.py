@@ -271,10 +271,10 @@ class ParamDesc(Properties):
         without fear of modification.
         """
 
-        if isinstance(default, Properties):
-            if not default.isFrozen():
-                raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
-        elif isMutable(default):
+        # if isinstance(default, Properties):
+        #     if not default.isFrozen():
+        #         raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
+        if isMutable(default):
             raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
         # elif isinstance(default, LambdaVal):
         #     raise AttributeError('Attempt to set LambdaVal as default for property %s. Not allowed.'%name)
@@ -400,11 +400,11 @@ class Params(Properties):
 
         def check_immutable(v):
             ## warn if doing shallow-copy of a dictionary
-            if isinstance(v, Properties):
-                if not v.isFrozen():
-                    raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(v.pformat(),))
-            elif isMutable(v):
-                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(v.pformat(),))
+            # if isinstance(v, Properties):
+            #     if not v.isFrozen():
+            #         raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(pformat(v),))
+            if isMutable(v):
+                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(pformat(v),))
 
             return v
 
@@ -819,8 +819,10 @@ def isTupleOrList(v):
 #     return inspect.isfunction(v) or isinstance(v, LambdaVal)
 
 def isMutable(v):
-    # TODO: Ensure that all values inside a sequence are immutable as well. i.e. add the following clause: isinstance(v, collections.Sequence) and any(isMutable, v)
-    return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet) or (issequence(v) and any(isMutable, v))
+    if isinstance(v, Properties):
+        return (not v.isFrozen())
+    else:
+        return isinstance(v, collections.MutableSequence) or isinstance(v, collections.MutableMapping) or isinstance(v, collections.MutableSet) or (issequence(v) and any([isMutable(e) for e in v]) )
 
 class iscallable(_ParamValidator):
     def __init__(self, lst=None, noneokay=False):
@@ -1071,3 +1073,8 @@ def diff_table(dict_obj, other):
 
     return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in head_keys ]), np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in tail_keys ])
 
+def pformat(v):
+    if isinstance(v, Properties):
+        return v.pformat()
+    else:
+        return pprint.pformat(v)

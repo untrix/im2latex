@@ -131,7 +131,7 @@ class Storer(object):
         row = 0
         for ar in np_ar_list:
             s, row = make_slice(row, ar.shape, batch_axis)
-            logger.info('row=%d, slice=%s', row, s)
+            # logger.info('row=%d, slice=%s', row, s)
             dataset[s] = ar
 
 def makeLogfileName(logdir, name):

@@ -24,21 +24,20 @@ Created on Tue Jul 25 13:41:32 2017
 
 Tested on python 2.7
 """
+import sys
+import argparse
+import os
 import dl_commons as dlc
 import tf_commons as tfc
 import data_commons as dtc
 import train_multi_gpu
 import logging
 import hyper_params
-import argparse
-import os
 import pandas as pd
 import h5py
 
 def main():
     _data_folder = '../data'
-    _logdir = 'tb_metrics'
-    _logdir2 = 'tb_metrics_dev'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -100,15 +99,18 @@ def main():
     parser.add_argument("--build-image-context", "-i", dest="build_image_context", type=int,
                         help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
                         default=2)
-    parser.add_argument("--logdir2", dest="logdir2", action='store_true',
-                        help="Log to alternative data_folder " + _logdir2,
-                        default=False)
     parser.add_argument("--swap-memory", dest="swap_memory", action='store_true',
                         help="swap_memory option of tf.scan and tf.while_loop. Default to False."
                              " Enabling allows training larger mini-batches at the cost of speed.",
                         default=False)
     parser.add_argument("--restore", dest="restore_logdir", type=str,
-                        help="restore from checkpoint. Provide logdir path as argument",
+                        help="restore from checkpoint. Provide logdir path as argument. Don't specify the --logdir argument.",
+                        default=None)
+    parser.add_argument("--logdir", dest="logdir", type=str,
+                        help="(optional) Sets TensorboardParams.tb_logdir. Can't specify the --restore argument along with this.",
+                        default=None)
+    parser.add_argument("--logdir-tag", dest="logdir_tag", type=str,
+                        help="(optional) Sets TensorboardParams.logdir_tab. Can't specify the --restore argument along with this.",
                         default=None)
     parser.add_argument("--use-ctc-loss", dest="use_ctc_loss", action='store_true',
                         help="Sets the use_ctc_loss hyper parameter. Defaults to False.",
@@ -138,11 +140,12 @@ def main():
         vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
     if args.restore_logdir is not None:
+        assert args.logdir is None, 'Only one of --args-logdir and --logdir can be specified.'
         tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.restore_logdir)}).freeze()
-    elif args.logdir2:
-        tb = tfc.TensorboardParams({'tb_logdir':_logdir2}).freeze()
+    elif args.logdir is not None:
+        tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.logdir), 'logdir_tag': args.logdir_tag}).freeze()
     else:
-        tb = tfc.TensorboardParams({'tb_logdir':_logdir}).freeze()
+        tb = tfc.TensorboardParams({'logdir_tag': args.logdir_tag}).freeze()
 
     if args.doValidate:
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
@@ -177,7 +180,7 @@ def main():
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
-                                    'NOTE': 'CHECK # of LSTM LAYERS'
+                                    'NOTE': 'CHECK # of LSTM LAYERS',
                                     })
 
     if args.batch_size is not None:
@@ -216,6 +219,7 @@ def main():
     logger.addHandler(fh)
     hyper_params.setLogLevel(logger, args.logging_level)
 
+    logger.info(' '.join(sys.argv[1:]))
     logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams.pformat())
     logger.info('##################################################################\n')
     logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())
