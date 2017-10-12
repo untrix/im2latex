@@ -38,6 +38,7 @@ import h5py
 
 def main():
     _data_folder = '../data'
+    logger = hyper_params.makeLogger()
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -158,7 +159,6 @@ def main():
                                     'data_dir': data_folder,
                                     'generated_data_dir': os.path.join(data_folder, 'generated2'),
                                     'image_dir': image_folder,
-                                    # 'logger': logger,
                                     'ctc_beam_width': args.ctc_beam_width,
                                     'seq2seq_beam_width': args.seq2seq_beam_width,
                                     'valid_frac': args.valid_frac,
@@ -166,7 +166,7 @@ def main():
                                     'print_batch': args.print_batch,
                                     'build_image_context':args.build_image_context,
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
-                                    'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}),
+                                    'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.005,
                                     'make_training_accuracy_graph': False,
@@ -181,6 +181,8 @@ def main():
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
                                     'NOTE': 'CHECK # of LSTM LAYERS',
+                                    'att_share_weights': False,
+                                    'logger': logger
                                     })
 
     if args.batch_size is not None:
@@ -209,9 +211,6 @@ def main():
     else:
         dtc.dump(hyper, globalParams.logdir, 'hyper.pkl')
 
-    logger = hyper_params.makeLogger()
-    globalParams.logger = logger
-    hyper.logger = logger
     # globalParams.store = pd.HDFStore(dtc.makeLogfileName(globalParams.logdir, 'store.h5'), mode='a')
     # globalParams.store = h5py.File(dtc.makeLogfileName(globalParams.logdir, 'store.h5py'), "w")
     fh = logging.FileHandler(dtc.makeLogfileName(globalParams.logdir, 'training.log'))

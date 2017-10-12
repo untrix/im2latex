@@ -165,7 +165,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 
                         ## Concatenate a and h. Final shape will be (B, L*D+n)
                         with tf.variable_scope('a_flatten_concat_h'):
-                            ah = K.concatenate(K.batch_flatten(a), h) # dim = L*D+n
+                            a_ = K.batch_flatten(a) # (B, L*D)
+                            a_.set_shape((B, L*D)) # Flatten loses shape info
+                            ah = K.concatenate([a_, h]) # (B, L*D+n)
+                            assert K.int_shape(ah) == (B, L*D + self.output_size), 'shape %s != %s'%(K.int_shape(ah),(B, L*D + self.output_size))
                         ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
                         dim = CONF.att_layers.layers_units[-1]
                         assert dim == L
