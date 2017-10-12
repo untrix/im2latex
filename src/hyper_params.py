@@ -297,7 +297,7 @@ class CALSTMParams(dlc.HyperParams):
         """
         self.att_layers = tfc.MLPParams(self).updated({
             # Number of units in all layers of the attention model = D in the paper"s source-code.
-            'layers_units': (self.D, ),
+            'layers_units': (self.D, self.D,),
             'activation_fn': tf.nn.tanh # = tanh in the paper's source code
             ## 'dropout': None # Remove dropout in the attention model
             }).freeze()
@@ -720,9 +720,9 @@ def make_hyper(initVals={}, freeze=True):
     globals = GlobalParams(initVals)
     assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
 
-    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m}))
-    # CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]})
-    # CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]}))
+    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
+    # CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]}).freeze()
+    # CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]})).freeze()
 
     if globals.build_image_context != 2:
         CONVNET = None

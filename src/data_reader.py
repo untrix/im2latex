@@ -444,10 +444,10 @@ class BatchContextIterator(BatchImageIterator3):
 
 def restore_state(*paths):
     state = dtc.load(*paths)
-    return state.props, state.df_train_idx, state.df_validation_idx
+    return state['props'], state['df_train_idx'], state['df_validation_idx']
 
 def store_state(props, df_train, df_validation, *paths):
-    dtc.dump(dlc.Properties({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index if df_validation is not None else None}), *paths)
+    dtc.dump({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index if df_validation is not None else None}, *paths)
 
 def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, validation_frac=None, validation_size=None):
     if validation_frac is None and validation_size is None:
