@@ -929,6 +929,7 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)
 
 def diff_dict(left, right):
+    """ Assymetric comparison of left with right """
     f = {}
     f2 = {}
     for k,v in left.iteritems():
@@ -1046,6 +1047,7 @@ def to_set(dict_obj, sep=' ===> '):
 def diff_table(dict_obj, other):
     """
     Returns two numpy string array with differing values between the two dictionaries.
+    The values are all converted to their string representations before comparison.
     Meant for importing into pandas for quick viewing. The first array has the more
     important differences whereas the second one has the less important diffs.
     """
