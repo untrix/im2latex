@@ -256,7 +256,7 @@ class CALSTMParams(dlc.HyperParams):
         """
         self.att_layers = tfc.MLPParams(self).updated({
             # Number of units in all layers of the attention model = D in the paper"s source-code.
-            'layers_units': (self.L, self.L),
+            'layers_units': (self.L, self.L, self.L),
             'activation_fn': tf.nn.tanh # = tanh in the paper's source code
             ## 'dropout': None # Remove dropout in the attention model
             }).freeze()
@@ -264,7 +264,7 @@ class CALSTMParams(dlc.HyperParams):
             'B': self.B,
             'i': self.m + self.D, ## size of input vector + z_t.
                 ## paper uses a value of n=1000
-            'layers_units': (self.n, self.n, self.K),
+            'layers_units': (self.n, self.n, self.n),
             ## 'dropout': None # No dropout in LSTM
             }).freeze()
 
