@@ -1067,11 +1067,13 @@ def diff_table(dict_obj, other):
     ## Move all function and tensorflow objects to end of the list since these are spurious differences.
     def cullKey(k):
         v = d1[k] if (k in d1) else d2[k]
-        return isinstance(v, str) and (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger'))
+        v = repr(v) if not isinstance(v, str) else v
+        return  (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger'))
 
-    tail_keys = filter(cullKey, keys)
-    head_keys = filter(lambda k: k not in tail_keys, keys)
-    keys = head_keys + tail_keys
+
+    tail_keys = set(filter(cullKey, keys))
+    head_keys = keys - tail_keys ## filter(lambda k: k not in tail_keys, keys)
+    keys = sorted(list(head_keys)) + sorted(list(tail_keys))
 
     return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in head_keys ]), np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in tail_keys ])
 

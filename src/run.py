@@ -181,8 +181,9 @@ def main():
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
                                     'NOTE': 'CHECK # of LSTM LAYERS',
-                                    'att_share_weights': False,
-                                    'logger': logger
+                                    'att_share_weights': True,
+                                    'logger': logger,
+                                    'att_weighted_gather': False
                                     })
 
     if args.batch_size is not None:

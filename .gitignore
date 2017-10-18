@@ -103,9 +103,8 @@ ENV/
 data
 data/
 ShowAndTellSrc/
+tb_metrics_*/
 tb_metrics/
-tb_metrics_dev/
-tb_metrics_saved/
 logdir/
 *.out
 .vscode/

@@ -226,7 +226,7 @@ class CALSTMParams(dlc.HyperParams):
                True),
             PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
                "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
-               "I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
+               "I have an alternative implementation that doesn't do this - instead forces the last layer of the MLP to have 1 unit."
                "Default value however, is True in conformance with the paper's implementation.",
                (True, False),
                True),
@@ -254,9 +254,15 @@ class CALSTMParams(dlc.HyperParams):
         (For same level dependencies use LambdaFunctions instead.)
         Call at the end of __init__ and end of update.
         """
+        # self.att_layers = tfc.MLPParams(self).updated({
+        #     # Number of units in all layers of the attention model = D in the paper"s source-code.
+        #     'layers_units': (self.L, self.L, self.L),
+        #     'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+        #     ## 'dropout': None # Remove dropout in the attention model
+        #     }).freeze()
         self.att_layers = tfc.MLPParams(self).updated({
             # Number of units in all layers of the attention model = D in the paper"s source-code.
-            'layers_units': (self.L, self.L, self.L),
+            'layers_units': (self.D, self.D, self.D, 1),
             'activation_fn': tf.nn.tanh # = tanh in the paper's source code
             ## 'dropout': None # Remove dropout in the attention model
             }).freeze()

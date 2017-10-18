@@ -124,8 +124,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         stack receives a concatenated vector of a(l) and h as input.
 
                         TODO: This tantamounts to a 
-                        1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D. Using 'dim' kernels of size (1,1) and 
-                        stride=1 resulting in an output shape of (L,1,dim) [or (B, L, 1, dim) with the batch dimension included].
+                        1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D i.e. an input shape of (H,W,C) = (1,L,D).
+                        Using 'dim' kernels of size (1,1) and stride=1 resulting in an output shape of (1,L,dim) [or (B, L, 1, dim) with the batch dimension included].
                         Using a convnet layer of this type may actually be more efficient (and easier to code).
                         """
                         ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
@@ -146,16 +146,19 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         ##    ah = a + K.expand_dims(h, axis=1)
 
                         ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
-                        ## One could've just summed/averaged them all here, but the paper uses yet
-                        ## another set of weights to accomplish this. So we'll keeep that as an option.
+                        ## Instead, one could've just ensured that the num_units of the final MLP layer was == 1
+                        ## resulting in an output dimension of (B,L,1). But the paper does it in this way - i.e.
+                        ## adds a FC layer without an activation (somewhat like an embedding) so we'll keeep that as an option.
                         if CONF.att_weighted_gather:
                             with tf.variable_scope('weighted_gather'):
                                 # Gather layer may have dropout based on CONF.att_layers
                                 gather_params = tfc.FCLayerParams(CONF.att_layers).updated({'activation_fn':None, 'num_units':1})
                                 ah = tfc.FCLayer(gather_params)(ah) # output shape = (B, L, 1)
-                                ah = K.squeeze(ah, axis=2) # output shape = (B, L)
                         else:
-                            ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
+                            # ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
+                            assert dim == 1 ## (B, L, 1)
+
+                        ah = K.squeeze(ah, axis=2) # output shape = (B, L)
 
                     else: # weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
