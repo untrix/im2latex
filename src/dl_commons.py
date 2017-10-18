@@ -760,7 +760,7 @@ class equalto(LambdaVal):
         LambdaVal.__init__(self, lambda _, props: props[target] if d is None else d[target])
 
 
-# A validator that returns False for non-None values
+# A validator that returns False for None values
 class _mandatoryValidator(_ParamValidator):
     def __contains__(self, val):
         return val is not None
@@ -775,6 +775,13 @@ class instanceof(_ParamValidator):
 class instanceofOrNone(instanceof):
     def __init__(self, cls):
         super(instanceofOrNone, self).__init__(cls, True)
+
+class either(_ParamValidator):
+    """Logical OR of multiple validators"""
+    def __init__(self, *validators):
+        self._validators = *validators
+    def __contains__(self, obj):
+        return any((obj in v for v in self._validators))
 
 # A inclusive range validator class
 class range_incl(_ParamValidator):

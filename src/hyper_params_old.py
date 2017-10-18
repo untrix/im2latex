@@ -220,16 +220,13 @@ class CALSTMParams(dlc.HyperParams):
                 instanceof(tfc.MLPParams),
                 ## Set dynamically in self._trickledown()
                 ),
-            PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations - i.e. perform a 1x1 convolution - or not.'
-               'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) kernel (similar to 1x1 convolution).'
-               'Choosing False will result in a standard MLP with (L*D+n,att_1_n) weight matrix. ',
+            PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
+               'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
                boolean,
                True),
             PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
                "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
-               "Instead of the final affine transform, one could just ensure that output of the Attention MLP Stack was (B,L,1) - i.e. num_units of"
-               "the final layer == 1. This would essentially add a non-linear activation on top of the affine-transform essentially converting it into a FC layer. Setting this param to"
-               "False switches to that model (i.e. an FC layer instead of Affine transform)."
+               "I have an alternative implementation that doesn't do this - instead forces the last layer of the MLP to have 1 unit."
                "Default value however, is True in conformance with the paper's implementation.",
                (True, False),
                True),
@@ -257,40 +254,18 @@ class CALSTMParams(dlc.HyperParams):
         (For same level dependencies use LambdaFunctions instead.)
         Call at the end of __init__ and end of update.
         """
-
-        if self.att_share_weights == 'convnet':
-            self.att_layers = ConvStackParams({
-                'op_name': '1x1Conv',
-                'tb': self.tb,
-                'activation_fn': tf.nn.relu,
-                'weights_initializer': self.weights_initializer,
-                'biases_initializer': self.biases_initializer,
-                'weights_regularizer': self.weights_regularizer,
-                'biases_regularizer': self.biases_regularizer,
-                'padding': 'VALID',
-                'layers': (
-                    ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':1, 'kernel_shape':(1,1), 'stride':(1,1)}, 'padding':'VALID').freeze()
-                )
+        # self.att_layers = tfc.MLPParams(self).updated({
+        #     # Number of units in all layers of the attention model = D in the paper"s source-code.
+        #     'layers_units': (self.L, self.L, self.L),
+        #     'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+        #     ## 'dropout': None # Remove dropout in the attention model
+        #     }).freeze()
+        self.att_layers = tfc.MLPParams(self).updated({
+            # Number of units in all layers of the attention model = D in the paper"s source-code.
+            'layers_units': (self.D, self.D, self.D, 1),
+            'activation_fn': tf.nn.tanh # = tanh in the paper's source code
+            ## 'dropout': None # Remove dropout in the attention model
             }).freeze()
-        elif self.att_share_weights == 'paper':
-            self.att_layers = tfc.MLPParams(self).updated({
-                # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (self.D, self.D),
-                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-                ## 'dropout': None # Remove dropout in the attention model
-                }).freeze()
-        elif self.att_share_weights == 'MLP':
-            self.att_layers = tfc.MLPParams(self).updated({
-                # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (self.L, self.L, self.L),
-                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-                ## 'dropout': None # Remove dropout in the attention model
-                }).freeze()
-            
-
-
         self.decoder_lstm = tfc.RNNParams(self).updated({
             'B': self.B,
             'i': self.m + self.D, ## size of input vector + z_t.

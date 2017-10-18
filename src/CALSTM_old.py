@@ -118,7 +118,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(a) == (B, L, D)
 
                     ## For #layers > 1 this will endup being different than the paper's implementation
-                    if CONF.att_share_weights == 'paper':
+                    if CONF.att_share_weights:
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
@@ -160,9 +160,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 
                         ah = K.squeeze(ah, axis=2) # output shape = (B, L)
 
-                    elif CONF.att_share_weights == 'convolve':
-                        pass
-                    elif CONF.att_share_weights == 'MLP': # MLP: weights not shared across L
+                    else: # weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
                         ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
                         ## of the L*D vector receives its own weight because the effective weight matrix here would be
@@ -178,8 +176,6 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         dim = CONF.att_layers.layers_units[-1]
                         assert dim == L
                         assert K.int_shape(ah) == (B, L)
-                    else:
-                        raise AttributeError('Invalid value of att_share_weights param: %s'%CONF.att_share_weights)
 
                     alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
                     # alpha = tf.identity(alpha, name='alpha') ## For clearer visualization

@@ -181,7 +181,7 @@ def main():
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
                                     'NOTE': 'CHECK # of LSTM LAYERS',
-                                    'att_share_weights': True,
+                                    'att_share_weights': 'convnet',
                                     'logger': logger,
                                     'att_weighted_gather': False
                                     })

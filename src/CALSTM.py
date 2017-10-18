@@ -113,12 +113,13 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     L = CONF.L
                     D = CONF.D
                     h = h_prev
+                    n = self._LSTM_stack.output_size
 
                     self._LSTM_stack.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
 
                     ## For #layers > 1 this will endup being different than the paper's implementation
-                    if CONF.att_share_weights:
+                    if (CONF.att_share_weights == 'paper') or (CONF.att_share_weights == 'convnet'):
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
@@ -133,34 +134,38 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         h = tf.identity(K.tile(K.expand_dims(h, axis=1), (1,L,1)), name='h_t-1')
                         a = tf.identity(a, name='a')
                         ## Concatenate a and h. Final shape = (B, L, D+n)
-                        ah = tf.concat([a,h], -1, name='a_concat_h'); # dim = D+n
-                        ah = tfc.MLPStack(CONF.att_layers)(ah)
-                        dim = CONF.att_layers.layers_units[-1]
-                        assert K.int_shape(ah) == (B, L, dim)
+                        ah = tf.concat([a,h], -1, name='a_concat_h'); # (B, L, D+n)
+                        if CONF.att_share_weights == 'paper':
+                            ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dim)
+                            dim = K.int_shape(ah)[-1]
+                            ## Below is roughly how it is implemented in the code released by the authors of the paper
+                            ##     for i in range(1, CONF.att_a_layers+1):
+                            ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
+                            ##     for i in range(1, CONF.att_h_layers+1):
+                            ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
+                            ##    ah = a + K.expand_dims(h, axis=1)
 
-                        ## Below is roughly how it is implemented in the code released by the authors of the paper
-                        ##     for i in range(1, CONF.att_a_layers+1):
-                        ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
-                        ##     for i in range(1, CONF.att_h_layers+1):
-                        ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
-                        ##    ah = a + K.expand_dims(h, axis=1)
+                            ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
+                            ## Instead, one could've just ensured that the num_units of the final MLP layer was == 1
+                            ## resulting in an output dimension of (B,L,1). But the paper does it in this way - i.e.
+                            ## adds a FC layer without an activation (somewhat like an embedding) so we'll keeep that as an option.
+                            if CONF.att_weighted_gather:
+                                with tf.variable_scope('weighted_gather'):
+                                    # Gather layer may have dropout based on CONF.att_layers
+                                    gather_params = tfc.FCLayerParams(CONF.att_layers).updated({'activation_fn':None, 'num_units':1})
+                                    ah = tfc.FCLayer(gather_params)(ah) # output shape = (B, L, 1)
+                            else:
+                                # ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
+                                assert dim == 1 ## (B, L, 1)
 
-                        ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
-                        ## Instead, one could've just ensured that the num_units of the final MLP layer was == 1
-                        ## resulting in an output dimension of (B,L,1). But the paper does it in this way - i.e.
-                        ## adds a FC layer without an activation (somewhat like an embedding) so we'll keeep that as an option.
-                        if CONF.att_weighted_gather:
-                            with tf.variable_scope('weighted_gather'):
-                                # Gather layer may have dropout based on CONF.att_layers
-                                gather_params = tfc.FCLayerParams(CONF.att_layers).updated({'activation_fn':None, 'num_units':1})
-                                ah = tfc.FCLayer(gather_params)(ah) # output shape = (B, L, 1)
-                        else:
-                            # ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
-                            assert dim == 1 ## (B, L, 1)
+                            ah = K.squeeze(ah, axis=2) # output shape = (B, L)
 
-                        ah = K.squeeze(ah, axis=2) # output shape = (B, L)
-
-                    else: # weights not shared across L
+                        elif CONF.att_share_weights == 'convnet':
+                            ah = tfc.ConvStack(CONF.att_layers, (B,1,L,D+n))(tf.expand_dims(ah, axis=1))
+                            assert K.int_shape(ah) == (B,1,L,1)
+                            ah = tf.squeeze(ah, axis=[1,3]) # (B, L)
+                    
+                    elif CONF.att_share_weights == 'MLP': # MLP: weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
                         ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
                         ## of the L*D vector receives its own weight because the effective weight matrix here would be
@@ -176,6 +181,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         dim = CONF.att_layers.layers_units[-1]
                         assert dim == L
                         assert K.int_shape(ah) == (B, L)
+                    else:
+                        raise AttributeError('Invalid value of att_share_weights param: %s'%CONF.att_share_weights)
 
                     alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
                     # alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
