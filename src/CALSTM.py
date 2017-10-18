@@ -118,7 +118,6 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     self._LSTM_stack.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
 
-                    ## For #layers > 1 this will endup being different than the paper's implementation
                     if (CONF.att_share_weights == 'paper') or (CONF.att_share_weights == 'convnet'):
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
@@ -138,12 +137,16 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         if CONF.att_share_weights == 'paper':
                             ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dim)
                             dim = K.int_shape(ah)[-1]
-                            ## Below is roughly how it is implemented in the code released by the authors of the paper
+                            ## For #layers > 1 this will endup being different than the paper's implementation
+                            ## Below is how it is implemented in the code released by the authors of the paper
                             ##     for i in range(1, CONF.att_a_layers+1):
-                            ##         a = Dense(CONF['att_a_%d_n'%(i,)], activation=CONF.att_actv)(a)
-                            ##     for i in range(1, CONF.att_h_layers+1):
-                            ##         h = Dense(CONF['att_h_%d_n'%(i,)], activation=CONF.att_actv)(h)
-                            ##    ah = a + K.expand_dims(h, axis=1)
+                            ##         if not last_layer:
+                            ##              a = Dense(CONF['att_a_%d_n'%(i,)], activation=tanh)(a)
+                            ##         else: # last-layer
+                            ##              a = AffineTransform(CONF['att_a_%d_n'%(i,)])(a)
+                            ##     h = AffineTransform(CONF['att_h_%d_n'%(i,)])(h)
+                            ##     ah = a + K.expand_dims(h, axis=1)
+                            ##     ah = tanh(ah)
 
                             ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
                             ## Instead, one could've just ensured that the num_units of the final MLP layer was == 1
