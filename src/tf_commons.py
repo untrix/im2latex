@@ -98,7 +98,7 @@ class TensorboardParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
@@ -120,7 +120,7 @@ class DropoutParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
@@ -149,7 +149,6 @@ class CommonParams(HyperParams):
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
               iscallableOrNone(), 
-              ## Trickle down value from above
               # tf.contrib.layers.l2_regularizer(scale, scope=None)
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
@@ -177,14 +176,126 @@ class CommonParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
 CommonParamsProto = CommonParams().protoD
 
+class FCLayerParams(HyperParams):
+    proto = (
+        PD('activation_fn',
+              'The activation function to use. None signifies no activation function.',
+              ## iscallable((tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid, None)),
+              iscallableOrNone(),
+              ),
+        PD('normalizer_fn',
+              'Normalizer function to use instead of biases. If set, biases are not used.',
+              iscallableOrNone(),
+              ),
+        PD('weights_initializer',
+              'Tensorflow weights initializer function',
+              iscallable(),
+              # tf.contrib.layers.xavier_initializer()
+              # tf.contrib.layers.variance_scaling_initializer()
+              ),
+        PD('biases_initializer',
+              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+              iscallable(),
+              ## tf.zeros_initializer()
+              ),
+        PD('weights_regularizer',
+              'L1 / L2 norm regularization',
+              iscallable(), 
+              # tf.contrib.layers.l2_regularizer(scale, scope=None)
+              # tf.contrib.layers.l1_regularizer(scale, scope=None)
+              ),
+        PD('biases_regularizer',
+              'L1 / L2 norm regularization',
+              iscallableOrNone()
+              ),
+        PD('dropout', 'Dropout parameters if any.',
+              instanceofOrNone(DropoutParams)),
+        PD('tb', "Tensorboard Params.",
+           instanceofOrNone(TensorboardParams)),
+        PD('num_units',
+          "(integer): number of output units in the layer." ,
+          integer(1),
+          ),
+        )
+
+    def __init__(self, initVals=None):
+        HyperParams.__init__(self, self.proto, initVals)
+
+    def __copy__(self):
+        ## Shallow copy
+        return self.__class__(self)
+
+    def copy(self, override_vals={}):
+        ## Shallow copy
+        return self.__class__(self).updated(override_vals)
+
+class FCLayer(object):
+    def __init__(self, params, batch_input_shape=None):
+        self.my_scope = tf.get_variable_scope()
+        self._params = FCLayerParams(params)
+        self._batch_input_shape = batch_input_shape
+
+    def __call__(self, inp, layer_idx=None):
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                ## Parameter Validation
+                assert isinstance(inp, tf.Tensor)
+                if self._batch_input_shape is not None:
+                    assert K.int_shape(inp) == self._batch_input_shape
+
+                params = self._params
+                prefix = 'FC' if params.activation_fn is not None else 'Affine'
+                scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
+                with tf.variable_scope(scope_name) as var_scope:
+                    coll_w = scope_name + '/_weights_'
+                    coll_b = scope_name + '/_biases_'
+                    var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
+                    # var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
+                    assert params.weights_regularizer is not None
+                    
+                    a = tf.contrib.layers.fully_connected(
+                            inputs=inp,
+                            num_outputs = params.num_units,
+                            activation_fn = params.activation_fn,
+                            normalizer_fn = params.normalizer_fn if 'normalizer_fn' in params else None,
+                            weights_initializer = params.weights_initializer,
+                            # weights_regularizer = params.weights_regularizer,
+                            biases_initializer = params.biases_initializer,
+                            # biases_regularizer = params.biases_regularizer,
+                            variables_collections=var_colls,
+                            trainable = True
+                            )
+
+                    if self._params.dropout is not None:
+                        a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
+
+                    # For Tensorboard Summaries
+                    self._weights = tf.get_collection(coll_w)
+                    self._biases = tf.get_collection(coll_b)
+                    self._a = a
+
+                if (self._batch_input_shape):
+                    a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
+
+                return a
+
+    def create_summary_ops(self, coll_name):
+        with tf.variable_scope(self.my_scope) as var_scope:
+            with tf.name_scope(var_scope.original_name_scope):
+                params = self._params
+                if params.tb is not None:
+                    summarize_layer(self._weights, self._biases, self._a, coll_name)
+
 class MLPParams(HyperParams):
-    proto = CommonParams.proto + (
+    proto = (
+            PD('tb', "Tensorboard Params.",
+                instanceofOrNone(TensorboardParams)),
             PD('op_name',
                'Name of the layer; will show up in tensorboard visualization',
                None,
@@ -194,28 +305,10 @@ class MLPParams(HyperParams):
                "Sequence of FCLayerParams.",
                issequenceof(FCLayerParams),
                ),
-            # PD('layers_units',
-            #   "(sequence of integers): sequence of numbers denoting number of units for each layer."
-            #   "As many layers will be created as the length of the sequence",
-            #   issequenceof(int)
-            #   ),
-            # PD('layers_fns',
-            #    "(optional): Sequence of activation functions, one per layer. If left unspecified, the same activation_fn from the top-level will be used for all layers.",
-            #    instanceofOrNone(tuple)
-            #   )
         )
+
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        # if self.layers_fns is not None:
-        #     assert len(self.layers_fns) == len(self.layers_units)
-        self.layers = tuple([layer.copy().filled(self) for layer in self.layers])
-
-    # def get_layer_params(self, i):
-    #     # if self.layers_fns is None:
-    #     #     return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
-    #     # else:
-    #     #     return FCLayerParams(self).updated({'num_units': self.layers_units[i], 'activation_fn': self.layers_fns[i]})
-    #     return self.layers[i]
 
     def __copy__(self):
         ## Shallow copy
@@ -256,91 +349,40 @@ class MLPStack(object):
                 for layer in self._layers:
                     layer.create_summary_ops(coll_name)
                     
-class FCLayerParams(HyperParams):
-    proto = CommonParams.proto + (
-        PD('num_units',
-          "(integer): number of output units in the layer." ,
-          integer(1),
-          ),
-        )
-
-    def __init__(self, initVals=None):
-        HyperParams.__init__(self, self.proto, initVals)
-
-    def __copy__(self):
-        ## Shallow copy
-        return self.__class__(self)
-
-    def copy(self, override_vals=None):
-        ## Shallow copy
-        return self.__class__(self).updated(override_vals)
-
-class FCLayer(object):
-    def __init__(self, params, batch_input_shape=None):
-        self.my_scope = tf.get_variable_scope()
-        self._params = FCLayerParams(params)
-        self._batch_input_shape = batch_input_shape
-
-    def __call__(self, inp, layer_idx=None):
-        with tf.variable_scope(self.my_scope) as var_scope:
-            with tf.name_scope(var_scope.original_name_scope):
-                ## Parameter Validation
-                assert isinstance(inp, tf.Tensor)
-                if self._batch_input_shape is not None:
-                    assert K.int_shape(inp) == self._batch_input_shape
-
-                params = self._params
-                prefix = 'FC' if params.activation_fn is not None else 'Affine'
-                scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
-                with tf.variable_scope(scope_name) as var_scope:
-                    coll_w = scope_name + '/_weights_'
-                    coll_b = scope_name + '/_biases_'
-                    var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
-                    # var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
-                    assert params.weights_regularizer is not None
-                    
-                    a = tf.contrib.layers.fully_connected(
-                            inputs=inp,
-                            num_outputs = params.num_units,
-                            activation_fn = params.activation_fn,
-                            normalizer_fn = params.normalizer_fn,
-                            weights_initializer = params.weights_initializer,
-                            # weights_regularizer = params.weights_regularizer,
-                            biases_initializer = params.biases_initializer,
-                            # biases_regularizer = params.biases_regularizer,
-                            variables_collections=var_colls,
-                            trainable = True
-                            )
-
-                    if self._params.dropout is not None:
-                        a = DropoutLayer(self._params.dropout, self._batch_input_shape)(a)
-
-                    # For Tensorboard Summaries
-                    self._weights = tf.get_collection(coll_w)
-                    self._biases = tf.get_collection(coll_b)
-                    self._a = a
-
-                if (self._batch_input_shape):
-                    a.set_shape(self._batch_input_shape[:-1] + (params.num_units,))
-
-                return a
-
-    def create_summary_ops(self, coll_name):
-        with tf.variable_scope(self.my_scope) as var_scope:
-            with tf.name_scope(var_scope.original_name_scope):
-                params = self._params
-                if params.tb is not None:
-                    summarize_layer(self._weights, self._biases, self._a, coll_name)
-
 class ConvLayerParams(HyperParams):
     proto = (
-        CommonParamsProto.tb,
-        CommonParamsProto.activation_fn,
-        CommonParamsProto.normalizer_fn,
-        CommonParamsProto.weights_initializer,
-        CommonParamsProto.biases_initializer,
-        CommonParamsProto.weights_regularizer,
-        CommonParamsProto.biases_regularizer,
+        PD('tb', "Tensorboard Params.",
+           instanceofOrNone(TensorboardParams)),
+        PD('activation_fn',
+              'The activation function to use. None signifies no activation function.',
+              ## iscallable((tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid, None)),
+              iscallableOrNone(),
+              ),
+        PD('normalizer_fn',
+              'Normalizer function to use instead of biases. If set, biases are not used.',
+              iscallableOrNone(),
+              ),
+        PD('weights_initializer',
+              'Tensorflow weights initializer function',
+              iscallable(),
+              # tf.contrib.layers.xavier_initializer()
+              # tf.contrib.layers.variance_scaling_initializer()
+              ),
+        PD('biases_initializer',
+              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+              iscallable(),
+              ## tf.zeros_initializer()
+              ),
+        PD('weights_regularizer',
+              'L1 / L2 norm regularization',
+              iscallable(), 
+              # tf.contrib.layers.l2_regularizer(scale, scope=None)
+              # tf.contrib.layers.l1_regularizer(scale, scope=None)
+              ),
+        PD('biases_regularizer',
+              'L1 / L2 norm regularization',
+              iscallableOrNone()
+              ),
         PD('padding',
             'Convnet padding: SAME or VALID',
             ('SAME', 'VALID')
@@ -364,7 +406,9 @@ class ConvLayerParams(HyperParams):
 ConvLayerParamsProto = ConvLayerParams().protoD
 
 class ConvStackParams(HyperParams):
-    proto = ConvLayerParams.proto + (
+    proto = (
+        PD('tb', "Tensorboard Params.",
+           instanceofOrNone(TensorboardParams)),
         PD('op_name',
             'Name of the stack; will show up in tensorboard visualization',
             None,
@@ -376,11 +420,9 @@ class ConvStackParams(HyperParams):
             instanceof(tuple)
         ),
     )
+
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        ## Unset properties in self.layers should be filled with defaults from self
-        self.layers = tuple([layer.copy().filled(self)  for layer in self.layers])
-            
 
 
 class ConvStack(object):
@@ -545,7 +587,7 @@ class ActivationParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 
@@ -627,7 +669,7 @@ class RNNParams(HyperParams):
         ## Shallow copy
         return self.__class__(self)
 
-    def copy(self, override_vals=None):
+    def copy(self, override_vals={}):
         ## Shallow copy
         return self.__class__(self).updated(override_vals)
 

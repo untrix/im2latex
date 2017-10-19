@@ -185,9 +185,9 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     alpha = ah
 
                     ## Context Modulator
-                    if CONF.ctx_modulator is not None:
+                    if CONF.att_modulator is not None:
                         with tf.variable_scope('CtxModulator'):
-                            beta = tfc.MLPStack(CONF.ctx_modulator, self.batch_output_shape )(h_prev)
+                            beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
 
                     return alpha
 

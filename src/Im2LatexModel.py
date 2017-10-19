@@ -197,7 +197,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ## First layer of output MLP
                     if CONF.output_reuse_embeddings: ## Follow the paper.
-                        affine_params = tfc.FCLayerParams(CONF.output_layers).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
+                        affine_params = tfc.FCLayerParams(CONF.output_first_layer).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
                         ## Affine transformation of h_t and z_t from size n/D to bring it down to m
                         o_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
                         ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
@@ -207,16 +207,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         o_t = tfc.Activation(activation_params, batch_input_shape=(B,m))(o_t)
                         dim = m
                         ## DROPOUT: Paper has one dropout layer here
-                        if CONF.output_layers.dropout is not None:
+                        if CONF.output_first_layer.dropout is not None:
                             o_t = tfc.DropoutLayer(CONF.output_layers.dropout, batch_input_shape=(B,m))(o_t)
                     else: ## Use a straight MLP Stack
                         o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
                         dim = m+n+D
 
                     ## Regular MLP layers
-                    assert CONF.output_layers.layers_units[-1] == Kv
+                    assert CONF.output_layers.layers[-1].num_units == Kv
                     logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
-                    ## DROPOUT: Paper has a dropout layer after each FC layer before the softmax layer
+                    ## DROPOUT: Paper has a dropout layer after each hidden FC layer (i.e. all excluding the softmax layer)
 
                     assert K.int_shape(logits_t) == (B, Kv)
                     return tf.nn.softmax(logits_t, name='yProbs'), logits_t
@@ -298,7 +298,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
                     a = K.mean(a, axis=1) # final shape = (B, D)
                     ## TODO: CHECK DROPOUT: The paper has a dropout layer after each hidden layer
-                    if self.C.init_model_hidden is not None:
+                    if ('init_model_hidden' in self.C) and (self.C.init_model_hidden is not None):
                         a = tfc.MLPStack(self.C.init_model_hidden)(a)
 
                     counter = itertools.count(0)
@@ -1010,6 +1010,11 @@ def sync_training_towers(hyper, tower_ops, global_step):
             cost = ctc_loss + alpha_penalty + reg_loss
         else:
             cost = log_likelihood + alpha_penalty + reg_loss
+
+        grads = gather('grads')
+        for g in grads:
+            assert g is not None
+            # print g
 
         grads = average_gradients(gather('grads'))
         with tf.variable_scope('optimizer'):

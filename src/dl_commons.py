@@ -252,11 +252,15 @@ class NoneProperties(Properties):
         except KeyError:
             return None
 
+class Undefined(object):
+    pass
+_undefined = Undefined()
+
 class ParamDesc(Properties):
     """
     A property descriptor.
     """
-    def __init__(self, name, text, validator=None, default=None):
+    def __init__(self, name, text, validator=None, default=_undefined):
         """
         @name = name of property,
         @text = textual description,
@@ -279,21 +283,34 @@ class ParamDesc(Properties):
         # elif isinstance(default, LambdaVal):
         #     raise AttributeError('Attempt to set LambdaVal as default for property %s. Not allowed.'%name)
 
-        Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
+        if default == _undefined:
+            Properties.__init__(self, {'name':name, 'text':text, 'validator':validator})
+        else:
+            # if default is None:
+            #     print 'WARNING: Setting None default value for property %s'%name
+
+            Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
+        
         self.freeze()
+
+    # def defaultIsSet(self):
+    #     """
+    #     Returns True if a default value has been set else returns False.
+    #     Note that if the default value was None and if None was a valid value (per the validator if set)
+    #     then this method will return True.
+    #     """
+    #     if self.default is not None:
+    #         return True
+    #     elif self.validator is None:
+    #         return True
+    #     else:
+    #         return None in self.validator
 
     def defaultIsSet(self):
         """
         Returns True if a default value has been set else returns False.
-        Note that if the default value was None and if None was a valid value (per the validator if set)
-        then this method will return True.
         """
-        if self.default is not None:
-            return True
-        elif self.validator is None:
-            return True
-        else:
-            return None in self.validator
+        return 'default' in self
 
 ## A shorter alias of ParamDesc
 PD = ParamDesc
@@ -321,7 +338,7 @@ class Params(Properties):
     from class Properties.
     """
 
-    def __init__(self, prototype, initVals=None, seal=True):
+    def __init__(self, prototype, initVals=None, seal=False):
         """
         Takes property descriptors and their values. After initialization, no new params
         may be created - i.e. the object is sealed (see class Properties). The
@@ -342,8 +359,9 @@ class Params(Properties):
             property values will be initialized from the prototype object.
             Should be either a dictionary of name:value pairs or unspecified (None).
 
-        @param seal (bool): seals the object after initialization. Not really needed but
-            maintained in order to keep the old behaviour.
+        @param seal (bool): seals the object after initialization. Not really needed for
+            this class since the keys are already fixed by the prototype. Will get
+            depricated soon.
 
         If a value (even default value) is a callable (i.e. function-like) but is
         expected to be a non-callable (i.e. validator does not derive from _iscallable)
@@ -657,16 +675,16 @@ class Params(Properties):
         """ WARNING: Partial implementation: Delegates to  Properties.from_pickle and returns a Properties object. """
         return Properties.from_pickle(*paths)
 
-    def filled(self, other={}):
-        """
-        Sets unset or None properties of self with values in other if present.
-        """
-        for prop in self.protoS:
-            # if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
-            if (not prop.name in self) and (prop.name in other):
-                self[prop.name] = other[prop.name]
+    # def filled(self, other={}):
+    #     """
+    #     Sets unset or None properties of self with values in other if present.
+    #     """
+    #     for prop in self.protoS:
+    #         # if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
+    #         if (not prop.name in self) and (prop.name in other):
+    #             self[prop.name] = other[prop.name]
 
-        return self
+    #     return self
 
     @property
     def protoS(self):

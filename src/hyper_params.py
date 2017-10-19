@@ -34,7 +34,7 @@ import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
-from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams)
+from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams, DropoutParams, TensorboardParams, RNNParams)
 
 def setLogLevel(logger, level):
     logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
@@ -138,13 +138,12 @@ class GlobalParams(dlc.HyperParams):
            integer(1),
            512),
         PD('tb', "Tensorboard Params.",
-           instanceof(tfc.TensorboardParams),
-        #    tfc.TensorboardParams()
+           instanceof(TensorboardParams),
            ),
         PD('dropout',
            'Dropout parameters if any - global. Absence of this property '
            'signals no dropouts. If this is non-None, then weights regularizer should be None.',
-           instanceofOrNone(tfc.DropoutParams)
+           instanceofOrNone(DropoutParams)
            ),
         PD('dtype',
            'tensorflow float type for the entire model.',
@@ -195,7 +194,8 @@ class GlobalParams(dlc.HyperParams):
             False),
         PD('biases_regularizer',
               'L1 / L2 norm regularization',
-              iscallable(noneokay=True), None),
+              iscallable(noneokay=True), 
+              None),
         PD('use_peephole',
             '(boolean): whether to employ peephole connections in the decoder LSTM',
             (True, False),
@@ -217,7 +217,7 @@ class CALSTMParams(dlc.HyperParams):
     proto = GlobalParams.proto + (
         ### Attention Model Params ###
             PD('att_layers', 'MLP or Convnet parameters for attention model', 
-                dlc.either(instanceof(tfc.MLPParams), instanceof(tfc.ConvStackParams)),
+                dlc.either(instanceof(MLPParams), instanceof(ConvStackParams)),
                 ## Set dynamically in self._trickledown()
                 ),
             PD('att_model',
@@ -235,11 +235,11 @@ class CALSTMParams(dlc.HyperParams):
                'In the paper this scalar-value is called "beta" and in their code it is called the "selector". They implemented it as the output of a sigmoid and hence a value between 0 and 1.'
                "We'll use a generic MLP stack with either a sigmoid activation in the last layer or a relu (in wchich case the modulator can take values greater than 1). "
                "Input to this MLP is the h(t-1) - the previous LSTM output.",
-               instanceofOrNone(tfc.MLPParams),
+               instanceofOrNone(MLPParams),
                ),
         ### Decoder LSTM Params ###
             PD('decoder_lstm', 'Decoder LSTM parameters. Multiple LSTM layers are supported.',
-               instanceof(tfc.RNNParams),
+               instanceof(RNNParams),
                ## Set dynamically in self._trickledown()
                )
         )
@@ -267,29 +267,28 @@ class CALSTMParams(dlc.HyperParams):
             self.att_layers = ConvStackParams({
                 'op_name': '1x1Conv',
                 'tb': self.tb,
-                'activation_fn': tf.nn.relu,
-                'weights_initializer': self.weights_initializer,
-                'biases_initializer': self.biases_initializer,
-                'weights_regularizer': self.weights_regularizer,
-                'biases_regularizer': self.biases_regularizer,
-                'padding': 'VALID',
+                # 'activation_fn': tf.nn.relu,
+                # 'weights_initializer': self.weights_initializer,
+                # 'biases_initializer': self.biases_initializer,
+                # 'weights_regularizer': self.weights_regularizer,
+                # 'biases_regularizer': self.biases_regularizer,
+                # 'padding': 'VALID',
                 'layers': (
-                    ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.softmax}).freeze()
+                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
+                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
+                    ConvLayerParams(self).updated({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.softmax}).freeze()
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].output_channels == 1, 'num output_channels of the final layer of the att_convnet should equal 1'
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
 
         elif self.att_model == 'paper':
-            self.att_layers = tfc.MLPParams(self).updated({
-                'activation_fn': tf.nn.tanh,
+            self.att_layers = MLPParams(self).updated({
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
                 'layers': (
-                    FCLayerParams({'num_units': self.D}).freeze(),
-                    FCLayerParams({'num_units': self.D}).freeze(),
-                    FCLayerParams({'num_units': 1, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
                     )
                 # 'layers_units': (self.D, self.D, 1),
                 # 'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax)
@@ -300,31 +299,29 @@ class CALSTMParams(dlc.HyperParams):
             assert self.att_layers.layers[-1].dropout == None
 
         elif self.att_model == 'MLP':
-            self.att_layers = tfc.MLPParams(self).updated({
-                'activation_fn': tf.nn.tanh,
+            self.att_layers = MLPParams(self).updated({
                 'layers': (
-                    FCLayerParams({'num_units': self.L}).freeze(),
-                    FCLayerParams({'num_units': self.L}).freeze(),
-                    FCLayerParams({'num_units': self.L, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
                     )
-                # 'layers_units': (self.L, self.L, self.L),
-                # 'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax),
-                ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
             assert self.att_layers.layers[-1].dropout == None
 
+        print 'DEBUG: First FCLayerparams of att_layers.layers', self.att_layers.layers[0]
+
         #### Attention Modulator ####
-        self.att_modulator = tfc.MLPParams(self).updated({
+        self.att_modulator = MLPParams(self).updated({
             ## paper's code uses 1 layer only. The last-layer must have only one neuron.
             'layers': (
-                FCLayerParams({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
+                FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
                 )
             }).freeze()
 
         #### LSTM-Stack ####
-        self.decoder_lstm = tfc.RNNParams(self).updated({
+        self.decoder_lstm = RNNParams(self).updated({
             'B': self.B,
             'i': self.m + self.D, ## size of input vector + z_t.
                 ## paper uses a value of n=1000
@@ -469,12 +466,16 @@ class Im2LatexModelParams(dlc.HyperParams):
                boolean,
                True
                ),
+            PD('output_first_layer', "Some params of first layer of output MLP if output_reuse_embeddings==True",
+               instanceof(FCLayerParams)
+               ## Value set dynamically inside self._trickledown() iff output_reuse_embeddings==True
+               ),
             PD('output_layers',
                 "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
                 "must have num_units = K. If output_reuse_embeddings==True, an additional initial layer is created "
                 "with num_units = m and activtion tanh. Therefore the min number of layers is 2 in that case. "
                 "Note: In the paper all layers have num_units=m except the last(softmax) layer.",
-                instanceof(tfc.MLPParams),
+                instanceof(MLPParams),
                 ## Value set dynamically inside self._trickledown()
                 ),
         ### Initializer MLP ###
@@ -483,11 +484,11 @@ class Im2LatexModelParams(dlc.HyperParams):
                "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
                "Hence, this is a 'multi-headed' MLP because it has multiple top-layers."
                "By default their implementation has num_hidden_layers==0 (i.e. n_layers_init==1).",
-               instanceofOrNone(tfc.MLPParams),
+               instanceofOrNone(MLPParams),
                 ## Value set dynamically inside self._trickledown()
                ),
             PD('init_model_final_layers', '',
-               instanceof(tfc.FCLayerParams),
+               instanceof(FCLayerParams),
                 ## Value set dynamically inside self._trickledown()
                ),
         ### Loss / Cost Layer ###decoder_lstm
@@ -525,37 +526,39 @@ class Im2LatexModelParams(dlc.HyperParams):
         Call at the end of __init__ and end of update.
         """
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
-        self.output_layers = tfc.MLPParams(self).updated({
+        if self.output_reuse_embeddings:
+            self.output_first_layer = FCLayerParams(self).freeze() ## Other params are set inside the Im2latexModel code
+
+        self.output_layers = MLPParams(self).updated({
             ## One layer with num_units = m is added if output_reuse_embeddings == True
             ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-            'op_name': 'yLogits_MLP'
-            'activation_fn': tf.nn.relu, # paper has it set to relu for all but the softmax layer
+            'op_name': 'yLogits_MLP',
+            # 'activation_fn': tf.nn.relu,
             'layers': (
+                ## paper has activation set to relu for all but the softmax layer
                 ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
-                FCLayerParams({'num_units': self.K, 'activation_fn':None}).freeze(),
-            )
-            # 'layers_units': (self.K,),
-            # 'layers_fns': (None,)
+                FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
+                )
             }).freeze()
-        assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'.
+        assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'
         if (not self.output_reuse_embeddings):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         if False : ## No hidden init layers by default
-            self.init_model_hidden = tfc.MLPParams(self).updated({
-                ## paper sets hidden activations=relu and final=tanh
-                'activation_fn': tf.nn.relu,
+            self.init_model_hidden = MLPParams(self).updated({
+                # 'activation_fn': tf.nn.relu,
                 'layers': (
+                    ## paper sets hidden activations=relu and final=tanh
                     ## The paper's source sets all hidden units to D
-                    FCLayerParams({'num_units': self.D}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.relu}).freeze(),
                 )
-                # 'layers_units': (self.D,),
                 }).freeze()
 
-        self.init_model_final_layers = tfc.FCLayerParams(self).updated({
+        self.init_model_final_layers = FCLayerParams(self).updated({
             ## num_units to be set dynamically in the code
             ## paper sets hidden activations=relu and final=tanh
-            'activation_fn': tf.nn.tanh
+            'activation_fn': tf.nn.tanh,
+            'dropout': None
             }).freeze()
 
     def __copy__(self):
@@ -586,7 +589,7 @@ def make_hyper(initVals={}, freeze=True):
             'weights_initializer': globals.weights_initializer,
             'biases_initializer': globals.biases_initializer,
             'weights_regularizer': globals.weights_regularizer,
-            'biases_regularizer': globals.biases_regularizer,input_
+            'biases_regularizer': globals.biases_regularizer,
             'padding': 'SAME',
             'layers': (
                 ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
