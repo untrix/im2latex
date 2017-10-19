@@ -26,7 +26,6 @@ import os
 import logging
 # from six.moves import cPickle as pickle
 import dill as pickle
-import dl_commons as dlc
 import numpy as np
 import h5py
 from pprint import pprint, pformat

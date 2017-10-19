@@ -123,7 +123,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     self.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
 
-                    if (CONF.att_model == 'paper') or (CONF.att_model == '1x1_conv'):
+                    if (CONF.att_model == 'MLP_shared') or (CONF.att_model == '1x1_conv'):
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
@@ -134,7 +134,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         a = tf.identity(a, name='a')
                         ## Concatenate a and h. Final shape = (B, L, D+n)
                         ah = tf.concat([a,h], -1, name='a_concat_h'); # (B, L, D+n)
-                        if CONF.att_model == 'paper':
+                        if CONF.att_model == 'MLP_shared':
                             ## For #layers > 1 this implementation will endup being different than the paper's implementation because they only 
                             ## Below is how it is implemented in the code released by the authors of the paper
                             ##     for i in range(1, CONF.att_a_layers+1):
@@ -163,14 +163,14 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             assert K.int_shape(ah) == (B,1,L,1)
                             ah = tf.squeeze(ah, axis=[1,3]) # (B, L)
                     
-                    elif CONF.att_model == 'MLP': # MLP: weights not shared across L
+                    elif CONF.att_model == 'MLP_full': # MLP: weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
                         ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
                         ## of the L*D vector receives its own weight because the effective weight matrix here would be
                         ## shape (L*D, num_dense_units) as compared to (D, num_dense_units) as in the shared_weights case
 
                         ## Concatenate a and h. Final shape will be (B, L*D+n)
-                        with tf.variable_scope('a_flatten_concat_h'):
+                        with tf.variable_scope('a_h'):
                             a_ = K.batch_flatten(a) # (B, L*D)
                             a_.set_shape((B, L*D)) # Flatten loses shape info
                             ah = K.concatenate([a_, h]) # (B, L*D+n)
@@ -180,16 +180,14 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     else:
                         raise AttributeError('Invalid value of att_model param: %s'%CONF.att_model)
 
-                    # alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
-                    # assert K.int_shape(alpha) == (B, L)
-                    alpha = ah
+                    alpha = tf.identity(ah, name='alpha')
 
-                    ## Context Modulator
+                    ## Attention Modulator
                     if CONF.att_modulator is not None:
-                        with tf.variable_scope('CtxModulator'):
-                            beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
+                        beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
+                        beta = tf.identity(beta, name='beta')
 
-                    return alpha
+                    return alpha, beta
 
     def _decoder_lstm(self, Ex_t, z_t, lstm_states_t_1):
         """Represents invocation of the decoder lstm. (h_t, lstm_states_t) = *(z_t|Ex_t, lstm_states_t_1)"""
@@ -241,12 +239,12 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
                 ################ Attention Model ################
-                alpha_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
+                alpha_t, beta_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
 
                 ################ Soft deterministic attention: z = alpha-weighted mean of a ################
                 ## (B, L) batch_dot (B,L,D) -> (B, D)
                 with tf.variable_scope('Phi'):
-                    z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
+                    z_t = beta_t * K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
                     z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
 
                 ################ Decoder Layer ################

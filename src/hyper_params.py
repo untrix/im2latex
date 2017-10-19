@@ -33,8 +33,9 @@ import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
-                        iscallable, iscallableOrNone, LambdaVal, instanceofOrNone)
-from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams, DropoutParams, TensorboardParams, RNNParams)
+                        iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
+from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams, 
+                        DropoutParams, TensorboardParams, RNNParams)
 
 def setLogLevel(logger, level):
     logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
@@ -222,13 +223,14 @@ class CALSTMParams(dlc.HyperParams):
                 ),
             PD('att_model',
                'Whether the attention model should share weights across the "L" image locations - i.e. perform a 1x1 convolution - or use a straight MLP.'
-               'Choosing "paper" conforms to the paper resulting in a (D+n,att_1_n) kernel (similar to 1x1 convolution but implemented as an MLPStack).'
+               'Choosing "MLP_shared" conforms to the paper resulting in a (D+n,att_1_n) kernel (similar to 1x1 convolution but implemented as an MLPStack).'
                'Choosing "1x1_conv" results in a 1x1 convolution-stack implementation instead of shared-MLP as above. The model should be identical to that obtained'
-               'by setting att_model=paper (plus equivalent num_units and same activation functions)'
-               'Choosing "MLP" will result in a standard MLP with (L*D+n,att_1_n) weight matrix. That is, the kernel will receive input from all the "L" '
-               "feature vectors of image feature-map combined.",
-               ('paper','1x1_conv', 'MLP'),
-               'paper'),
+               'by setting att_model=MLP_shared (plus equivalent num_units and same activation functions)'
+               'Choosing "MLP_full" will result in a standard MLP whose input is the entire flattened image feature vector concatenated with h(t-1), resulting '
+               'in a vector size (L*D + n) and a weight matrix of size (L*D+n,att_1_n). That is, the kernel will receive input from all the "L" '
+               "locations of image feature-map (in addition to h(t-1)) as against only one location in the MLP_shared or 1x1_conv cases.",
+               ('MLP_shared','1x1_conv', 'MLP_full'),
+               'MLP_shared'),
             PD('att_modulator',
                'A neural-network whose scalar output modulates the soft context signal "z_t" in comparison to the embedded-label signal fed into the decoder LSTM.'
                'Serves as an "equalizer knob" that either amplifies or attenuates the context input signal versus the embedded-label input signal to the LSTM.'
@@ -282,24 +284,23 @@ class CALSTMParams(dlc.HyperParams):
             assert self.att_layers.layers[-1].output_channels == 1, 'num output_channels of the final layer of the att_convnet should equal 1'
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
 
-        elif self.att_model == 'paper':
+        elif self.att_model == 'MLP_shared':
             self.att_layers = MLPParams(self).updated({
+                'op_name': 'MLP_shared',
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
                     )
-                # 'layers_units': (self.D, self.D, 1),
-                # 'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax)
-                ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == 1, 'num_units of the final layer of the att_kernel should equal 1'
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
             assert self.att_layers.layers[-1].dropout == None
 
-        elif self.att_model == 'MLP':
+        elif self.att_model == 'MLP_full':
             self.att_layers = MLPParams(self).updated({
+                'op_name': 'MLP_full',
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
@@ -310,11 +311,10 @@ class CALSTMParams(dlc.HyperParams):
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
             assert self.att_layers.layers[-1].dropout == None
 
-        print 'DEBUG: First FCLayerparams of att_layers.layers', self.att_layers.layers[0]
-
         #### Attention Modulator ####
         self.att_modulator = MLPParams(self).updated({
-            ## paper's code uses 1 layer only. The last-layer must have only one neuron.
+            'op_name': 'beta_MLP',
+            ## paper's code uses 1 layer only. The last-layer must have only one neuron os that the output is scalar.
             'layers': (
                 FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
                 )
@@ -467,7 +467,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                True
                ),
             PD('output_first_layer', "Some params of first layer of output MLP if output_reuse_embeddings==True",
-               instanceof(FCLayerParams)
+               instanceof(Properties)
                ## Value set dynamically inside self._trickledown() iff output_reuse_embeddings==True
                ),
             PD('output_layers',
@@ -526,25 +526,47 @@ class Im2LatexModelParams(dlc.HyperParams):
         Call at the end of __init__ and end of update.
         """
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
-        if self.output_reuse_embeddings:
-            self.output_first_layer = FCLayerParams(self).freeze() ## Other params are set inside the Im2latexModel code
 
-        self.output_layers = MLPParams(self).updated({
-            ## One layer with num_units = m is added if output_reuse_embeddings == True
-            ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-            'op_name': 'yLogits_MLP',
-            # 'activation_fn': tf.nn.relu,
-            'layers': (
-                ## paper has activation set to relu for all but the softmax layer
-                ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
-                FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
-                )
-            }).freeze()
+        ######## Output Model ########
+        if self.output_reuse_embeddings:
+            self.output_first_layer = FCLayerParams(self).updated({
+                'num_units': self.m,
+                'activation_fn': tf.nn.tanh,
+                }).freeze()
+
+            self.output_layers = MLPParams(self).updated({
+                ## One layer with num_units = m is added if output_reuse_embeddings == True
+                'op_name': 'yLogits_MLP',
+                # 'activation_fn': tf.nn.relu,
+                'layers': (
+                    ## paper has activation set to relu for all but the softmax layer
+                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
+                    # FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
+                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
+                    )
+                }).freeze()
+        else:
+            self.output_layers = MLPParams(self).updated({
+                ## One layer with num_units = m is added if output_reuse_embeddings == True
+                'op_name': 'yLogits_MLP',
+                # 'activation_fn': tf.nn.relu,
+                'layers': (
+                    ## paper has activation set to relu for all but the softmax layer
+                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
+                    # FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
+                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
+                    )
+                }).freeze()
+            
         assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'
         if (not self.output_reuse_embeddings):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
-        if False : ## No hidden init layers by default
+        ######## Init Model ########
+        if False: ## No hidden init layers by default
             self.init_model_hidden = MLPParams(self).updated({
                 # 'activation_fn': tf.nn.relu,
                 'layers': (
@@ -625,8 +647,6 @@ def make_hyper(initVals={}, freeze=True):
     if freeze:
         HYPER.freeze()
 
-#    print 'Hyper Params = '
-#    print HYPER
     return HYPER
 
 # @staticmethod of CALSTMParams

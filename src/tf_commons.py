@@ -26,6 +26,7 @@ Tested on python 2.7
 import os
 import time
 import numpy as np
+from data_commons import logger
 import dl_commons as dlc
 import tensorflow as tf
 import keras
@@ -579,8 +580,17 @@ class DropoutLayer(object):
                     return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
 
 class ActivationParams(HyperParams):
-    proto = (CommonParamsProto.activation_fn,
-             CommonParamsProto.tb)
+    proto = (
+        PD('tb', "Tensorboard Params.",
+           instanceofOrNone(TensorboardParams)),
+        PD('activation_fn',
+            'The activation function to use.',
+            ## iscallable((tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid, None)),
+            iscallable(),
+            ),
+        PD('dropout', 'Dropout parameters if any.',
+           instanceof(DropoutParams)),
+        )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
     def __copy__(self):
@@ -608,10 +618,13 @@ class Activation(object):
                 params = self._params
                 scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
                 with tf.variable_scope(scope_name):
-                    h = params.activation_fn(inp)
+                    a = params.activation_fn(inp)
 
-                self._a = h
-                return h
+                if ('dropout' in params) and (params.dropout is not None):
+                    a = DropoutLayer(params.dropout, self._batch_input_shape)(a)
+
+                self._a = a
+                return a
 
     def create_summary_ops(self, coll_name):
         with tf.variable_scope(self.my_scope) as var_scope:
@@ -849,13 +862,13 @@ def sizeofVar(var):
     return np.prod(shape)
 
 def printVars(name, coll):
-    print name
+    logger.critical(name)
     total_n = 0
     for var in tf.trainable_variables():
         n = sizeofVar(var)
         total_n += n
-        print var.name, K.int_shape(var), 'num_params = ', n
-    print '\nTotal number of variables = ', total_n
+        logger.critical("%s %s num_params = %d", var.name, K.int_shape(var), n)
+    logger.critical('Total number of variables = %d', total_n)
     return total_n
 
 def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None,  space_token=None):

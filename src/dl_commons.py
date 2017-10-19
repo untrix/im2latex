@@ -26,7 +26,7 @@ import inspect
 import pprint
 import numpy as np
 import data_commons as dtc
-import logging
+from data_commons import logger
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -275,13 +275,8 @@ class ParamDesc(Properties):
         without fear of modification.
         """
 
-        # if isinstance(default, Properties):
-        #     if not default.isFrozen():
-        #         raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
         if isMutable(default):
             raise AttributeError('ParamDesc.default values must be immutable! Property name: %s.'%name)
-        # elif isinstance(default, LambdaVal):
-        #     raise AttributeError('Attempt to set LambdaVal as default for property %s. Not allowed.'%name)
 
         if default == _undefined:
             Properties.__init__(self, {'name':name, 'text':text, 'validator':validator})
@@ -906,10 +901,10 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
         trunc = np_seq[:seq_len]
         if trunc[-1] != 0:
             trunc = np.append(trunc, [0])
-            print('WARNING: No EOS tokens in sequence of length %d'%seq_len)
+            logger.warn('No EOS tokens in sequence of length %d'%seq_len)
         elif trunc[-2] == 0:
             trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
-            print('WARNING: More than one EOS tokens in sequence of length %d'%seq_len)
+            logger.warn('More than one EOS tokens in sequence of length %d'%seq_len)
 
         squashed = trunc[trunc != remove_val]
         sq_batch.append(squashed.tolist())

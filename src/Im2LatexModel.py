@@ -197,18 +197,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ## First layer of output MLP
                     if CONF.output_reuse_embeddings: ## Follow the paper.
-                        affine_params = tfc.FCLayerParams(CONF.output_first_layer).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
-                        ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-                        o_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
-                        ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
-                        o_t = o_t + Ex_t # Paper does not multiply this with weights presumably becasue its been already transformed by the embedding-weights.
-                        ## non-linearity for the first layer
-                        activation_params = tfc.ActivationParams(CONF).updated({'activation_fn': tf.nn.tanh})
-                        o_t = tfc.Activation(activation_params, batch_input_shape=(B,m))(o_t)
-                        dim = m
-                        ## DROPOUT: Paper has one dropout layer here
-                        if CONF.output_first_layer.dropout is not None:
-                            o_t = tfc.DropoutLayer(CONF.output_layers.dropout, batch_input_shape=(B,m))(o_t)
+                        with tf.variable_scope('FirstLayer'):
+                            affine_params = tfc.FCLayerParams(CONF.output_first_layer).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
+                            ## Affine transformation of h_t and z_t from size n/D to bring it down to m
+                            h_z_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+                            ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
+                            o_t = h_z_t + Ex_t # Paper does not multiply this with weights presumably becasue its been already transformed by the embedding-weights.
+                            ## non-linearity for the first layer
+                            o_t = tfc.Activation(tfc.ActivationParams(CONF.output_first_layer), batch_input_shape=(B,m))(o_t)
+                            dim = m
+                            # ## DROPOUT: Paper has one dropout layer here
+                            # if CONF.output_first_layer.dropout is not None:
+                            #     o_t = tfc.DropoutLayer(CONF.output_first_layer.dropout, batch_input_shape=(B,m))(o_t)
                     else: ## Use a straight MLP Stack
                         o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
                         dim = m+n+D
@@ -219,7 +219,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## DROPOUT: Paper has a dropout layer after each hidden FC layer (i.e. all excluding the softmax layer)
 
                     assert K.int_shape(logits_t) == (B, Kv)
-                    return tf.nn.softmax(logits_t, name='yProbs'), logits_t
+                    yProbs = tf.identity(tf.nn.softmax(logits_t), name='yProbs')
+                    return yProbs, logits_t
 
     @property
     def output_size(self):
@@ -297,7 +298,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
                     ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
                     a = K.mean(a, axis=1) # final shape = (B, D)
-                    ## TODO: CHECK DROPOUT: The paper has a dropout layer after each hidden layer
+                    ## DROPOUT: The paper has a dropout layer after each hidden layer
                     if ('init_model_hidden' in self.C) and (self.C.init_model_hidden is not None):
                         a = tfc.MLPStack(self.C.init_model_hidden)(a)
 
@@ -318,7 +319,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                         return zs._replace(calstm_states=cs)
 
-                    with tf.variable_scope('Output_Layers'):
+                    with tf.variable_scope('Top_Layers'):
                         self._init_FC_scope = tf.get_variable_scope()
                         zero_state = self.zero_state(batchsize, dtype=self.C.dtype)
                         init_state = zero_to_init_state(zero_state, counter)
@@ -561,7 +562,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ########### WARNING: ctc_beam_search_decoder will discard spaces when use_ctc_loss == False. Otherwise spaces will *not* be discarded. ###########
                     decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width, 
                                                                           top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
-                    print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
+                    # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
                     ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=0) # (B, T)
                     ctc_decoded_ids.set_shape((B, None))
                     ## assert len(K.int_shape(ctc_decoded_ids)) == (B, None), 'got ctc_decoded_ids shape = %s'%(K.int_shape(ctc_decoded_ids),)
@@ -1010,11 +1011,6 @@ def sync_training_towers(hyper, tower_ops, global_step):
             cost = ctc_loss + alpha_penalty + reg_loss
         else:
             cost = log_likelihood + alpha_penalty + reg_loss
-
-        grads = gather('grads')
-        for g in grads:
-            assert g is not None
-            # print g
 
         grads = average_gradients(gather('grads'))
         with tf.variable_scope('optimizer'):
