@@ -63,16 +63,20 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 
     @property
     def output_size(self):
-        # h_t
+        # size of h_t
         return self._LSTM_stack.output_size
 
+    @property
+    def batch_output_shape(self):
+        ## batch-shape of h_t taking beamwidth into account
+        return (self.ActualBatchSize, self._LSTM_stack.output_size)
+    
     @property
     def state_size(self):
         L = self.C.L # sizeof alpha
         D = self.C.D # size of z
 
         # must match CALSTMState
-#        return CALSTMState(self._LSTM_stack.output_size, self._LSTM_stack.state_size, L, D)
         return CALSTMState(self._LSTM_stack.state_size, L, D)
 
     def assertOutputShape(self, output):
@@ -80,7 +84,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         Asserts that the shape of the tensor is consistent with the stack's output shape.
         For e.g. the output shape is o then the input-tensor should be of shape (B,o)
         """
-        assert (self.ActualBatchSize, self._LSTM_stack.output_size) == K.int_shape(output)
+        # assert (self.ActualBatchSize, self._LSTM_stack.output_size) == K.int_shape(output)
+        assert K.int_shape(output) == self.batch_output_shape
 
     def zero_state(self, batch_size, dtype):
         with tf.variable_scope(self.my_scope) as var_scope:
@@ -109,24 +114,19 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(var_scope.original_name_scope):
                 with tf.variable_scope('AttentionModel'):
                     CONF = self.C
-                    B = CONF.B*self.BeamWidth
+                    B = self.ActualBatchSize
                     L = CONF.L
                     D = CONF.D
                     h = h_prev
-                    n = self._LSTM_stack.output_size
+                    # n = self.output_size
 
-                    self._LSTM_stack.assertOutputShape(h_prev)
+                    self.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
 
-                    if (CONF.att_share_weights == 'paper') or (CONF.att_share_weights == 'convnet'):
+                    if (CONF.att_model == 'paper') or (CONF.att_model == '1x1_conv'):
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
-
-                        TODO: This tantamounts to a 
-                        1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D i.e. an input shape of (H,W,C) = (1,L,D).
-                        Using 'dim' kernels of size (1,1) and stride=1 resulting in an output shape of (1,L,dim) [or (B, L, 1, dim) with the batch dimension included].
-                        Using a convnet layer of this type may actually be more efficient (and easier to code).
                         """
                         ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
                         ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
@@ -134,10 +134,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         a = tf.identity(a, name='a')
                         ## Concatenate a and h. Final shape = (B, L, D+n)
                         ah = tf.concat([a,h], -1, name='a_concat_h'); # (B, L, D+n)
-                        if CONF.att_share_weights == 'paper':
-                            ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dim)
-                            dim = K.int_shape(ah)[-1]
-                            ## For #layers > 1 this will endup being different than the paper's implementation
+                        if CONF.att_model == 'paper':
+                            ## For #layers > 1 this implementation will endup being different than the paper's implementation because they only 
                             ## Below is how it is implemented in the code released by the authors of the paper
                             ##     for i in range(1, CONF.att_a_layers+1):
                             ##         if not last_layer:
@@ -147,28 +145,25 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             ##     h = AffineTransform(CONF['att_h_%d_n'%(i,)])(h)
                             ##     ah = a + K.expand_dims(h, axis=1)
                             ##     ah = tanh(ah)
+                            ##     alpha = Dense(softmax_layer_params, activation=softmax)(ah)
 
-                            ## Gather all activations across the features; go from (B, L, dim) to (B,L,1).
-                            ## Instead, one could've just ensured that the num_units of the final MLP layer was == 1
-                            ## resulting in an output dimension of (B,L,1). But the paper does it in this way - i.e.
-                            ## adds a FC layer without an activation (somewhat like an embedding) so we'll keeep that as an option.
-                            if CONF.att_weighted_gather:
-                                with tf.variable_scope('weighted_gather'):
-                                    # Gather layer may have dropout based on CONF.att_layers
-                                    gather_params = tfc.FCLayerParams(CONF.att_layers).updated({'activation_fn':None, 'num_units':1})
-                                    ah = tfc.FCLayer(gather_params)(ah) # output shape = (B, L, 1)
-                            else:
-                                # ah = K.mean(ah, axis=2, name='mean_gather') # output shape = (B, L)
-                                assert dim == 1 ## (B, L, 1)
-
+                            ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dimctx)
+                            assert K.int_shape(ah)[-1] == 1 ## (B, L, 1)
                             ah = K.squeeze(ah, axis=2) # output shape = (B, L)
 
-                        elif CONF.att_share_weights == 'convnet':
-                            ah = tfc.ConvStack(CONF.att_layers, (B,1,L,D+n))(tf.expand_dims(ah, axis=1))
+                        elif CONF.att_model == '1x1_conv':
+                            """
+                            TODO: The above tantamounts to a 
+                            1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D i.e. an input shape of (H,W,C) = (1,L,D).
+                            Using 'dimctx' kernels of size (1,1) and stride=1 resulting in an output shape of (1,L,dimctx) [or (B, L, 1, dimctx) with the batch dimension included].
+                            Using a convnet layer of this type may actually be more efficient (and easier to code).
+                            """
+                            ah = tf.expand_dims(ah, axis=1)
+                            ah = tfc.ConvStack(CONF.att_layers, (B, 1, L, D+self.output_size))(ah)
                             assert K.int_shape(ah) == (B,1,L,1)
                             ah = tf.squeeze(ah, axis=[1,3]) # (B, L)
                     
-                    elif CONF.att_share_weights == 'MLP': # MLP: weights not shared across L
+                    elif CONF.att_model == 'MLP': # MLP: weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
                         ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
                         ## of the L*D vector receives its own weight because the effective weight matrix here would be
@@ -181,16 +176,19 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             ah = K.concatenate([a_, h]) # (B, L*D+n)
                             assert K.int_shape(ah) == (B, L*D + self.output_size), 'shape %s != %s'%(K.int_shape(ah),(B, L*D + self.output_size))
                         ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
-                        dim = CONF.att_layers.layers_units[-1]
-                        assert dim == L
                         assert K.int_shape(ah) == (B, L)
                     else:
-                        raise AttributeError('Invalid value of att_share_weights param: %s'%CONF.att_share_weights)
+                        raise AttributeError('Invalid value of att_model param: %s'%CONF.att_model)
 
-                    alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
-                    # alpha = tf.identity(alpha, name='alpha') ## For clearer visualization
+                    # alpha = tf.nn.softmax(ah, name='alpha') # output shape = (B, L)
+                    # assert K.int_shape(alpha) == (B, L)
+                    alpha = ah
 
-                    assert K.int_shape(alpha) == (B, L)
+                    ## Context Modulator
+                    if CONF.ctx_modulator is not None:
+                        with tf.variable_scope('CtxModulator'):
+                            beta = tfc.MLPStack(CONF.ctx_modulator, self.batch_output_shape )(h_prev)
+
                     return alpha
 
     def _decoder_lstm(self, Ex_t, z_t, lstm_states_t_1):

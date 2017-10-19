@@ -36,7 +36,7 @@ from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
 from tf_tutorial_code import average_gradients
 from tf_dynamic_decode import dynamic_decode
-# from tensorflow.contrib.framework import nest as tf_nest
+from tensorflow.contrib.framework import nest as tf_nest
 
 def build_vgg_context(params, image_batch):
     ## Conv-net
@@ -196,12 +196,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(z_t) == (B, D)
 
                     ## First layer of output MLP
-                    if CONF.output_follow_paper: ## Follow the paper.
+                    if CONF.output_reuse_embeddings: ## Follow the paper.
                         affine_params = tfc.FCLayerParams(CONF.output_layers).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
                         ## Affine transformation of h_t and z_t from size n/D to bring it down to m
                         o_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
                         ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
-                        o_t = o_t + Ex_t # Paper does not multiply this with weights - weird.
+                        o_t = o_t + Ex_t # Paper does not multiply this with weights presumably becasue its been already transformed by the embedding-weights.
                         ## non-linearity for the first layer
                         activation_params = tfc.ActivationParams(CONF).updated({'activation_fn': tf.nn.tanh})
                         o_t = tfc.Activation(activation_params, batch_input_shape=(B,m))(o_t)
@@ -216,7 +216,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Regular MLP layers
                     assert CONF.output_layers.layers_units[-1] == Kv
                     logits_t = tfc.MLPStack(CONF.output_layers, batch_input_shape=(B,dim))(o_t)
-                    ## DROPOUT: Paper has a dropout layer after each FC layer including the last one
+                    ## DROPOUT: Paper has a dropout layer after each FC layer before the softmax layer
 
                     assert K.int_shape(logits_t) == (B, Kv)
                     return tf.nn.softmax(logits_t, name='yProbs'), logits_t
@@ -295,10 +295,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
                     ## one additional output layer for each of the h and c LSTM states. So if you had
                     ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
-                    ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model'
+                    ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
                     a = K.mean(a, axis=1) # final shape = (B, D)
-                    ## TODO: CHECK DROPOUT: The paper has a dropout layer after each FC layer including at the end
-                    a = tfc.MLPStack(self.C.init_model)(a)
+                    ## TODO: CHECK DROPOUT: The paper has a dropout layer after each hidden layer
+                    if self.C.init_model_hidden is not None:
+                        a = tfc.MLPStack(self.C.init_model_hidden)(a)
 
                     counter = itertools.count(0)
                     def zero_to_init_state(zs, counter):
@@ -657,17 +658,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(final_outputs.predicted_ids) == (self.C.B, None, self.Seq2SeqBeamWidth)
                     assert K.int_shape(final_outputs.beam_search_decoder_output.scores) == (self.C.B, None, self.Seq2SeqBeamWidth) # (B, T, Seq2SeqBeamWidth)
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
-                    # tf_nest.assert_same_structure(final_states, final_state)
+                    tf_nest.assert_same_structure(final_states, final_state)
 
-                    # self.C.logger.info('final_states.shape=%s', tfc.nested_tf_shape(final_states))
-                    # self.C.logger.info('final_state.shape=%s', tfc.nested_tf_shape(final_state))
-                    self.C.logger.info('final_outputs.shape=%s', tfc.nested_tf_shape(final_outputs))
+                    self.C.logger.info('dynamic_decode final_states.shape=%s', tfc.nested_tf_shape(final_states))
+                    self.C.logger.info('dynamic_decode final_state.shape=%s', tfc.nested_tf_shape(final_state))
+                    self.C.logger.info('dynamic_decode final_outputs.shape=%s', tfc.nested_tf_shape(final_outputs))
 
                     return dlc.Properties({
                             'ids': final_outputs.predicted_ids, # (B, T, BW)
                             'scores': final_outputs.beam_search_decoder_output.scores, # (B, T, BW)
                             'seq_lens': final_sequence_lengths, # (B, BW),
-                            # 'states': final_states.cell_state # Im2LatexState structure. Element shape = (B, T, BW, ...)
+                            'states': final_states.cell_state # Im2LatexState structure. Element shape = (B, T, BW, ...)
                             })
 
     def build_testing_tower(self):
@@ -695,13 +696,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 ## Extract Alpha Values for Debugging
                 ## states.shape=Im2LatexState(calstm_states=(CALSTMState(lstm_state=(LSTMStateTuple(c=[B, T, BW, n], h=[20, None, 10, 1000]), LSTMStateTuple(c=[20, None, 10, 1000], h=[20, None, 10, 1000])), alpha=[B, T, BW, L], ztop=[20, None, 10, 512]),), yProbs=[20, None, 10, 557])
-                # alphas = []
-                # for i in range(N):
-                #     alpha = tf.transpose(outputs.states.calstm_states[i].alpha, (0,2,3,1)) ## (B, T, BW, L) -> (B, BW, L, T)
-                #     alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1)) # (B, BW, L, T) -> (B, BW, H, W, T)
-                #     alphas.append(alpha)
-                # alphas = tf.stack(alphas, axis=0) # (N, B, BW, H, W, T)
-                # assert alphas.shape.as_list() == [N, B, BW, H, W, None], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, None])
+                alphas = []
+                for i in range(N):
+                    alpha = tf.transpose(outputs.states.calstm_states[i].alpha, (0,2,3,1)) ## (B, T, BW, L) -> (B, BW, L, T)
+                    alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1)) # (B, BW, L, T) -> (B, BW, H, W, T)
+                    alphas.append(alpha)
+                alphas = tf.stack(alphas, axis=0) # (N, B, BW, H, W, T)
+                assert alphas.shape.as_list() == [N, B, BW, H, W, None], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, None])
 
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
@@ -837,7 +838,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
                     'top1_len_ratio': top1_len_ratio,  # (B,)
-                    # 'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
+                    'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
@@ -971,7 +972,7 @@ def sync_testing_towers(hyper, tower_ops):
         'top1_accuracy': top1_accuracy, # scalar
         'top1_num_hits': top1_num_hits, # scalar
         'top1_ids_list': gather('top1_ids'),# ((B,T),...)
-        # 'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
+        'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
         'bok_ids_list': gather('bok_ids'),# ((B,T),...)
         'y_s_list': gather('y_s'), # ((B,T),...)
         'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)

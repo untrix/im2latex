@@ -779,7 +779,7 @@ class instanceofOrNone(instanceof):
 class either(_ParamValidator):
     """Logical OR of multiple validators"""
     def __init__(self, *validators):
-        self._validators = *validators
+        self._validators = validators
     def __contains__(self, obj):
         return any((obj in v for v in self._validators))
 

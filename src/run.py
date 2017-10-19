@@ -152,6 +152,7 @@ def main():
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
 
     globalParams = dlc.Properties({
+                                    'logger': logger,
                                     'tb': tb,
                                     'print_steps': args.print_steps,
                                     'num_steps': args.num_steps,
@@ -180,10 +181,7 @@ def main():
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
-                                    'NOTE': 'CHECK # of LSTM LAYERS',
-                                    'att_share_weights': 'convnet',
-                                    'logger': logger,
-                                    'att_weighted_gather': False
+                                    'att_model': 'paper'
                                     })
 
     if args.batch_size is not None:
@@ -204,17 +202,17 @@ def main():
         globalParams.logdir = tfc.makeTBDir(hyper.tb)
 
     globalParams.storedir = dtc.makeLogDir(globalParams.logdir, 'store')
-    dtc.dump(globalParams, dtc.makeLogfileName(globalParams.logdir, 'args.pkl'))
+    dtc.dump(globalParams, dtc.makeLogfileName(globalParams.storedir, 'args.pkl'))
 
     # Add logging file handler now that we have instantiated hyperparams.
     if args.restore_logdir is not None:
-        dtc.dump(hyper, dtc.makeLogfileName(globalParams.logdir, 'hyper.pkl'))
+        dtc.dump(hyper, dtc.makeLogfileName(globalParams.storedir, 'hyper.pkl'))
     else:
-        dtc.dump(hyper, globalParams.logdir, 'hyper.pkl')
+        dtc.dump(hyper, globalParams.storedir, 'hyper.pkl')
 
     # globalParams.store = pd.HDFStore(dtc.makeLogfileName(globalParams.logdir, 'store.h5'), mode='a')
     # globalParams.store = h5py.File(dtc.makeLogfileName(globalParams.logdir, 'store.h5py'), "w")
-    fh = logging.FileHandler(dtc.makeLogfileName(globalParams.logdir, 'training.log'))
+    fh = logging.FileHandler(dtc.makeLogfileName(globalParams.storedir, 'training.log'))
     fh.setFormatter(hyper_params.makeFormatter())
     logger.addHandler(fh)
     hyper_params.setLogLevel(logger, args.logging_level)

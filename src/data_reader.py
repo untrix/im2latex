@@ -467,10 +467,8 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         split_props, df_train_idx, df_validation_idx = restore_state(args.logdir, 'split_state.pkl')
         assert split_props['batch_size'] == batch_size_, 'batch_size in HD5 store (%d) is different from that specified (%d)'%(split_props['batch_size'], batch_size_)
         assert split_props['num_val_batches'] == num_val_batches, 'num_val_batches in HD5 store (%d) is different from that specified (%d)'%(split_props['num_val_batches'] , num_val_batches)
-        logger.info('split_dataset: loaded df_train and df_validate from hd5 store.')
+        logger.info('split_dataset: loaded df_train and df_validate from pickle store.')
         if df_validation_idx is not None:
-            print 'type(df_train_index)=', type(df_train_idx)
-            print 'df_train_index=', df_train_idx
             return df_.loc[df_train_idx], df_.loc[df_validation_idx] if df_validation_idx is not None else None
         else:
             return df_

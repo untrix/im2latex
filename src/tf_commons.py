@@ -195,12 +195,22 @@ class MLPParams(HyperParams):
               "As many layers will be created as the length of the sequence",
               issequenceof(int)
               ),
+            PD('layers_fns',
+               "(optional): Sequence of activation functions, one per layer. If left unspecified, the same activation_fn from the top-level will be used for all layers.",
+               instanceofOrNone(tuple)
+              )
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+        if self.layers_fns is not None:
+            assert len(self.layers_fns) == len(self.layers_units)
 
     def get_layer_params(self, i):
-        return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
+        if self.layers_fns is None:
+            return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
+        else:
+            return FCLayerParams(self).updated({'num_units': self.layers_units[i], 'activation_fn': self.layers_fns[i]})
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -664,7 +674,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
             self._batch_state_shape = expand_nested_shape(self._cell.state_size,
                                                           self._params.B*beamsearch_width)
             self._beamsearch_width = beamsearch_width
-            print('RNNWrapper.__init__: batch input shape = %s'%(self.batch_input_shape,))
+            # print('RNNWrapper.__init__: batch input shape = %s'%(self.batch_input_shape,))
 
     @property
     def state_size(self):
@@ -703,11 +713,7 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
         and the corresponding state-tensor should be of shape :
         (((B,n1),(B,n1)), ((B,n2),(B,n2)) ... ((B,nL),(B,nL)))
         """
-        try:
-            assert self.batch_state_shape == get_nested_shape(state)
-        except:
-            print 'state-shape assertion Failed for state type = ', type(state), ' and value = ', state
-            raise
+        assert self.batch_state_shape == get_nested_shape(state), 'state-shape assertion Failed for state type = %s and value = %s'%(type(state), state)
 
     def assertOutputShape(self, output):
         """

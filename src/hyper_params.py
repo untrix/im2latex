@@ -220,26 +220,25 @@ class CALSTMParams(dlc.HyperParams):
                 dlc.either(instanceof(tfc.MLPParams), instanceof(tfc.ConvStackParams)),
                 ## Set dynamically in self._trickledown()
                 ),
-            PD('att_share_weights',
-               'Whether the attention model should share weights across the "L" image locations - i.e. perform a 1x1 convolution - or not.'
+            PD('att_model',
+               'Whether the attention model should share weights across the "L" image locations - i.e. perform a 1x1 convolution - or use a straight MLP.'
                'Choosing "paper" conforms to the paper resulting in a (D+n,att_1_n) kernel (similar to 1x1 convolution but implemented as an MLPStack).'
-               'Choosing "convnet" results in a 1x1 convolution-stack implementation instead of shared-MLP as above. The structure should be identical to that obtained'
-               'by setting att_share_weights=paper and att_weighted_gather=False.'
-               'Choosing "MLP" will result in a standard MLP with (L*D+n,att_1_n) weight matrix. ',
-               ('paper','convnet', 'MLP'),
+               'Choosing "1x1_conv" results in a 1x1 convolution-stack implementation instead of shared-MLP as above. The model should be identical to that obtained'
+               'by setting att_model=paper (plus equivalent num_units and same activation functions)'
+               'Choosing "MLP" will result in a standard MLP with (L*D+n,att_1_n) weight matrix. That is, the kernel will receive input from all the "L" '
+               "feature vectors of image feature-map combined.",
+               ('paper','1x1_conv', 'MLP'),
                'paper'),
-            PD('att_weighted_gather',
-               'Only applies if "att_share_weights"=="paper".'
-               'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-               "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
-               "Instead of the final affine transform, one could just ensure that output of the Attention MLP Stack was (B,L,1) - i.e. num_units of"
-               "the final layer == 1. This would essentially add a non-linear activation on top of the affine-transform essentially converting it into a FC layer. Setting this param to"
-               "False switches to that model (i.e. an FC layer instead of Affine transform)."
-               "Default value however, is True in conformance with the paper's implementation.",
-               (True, False),
-               True),
+            PD('att_modulator',
+               'A neural-network whose scalar output modulates the soft context signal "z_t" in comparison to the embedded-label signal fed into the decoder LSTM.'
+               'Serves as an "equalizer knob" that either amplifies or attenuates the context input signal versus the embedded-label input signal to the LSTM.'
+               'In the paper this scalar-value is called "beta" and in their code it is called the "selector". They implemented it as the output of a sigmoid and hence a value between 0 and 1.'
+               "We'll use a generic MLP stack with either a sigmoid activation in the last layer or a relu (in wchich case the modulator can take values greater than 1). "
+               "Input to this MLP is the h(t-1) - the previous LSTM output.",
+               instanceofOrNone(tfc.MLPParams),
+               ),
         ### Decoder LSTM Params ###
-            PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
+            PD('decoder_lstm', 'Decoder LSTM parameters. Multiple LSTM layers are supported.',
                instanceof(tfc.RNNParams),
                ## Set dynamically in self._trickledown()
                )
@@ -258,12 +257,13 @@ class CALSTMParams(dlc.HyperParams):
 
     def _trickledown(self):
         """
-        Trickle changes down to depending parameters in sub-tree(s).
+        Trickle down changes onto parameters in sub-tree(s) if needed.
         (For same level dependencies use LambdaFunctions instead.)
         Call at the end of __init__ and end of update.
         """
 
-        if self.att_share_weights == 'convnet':
+        #### Attention Model ####
+        if self.att_model == '1x1_conv':
             self.att_layers = ConvStackParams({
                 'op_name': '1x1Conv',
                 'tb': self.tb,
@@ -276,27 +276,40 @@ class CALSTMParams(dlc.HyperParams):
                 'layers': (
                     ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
                     ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                    ConvLayerParams({'output_channels':1, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze()
+                    ConvLayerParams({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.softmax}).freeze()
                 )
             }).freeze()
-        elif self.att_share_weights == 'paper':
+            assert self.att_layers.layers[-1].output_channels == 1, 'num output_channels of the final layer of the att_convnet should equal 1'
+            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
+
+        elif self.att_model == 'paper':
             self.att_layers = tfc.MLPParams(self).updated({
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (self.D, self.D, self.D, 1),
-                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-                ## 'dropout': None # Remove dropout in the attention model
+                'layers_units': (self.D, self.D, 1),
+                'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax)
+                ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
-        elif self.att_share_weights == 'MLP':
+            assert self.att_layers.layers_units[-1] == 1, 'num_units of the final layer of the att_kernel should equal 1'
+            assert self.att_layers.layers_fns[-1] == tf.nn.softmax
+
+        elif self.att_model == 'MLP':
             self.att_layers = tfc.MLPParams(self).updated({
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
                 'layers_units': (self.L, self.L, self.L),
-                'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-                ## 'dropout': None # Remove dropout in the attention model
+                'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax),
+                ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
-            
+            assert self.att_layers.layers_units[-1] == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
+            assert self.att_layers.layers_fns[-1] == tf.nn.softmax
 
+        #### Attention Modulator ####
+        self.att_modulator = tfc.MLPParams(self).updated({
+            'layers_units': (1,), ## paper's code uses 1 layer only. The last-layer must have only one neuron.
+            'activation_fn': tf.nn.sigmoid, ## paper code uses sigmoid activation
+            'dropout': None
+            }).freeze()
 
+        #### LSTM-Stack ####
         self.decoder_lstm = tfc.RNNParams(self).updated({
             'B': self.B,
             'i': self.m + self.D, ## size of input vector + z_t.
@@ -434,26 +447,29 @@ class Im2LatexModelParams(dlc.HyperParams):
                issequenceof(CALSTMParams)
                ),
         ### Output MLP
-            PD('output_follow_paper',
-               '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
+            PD('output_reuse_embeddings',
+               '(boolean): Output layer in the paper has a special first layer which considers embedding weights as part of the first-layer weight matrix.'
                'Setting this value to True (default) will follow the paper"s logic. Otherwise'
-               "a straight MLP will be used.",
+               "a straight MLP will be used wherein all inputs (including Ey(t-1)) are first concatenated and fed into an MLP."
+               "Including the softmax layer, the paper uses a minimum of 2 layers.",
                boolean,
                True
                ),
             PD('output_layers',
                 "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
-                "must have num_units = K. If output_follow_paper==True, an additional initial layer is created "
-                "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
+                "must have num_units = K. If output_reuse_embeddings==True, an additional initial layer is created "
+                "with num_units = m and activtion tanh. Therefore the min number of layers is 2 in that case. "
+                "Note: In the paper all layers have num_units=m except the last(softmax) layer.",
                 instanceof(tfc.MLPParams),
                 ## Value set dynamically inside self._trickledown()
                 ),
         ### Initializer MLP ###
-            PD('init_model',
-               'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
+            PD('init_model_hidden',
+               'MLP stack for hidden layers of the init_state model. In addition to the stack specified here, an additional FC '
                "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
-               "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
-               instanceof(tfc.MLPParams),
+               "Hence, this is a 'multi-headed' MLP because it has multiple top-layers."
+               "By default their implementation has num_hidden_layers==0 (i.e. n_layers_init==1).",
+               instanceofOrNone(tfc.MLPParams),
                 ## Value set dynamically inside self._trickledown()
                ),
             PD('init_model_final_layers', '',
@@ -496,26 +512,30 @@ class Im2LatexModelParams(dlc.HyperParams):
         """
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
         self.output_layers = tfc.MLPParams(self).updated({
-            ## One layer with num_units = m is added if output_follow_paper == True
-            ## Last layer must have num_units = K because it outputs logits.
-            ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-            'layers_units': (self.m, self.K),
-            'activation_fn': tf.nn.relu, # paper has it set to relu
+            ## One layer with num_units = m is added if output_reuse_embeddings == True
+            ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
+            ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
+            'layers_units': (self.K,),
+            'layers_fns': (None,)
+            # 'activation_fn': tf.nn.relu, # paper has it set to relu for all but the softmax layer
             'op_name': 'yLogits_MLP'
             }).freeze()
+        assert self.output_layers.layers_fns[-1] == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'.
+        if (not self.output_reuse_embeddings):
+            assert len(self.output_layers.layers_units) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
-        self.init_model = tfc.MLPParams(self).updated({
-            'layers_units': (self.D,), ## The paper's source sets all hidden units to D
-            ## paper sets hidden activations=relu and final=tanh
-            'activation_fn': tf.nn.relu
-            }).freeze()
+        if False : ## No hidden init layers by default
+            self.init_model_hidden = tfc.MLPParams(self).updated({
+                'layers_units': (self.D,), ## The paper's source sets all hidden units to D
+                ## paper sets hidden activations=relu and final=tanh
+                'activation_fn': tf.nn.relu
+                }).freeze()
 
         self.init_model_final_layers = tfc.FCLayerParams(self).updated({
             ## num_units to be set dynamically
             ## paper sets hidden activations=relu and final=tanh
             'activation_fn': tf.nn.tanh
             }).freeze()
-
 
     def __copy__(self):
         ## Shallow copy
@@ -545,7 +565,7 @@ def make_hyper(initVals={}, freeze=True):
             'weights_initializer': globals.weights_initializer,
             'biases_initializer': globals.biases_initializer,
             'weights_regularizer': globals.weights_regularizer,
-            'biases_regularizer': globals.biases_regularizer,
+            'biases_regularizer': globals.biases_regularizer,input_
             'padding': 'SAME',
             'layers': (
                 ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
@@ -608,8 +628,8 @@ def make_hyper(initVals={}, freeze=True):
 #            boolean,
 #            True),
 #         PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-#            "model from (B,L,dim) to (B,L,1). Its like an embedding matrix."
-#            "I have an alternative implementation that simply averages the matrix (B,L,dim) to (B,L,1)."
+#            "model from (B,L,dimctx) to (B,L,1). Its like an embedding matrix."
+#            "I have an alternative implementation that simply averages the matrix (B,L,dimctx) to (B,L,1)."
 #            "Default value however, is True in conformance with the paper's implementation.",
 #            (True, False),
 #            True),
