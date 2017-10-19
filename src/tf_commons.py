@@ -190,26 +190,32 @@ class MLPParams(HyperParams):
                None,
                'MLP'
               ),
-            PD('layers_units',
-              "(sequence of integers): sequence of numbers denoting number of units for each layer."
-              "As many layers will be created as the length of the sequence",
-              issequenceof(int)
-              ),
-            PD('layers_fns',
-               "(optional): Sequence of activation functions, one per layer. If left unspecified, the same activation_fn from the top-level will be used for all layers.",
-               instanceofOrNone(tuple)
-              )
+            PD('layers',
+               "Sequence of FCLayerParams.",
+               issequenceof(FCLayerParams),
+               ),
+            # PD('layers_units',
+            #   "(sequence of integers): sequence of numbers denoting number of units for each layer."
+            #   "As many layers will be created as the length of the sequence",
+            #   issequenceof(int)
+            #   ),
+            # PD('layers_fns',
+            #    "(optional): Sequence of activation functions, one per layer. If left unspecified, the same activation_fn from the top-level will be used for all layers.",
+            #    instanceofOrNone(tuple)
+            #   )
         )
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        if self.layers_fns is not None:
-            assert len(self.layers_fns) == len(self.layers_units)
+        # if self.layers_fns is not None:
+        #     assert len(self.layers_fns) == len(self.layers_units)
+        self.layers = tuple([layer.copy().filled(self) for layer in self.layers])
 
-    def get_layer_params(self, i):
-        if self.layers_fns is None:
-            return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
-        else:
-            return FCLayerParams(self).updated({'num_units': self.layers_units[i], 'activation_fn': self.layers_fns[i]})
+    # def get_layer_params(self, i):
+    #     # if self.layers_fns is None:
+    #     #     return FCLayerParams(self).updated({'num_units': self.layers_units[i]})
+    #     # else:
+    #     #     return FCLayerParams(self).updated({'num_units': self.layers_units[i], 'activation_fn': self.layers_fns[i]})
+    #     return self.layers[i]
 
     def __copy__(self):
         ## Shallow copy
@@ -237,8 +243,9 @@ class MLPStack(object):
                 a = inp
                 self._layers = []
                 with tf.variable_scope(params.op_name):
-                    for i in xrange(len(self._params.layers_units)):
-                        layer = FCLayer(self._params.get_layer_params(i))
+                    # for i in xrange(len(self._params.layers_units)):
+                    for i, layerParams in enumerate(params.layers):
+                        layer = FCLayer(layerParams)
                         a = layer(a, i)
                         self._layers.append(layer)
                 return a
@@ -248,6 +255,7 @@ class MLPStack(object):
             with tf.name_scope(var_scope.original_name_scope):
                 for layer in self._layers:
                     layer.create_summary_ops(coll_name)
+                    
 class FCLayerParams(HyperParams):
     proto = CommonParams.proto + (
         PD('num_units',
@@ -258,6 +266,7 @@ class FCLayerParams(HyperParams):
 
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -370,8 +379,8 @@ class ConvStackParams(HyperParams):
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
         ## Unset properties in self.layers should be filled with defaults from self
-        for layer in self.layers:
-            layer.fill(self)
+        self.layers = tuple([layer.copy().filled(self)  for layer in self.layers])
+            
 
 
 class ConvStack(object):

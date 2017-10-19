@@ -277,36 +277,50 @@ class CALSTMParams(dlc.HyperParams):
                     ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
                     ConvLayerParams({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID'}).freeze(),
                     ConvLayerParams({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.softmax}).freeze()
-                )
-            }).freeze()
+                    )
+                }).freeze()
             assert self.att_layers.layers[-1].output_channels == 1, 'num output_channels of the final layer of the att_convnet should equal 1'
             assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
 
         elif self.att_model == 'paper':
             self.att_layers = tfc.MLPParams(self).updated({
+                'activation_fn': tf.nn.tanh,
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (self.D, self.D, 1),
-                'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax)
+                'layers': (
+                    FCLayerParams({'num_units': self.D}).freeze(),
+                    FCLayerParams({'num_units': self.D}).freeze(),
+                    FCLayerParams({'num_units': 1, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    )
+                # 'layers_units': (self.D, self.D, 1),
+                # 'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax)
                 ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
-            assert self.att_layers.layers_units[-1] == 1, 'num_units of the final layer of the att_kernel should equal 1'
-            assert self.att_layers.layers_fns[-1] == tf.nn.softmax
+            assert self.att_layers.layers[-1].num_units == 1, 'num_units of the final layer of the att_kernel should equal 1'
+            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
+            assert self.att_layers.layers[-1].dropout == None
 
         elif self.att_model == 'MLP':
             self.att_layers = tfc.MLPParams(self).updated({
-                # Number of units in all layers of the attention model = D in the paper"s source-code.
-                'layers_units': (self.L, self.L, self.L),
-                'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax),
+                'activation_fn': tf.nn.tanh,
+                'layers': (
+                    FCLayerParams({'num_units': self.L}).freeze(),
+                    FCLayerParams({'num_units': self.L}).freeze(),
+                    FCLayerParams({'num_units': self.L, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    )
+                # 'layers_units': (self.L, self.L, self.L),
+                # 'layers_fns': (tf.nn.tanh, tf.nn.tanh, tf.nn.softmax),
                 ## 'dropout': None # Remove dropout from the attention model
                 }).freeze()
-            assert self.att_layers.layers_units[-1] == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
-            assert self.att_layers.layers_fns[-1] == tf.nn.softmax
+            assert self.att_layers.layers[-1].num_units == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
+            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
+            assert self.att_layers.layers[-1].dropout == None
 
         #### Attention Modulator ####
         self.att_modulator = tfc.MLPParams(self).updated({
-            'layers_units': (1,), ## paper's code uses 1 layer only. The last-layer must have only one neuron.
-            'activation_fn': tf.nn.sigmoid, ## paper code uses sigmoid activation
-            'dropout': None
+            ## paper's code uses 1 layer only. The last-layer must have only one neuron.
+            'layers': (
+                FCLayerParams({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
+                )
             }).freeze()
 
         #### LSTM-Stack ####
@@ -513,26 +527,33 @@ class Im2LatexModelParams(dlc.HyperParams):
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
         self.output_layers = tfc.MLPParams(self).updated({
             ## One layer with num_units = m is added if output_reuse_embeddings == True
-            ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
             ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-            'layers_units': (self.K,),
-            'layers_fns': (None,)
-            # 'activation_fn': tf.nn.relu, # paper has it set to relu for all but the softmax layer
             'op_name': 'yLogits_MLP'
+            'activation_fn': tf.nn.relu, # paper has it set to relu for all but the softmax layer
+            'layers': (
+                ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
+                FCLayerParams({'num_units': self.K, 'activation_fn':None}).freeze(),
+            )
+            # 'layers_units': (self.K,),
+            # 'layers_fns': (None,)
             }).freeze()
-        assert self.output_layers.layers_fns[-1] == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'.
+        assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'.
         if (not self.output_reuse_embeddings):
-            assert len(self.output_layers.layers_units) >= 2, "Need one hidden layer at least to match the paper's complexity."
+            assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         if False : ## No hidden init layers by default
             self.init_model_hidden = tfc.MLPParams(self).updated({
-                'layers_units': (self.D,), ## The paper's source sets all hidden units to D
                 ## paper sets hidden activations=relu and final=tanh
-                'activation_fn': tf.nn.relu
+                'activation_fn': tf.nn.relu,
+                'layers': (
+                    ## The paper's source sets all hidden units to D
+                    FCLayerParams({'num_units': self.D}).freeze(),
+                )
+                # 'layers_units': (self.D,),
                 }).freeze()
 
         self.init_model_final_layers = tfc.FCLayerParams(self).updated({
-            ## num_units to be set dynamically
+            ## num_units to be set dynamically in the code
             ## paper sets hidden activations=relu and final=tanh
             'activation_fn': tf.nn.tanh
             }).freeze()

@@ -657,14 +657,16 @@ class Params(Properties):
         """ WARNING: Partial implementation: Delegates to  Properties.from_pickle and returns a Properties object. """
         return Properties.from_pickle(*paths)
 
-    def fill(self, other={}):
+    def filled(self, other={}):
         """
         Sets unset or None properties of self with values in other if present.
-        ** WARNING** Please note that it will override None values even if they are valid.
         """
         for prop in self.protoS:
-            if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
+            # if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
+            if (not prop.name in self) and (prop.name in other):
                 self[prop.name] = other[prop.name]
+
+        return self
 
     @property
     def protoS(self):
