@@ -244,7 +244,7 @@ class FCLayer(object):
 
     def __call__(self, inp, layer_idx=None):
         with tf.variable_scope(self.my_scope) as var_scope:
-            with tf.name_scope(var_scope.original_name_scope):
+            with tf.name_scope(var_scope.original_name_scope) as name_scope:
                 ## Parameter Validation
                 assert isinstance(inp, tf.Tensor)
                 if self._batch_input_shape is not None:
@@ -254,6 +254,9 @@ class FCLayer(object):
                 prefix = 'FC' if params.activation_fn is not None else 'Affine'
                 scope_name = prefix + '_%d'%(layer_idx+1) if layer_idx is not None else prefix
                 with tf.variable_scope(scope_name) as var_scope:
+                    if len(K.int_shape(inp)) != 2:
+                        logger.warn('Input to operation %s/%s has rank !=2 (%d)', name_scope, scope_name, len(K.int_shape(inp)))
+
                     coll_w = scope_name + '/_weights_'
                     coll_b = scope_name + '/_biases_'
                     var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
@@ -568,7 +571,7 @@ class DropoutLayer(object):
 
     def __call__(self, inp, layer_idx=None):
         with tf.variable_scope(self.my_scope) as var_scope:
-            with tf.name_scope(var_scope.original_name_scope):
+            with tf.name_scope(var_scope.original_name_scope) as name_scope:
                 ## Parameter Validation
                 assert isinstance(inp, tf.Tensor)
                 if self._batch_input_shape is not None:
@@ -577,6 +580,8 @@ class DropoutLayer(object):
                 params = self._params
                 scope_name = 'Dropout_%d'%(layer_idx+1) if layer_idx is not None else 'Dropout'
                 with tf.variable_scope(scope_name):
+                    if len(K.int_shape(inp)) != 2:
+                        logger.warn('Input to operation %s/%s has rank !=2 (%d)', name_scope, scope_name, len(K.int_shape(inp)))
                     return tf.nn.dropout(inp, params.keep_prob, seed=params.seed)
 
 class ActivationParams(HyperParams):
@@ -609,15 +614,18 @@ class Activation(object):
 
     def __call__(self, inp, layer_idx=None):
         with tf.variable_scope(self.my_scope) as var_scope:
-            with tf.name_scope(var_scope.original_name_scope):
+            with tf.name_scope(var_scope.original_name_scope) as name_scope:
                 ## Parameter Validation
                 assert isinstance(inp, tf.Tensor)
                 if self._batch_input_shape is not None:
                     assert K.int_shape(inp) == self._batch_input_shape
 
                 params = self._params
+
                 scope_name = 'Activation_%d'%(layer_idx+1) if layer_idx is not None else 'Activation'
                 with tf.variable_scope(scope_name):
+                    if len(K.int_shape(inp)) != 2:
+                        logger.warn('Input to operation %s/%s has rank !=2 (%d)', name_scope, scope_name, len(K.int_shape(inp)))
                     a = params.activation_fn(inp)
 
                 if ('dropout' in params) and (params.dropout is not None):

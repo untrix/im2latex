@@ -118,7 +118,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     L = CONF.L
                     D = CONF.D
                     h = h_prev
-                    # n = self.output_size
+                    n = self.output_size
 
                     self.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
@@ -133,7 +133,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         h = tf.identity(K.tile(K.expand_dims(h, axis=1), (1,L,1)), name='h_t-1')
                         a = tf.identity(a, name='a')
                         ## Concatenate a and h. Final shape = (B, L, D+n)
-                        ah = tf.concat([a,h], -1, name='a_concat_h'); # (B, L, D+n)
+                        ah = tf.concat([a,h], -1, name='ai_h'); # (B, L, D+n)
+                        assert K.int_shape(ah) == (B, L, D+n)
                         if CONF.att_model == 'MLP_shared':
                             ## For #layers > 1 this implementation will endup being different than the paper's implementation because they only 
                             ## Below is how it is implemented in the code released by the authors of the paper
@@ -147,9 +148,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             ##     ah = tanh(ah)
                             ##     alpha = Dense(softmax_layer_params, activation=softmax)(ah)
 
-                            ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dimctx)
-                            assert K.int_shape(ah)[-1] == 1 ## (B, L, 1)
-                            ah = K.squeeze(ah, axis=2) # output shape = (B, L)
+                            alpha_1_ = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dimctx)
+                            assert K.int_shape(alpha_1_) == (B,L,1) ## (B, L, 1)
+                            alpha_ = K.squeeze(alpha_1_, axis=2) # output shape = (B, L)
+                            assert K.int_shape(alpha_) == (B,L)
 
                         elif CONF.att_model == '1x1_conv':
                             """
@@ -159,9 +161,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             Using a convnet layer of this type may actually be more efficient (and easier to code).
                             """
                             ah = tf.expand_dims(ah, axis=1)
-                            ah = tfc.ConvStack(CONF.att_layers, (B, 1, L, D+self.output_size))(ah)
-                            assert K.int_shape(ah) == (B,1,L,1)
-                            ah = tf.squeeze(ah, axis=[1,3]) # (B, L)
+                            alpha_1_ = tfc.ConvStack(CONF.att_layers, (B, 1, L, D+self.output_size))(ah)
+                            assert K.int_shape(alpha_1_) == (B,1,L,1)
+                            alpha_ = tf.squeeze(alpha_1_, axis=[1,3]) # (B, L)
+                            assert K.int_shape(alpha_) == (B,L)
                     
                     elif CONF.att_model == 'MLP_full': # MLP: weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
@@ -173,14 +176,17 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         with tf.variable_scope('a_h'):
                             a_ = K.batch_flatten(a) # (B, L*D)
                             a_.set_shape((B, L*D)) # Flatten loses shape info
-                            ah = K.concatenate([a_, h]) # (B, L*D+n)
+                            ah = tf.concat([a_, h], -1, name="a_h") # (B, L*D + n)
                             assert K.int_shape(ah) == (B, L*D + self.output_size), 'shape %s != %s'%(K.int_shape(ah),(B, L*D + self.output_size))
-                        ah = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
-                        assert K.int_shape(ah) == (B, L)
+                        alpha_ = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
+                        assert K.int_shape(alpha_) == (B, L)
+
                     else:
                         raise AttributeError('Invalid value of att_model param: %s'%CONF.att_model)
 
-                    alpha = tf.identity(ah, name='alpha')
+                    ## Softmax
+                    alpha = tf.identity(tf.nn.softmax(alpha_), name='alpha')
+                    assert K.int_shape(alpha) == (B, L)
 
                     ## Attention Modulator
                     if CONF.att_modulator is not None:

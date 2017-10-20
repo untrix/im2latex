@@ -32,12 +32,27 @@ from pprint import pprint, pformat
 
 dict_id2word = None
 i2w_ufunc = None
-logger = None
+logger = logging
+
+def setLogLevel(logger_, level):
+    logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
+    logger_.setLevel(logging_levels[level - 1])
+
+def makeFormatter():
+    return logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+def makeLogger(logging_level=3, name='default'):
+    logger_ = logging.Logger(name)
+    ch = logging.StreamHandler()
+    ch.setFormatter(makeFormatter())
+    logger_.addHandler(ch)
+    setLogLevel(logger_, logging_level)
+    return logger_
 
 def initialize(data_dir, params):
-    global i2w_ufunc, dict_id2word, logger
-    if logger is None:
-        logger = params.logger
+    global i2w_ufunc, dict_id2word
+    # if logger is None:
+    #     logger = params.logger
     if i2w_ufunc is None:
         dict_id2word = load(data_dir, 'dict_id2word.pkl')
         K = len(dict_id2word.keys())

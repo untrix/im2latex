@@ -37,21 +37,6 @@ from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean
 from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams, 
                         DropoutParams, TensorboardParams, RNNParams)
 
-def setLogLevel(logger, level):
-    logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
-    logger.setLevel(logging_levels[level - 1])
-
-def makeFormatter():
-    return logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-def makeLogger(logging_level=3, name='default'):
-    logger = logging.Logger(name)
-    ch = logging.StreamHandler()
-    ch.setFormatter(makeFormatter())
-    logger.addHandler(ch)
-    setLogLevel(logger, logging_level)
-    return logger
-
 def pad_image_shape(shape, padding):
     return (shape[0] + 2*padding, shape[1] + 2*padding) + shape[2:]
 
@@ -278,11 +263,11 @@ class CALSTMParams(dlc.HyperParams):
                 'layers': (
                     ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
                     ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
-                    ConvLayerParams(self).updated({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.softmax}).freeze()
+                    ConvLayerParams(self).updated({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': None}).freeze()
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].output_channels == 1, 'num output_channels of the final layer of the att_convnet should equal 1'
-            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
+            assert self.att_layers.layers[-1].activation_fn == None ## Softmax activation will be added after squeezing dims
 
         elif self.att_model == 'MLP_shared':
             self.att_layers = MLPParams(self).updated({
@@ -291,12 +276,12 @@ class CALSTMParams(dlc.HyperParams):
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 1,      'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == 1, 'num_units of the final layer of the att_kernel should equal 1'
-            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
-            assert self.att_layers.layers[-1].dropout == None
+            assert self.att_layers.layers[-1].activation_fn == None ## Softmax activation will be added after squeezing dims
+            assert self.att_layers.layers[-1].dropout == None ## No droput before softmax activation
 
         elif self.att_model == 'MLP_full':
             self.att_layers = MLPParams(self).updated({
@@ -304,12 +289,12 @@ class CALSTMParams(dlc.HyperParams):
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.softmax, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None, 'dropout': tf.nn.softmax}).freeze(),
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
-            assert self.att_layers.layers[-1].activation_fn == tf.nn.softmax
-            assert self.att_layers.layers[-1].dropout == None
+            assert self.att_layers.layers[-1].activation_fn == None ## softmax activation will be added in code for consistency
+            assert self.att_layers.layers[-1].dropout == None ## No droput before/after softmax activation
 
         #### Attention Modulator ####
         self.att_modulator = MLPParams(self).updated({
@@ -541,7 +526,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'layers': (
                     ## paper has activation set to relu for all but the softmax layer
                     ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-                    # FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
                     )
@@ -554,7 +539,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'layers': (
                     ## paper has activation set to relu for all but the softmax layer
                     ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-                    # FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
@@ -566,9 +551,8 @@ class Im2LatexModelParams(dlc.HyperParams):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         ######## Init Model ########
-        if False: ## No hidden init layers by default
+        if True: ## No hidden init layers by default
             self.init_model_hidden = MLPParams(self).updated({
-                # 'activation_fn': tf.nn.relu,
                 'layers': (
                     ## paper sets hidden activations=relu and final=tanh
                     ## The paper's source sets all hidden units to D

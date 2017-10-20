@@ -38,7 +38,7 @@ import h5py
 
 def main():
     _data_folder = '../data'
-    logger = hyper_params.makeLogger()
+    logger = dtc.makeLogger()
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -213,9 +213,9 @@ def main():
     # globalParams.store = pd.HDFStore(dtc.makeLogfileName(globalParams.logdir, 'store.h5'), mode='a')
     # globalParams.store = h5py.File(dtc.makeLogfileName(globalParams.logdir, 'store.h5py'), "w")
     fh = logging.FileHandler(dtc.makeLogfileName(globalParams.storedir, 'training.log'))
-    fh.setFormatter(hyper_params.makeFormatter())
+    fh.setFormatter(dtc.makeFormatter())
     logger.addHandler(fh)
-    hyper_params.setLogLevel(logger, args.logging_level)
+    dtc.setLogLevel(logger, args.logging_level)
 
     logger.info(' '.join(sys.argv[1:]))
     logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams.pformat())

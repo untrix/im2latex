@@ -507,6 +507,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
                         ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
                         ase_max = tf.constant((L-1.0) / L*1.0 ) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype)) # (B,)
+                        assert K.int_shape(ase_max) == (B,)
                         ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
                         normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
                         mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
@@ -520,6 +521,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
                         self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha_out))
                         alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2)) # (N, B, T, H, W)->(N, B, H, W, T)
+                        alpha_out = tf.identity(alpha_out, name='alpha_out')
                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
 
 
