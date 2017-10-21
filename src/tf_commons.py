@@ -484,7 +484,7 @@ class ConvLayer(object):
                                                 stride=params.stride,
                                                 padding=params.padding,
                                                 activation_fn=params.activation_fn,
-                                                normalizer_fn=params.normalizer_fn,
+                                                normalizer_fn=params.normalizer_fn if 'normalizer_fn' in params else None,
                                                 trainable=True,
                                                 weights_initializer=params.weights_initializer,
                                                 biases_initializer=params.biases_initializer,

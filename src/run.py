@@ -187,7 +187,7 @@ def main():
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
-                                    'att_model': 'MLP_shared'
+                                    'att_model': '1x1_conv'
                                     })
 
     if args.batch_size is not None:

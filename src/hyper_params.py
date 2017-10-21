@@ -261,8 +261,9 @@ class CALSTMParams(dlc.HyperParams):
                 # 'biases_regularizer': self.biases_regularizer,
                 # 'padding': 'VALID',
                 'layers': (
-                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
-                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.relu}).freeze(),
+                    ## TODO: Try with relu activation
+                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.tanh}).freeze(),
+                    ConvLayerParams(self).updated({'output_channels':self.D, 'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': tf.nn.tanh}).freeze(),
                     ConvLayerParams(self).updated({'output_channels':1,      'kernel_shape':(1,1), 'stride':(1,1), 'padding':'VALID', 'activation_fn': None}).freeze()
                     )
                 }).freeze()
@@ -281,7 +282,7 @@ class CALSTMParams(dlc.HyperParams):
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == 1, 'num_units of the final layer of the att_kernel should equal 1'
             assert self.att_layers.layers[-1].activation_fn == None ## Softmax activation will be added after squeezing dims
-            assert self.att_layers.layers[-1].dropout == None ## No droput before softmax activation
+            assert self.att_layers.layers[-1].dropout == None ## No droput in the softmax layer
 
         elif self.att_model == 'MLP_full':
             self.att_layers = MLPParams(self).updated({
@@ -289,7 +290,7 @@ class CALSTMParams(dlc.HyperParams):
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None, 'dropout': tf.nn.softmax}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
@@ -632,231 +633,3 @@ def make_hyper(initVals={}, freeze=True):
         HYPER.freeze()
 
     return HYPER
-
-# @staticmethod of CALSTMParams
-# def makeProto(GLOBAL=GlobalParams()):
-#     """
-#     Trickle down parameters from GlobalParams down the params-tree. Strictly, this should be done
-#     inside __init__ because prototype is supposed to be static. However, I decided to do this inside
-#     proto so that all parameter updates are located in one place.
-#     """
-#     GLOBAL = GLOBAL.copy().updated({'dropout': None}) ## No dropout within CALSTM
-#     return GlobalParams.proto + (
-#     ### Attention Model Params ###
-#         PD('att_layers', 'MLP parameters for attention model', instanceof(tfc.MLPParams),
-#            tfc.MLPParams(GLOBAL).updated({
-#                 # Number of units in all layers of the attention model = D in the paper"s source-code.
-#                 'layers_units': (equalto('D', GLOBAL), ),
-#                 'activation_fn': tf.nn.tanh # = tanh in the paper's source code
-#                 ## 'dropout': None # Remove dropout in the attention model
-#                    }).freeze()
-#             ),
-#         PD('att_share_weights', 'Whether the attention model should share weights across the "L" image locations or not.'
-#            'Choosing "True" conforms to the paper resulting in a (D+n,att_1_n) weight matrix. Choosing False will result in a MLP with (L*D+n,att_1_n) weight matrix. ',
-#            boolean,
-#            True),
-#         PD('att_weighted_gather', 'The paper"s source uses an affine transform with trainable weights, to narrow the output of the attention'
-#            "model from (B,L,dimctx) to (B,L,1). Its like an embedding matrix."
-#            "I have an alternative implementation that simply averages the matrix (B,L,dimctx) to (B,L,1)."
-#            "Default value however, is True in conformance with the paper's implementation.",
-#            (True, False),
-#            True),
-#     ### Decoder LSTM Params ###
-#         PD('decoder_lstm', 'Decoder LSTM parameters. At this time only one layer is supported.',
-#            instanceof(tfc.RNNParams),
-#            tfc.RNNParams(GLOBAL).updated({
-#                 'B': equalto('B', GLOBAL),
-#                 'i': None, ## size of input vector + z_t. Set dynamically.
-#                  ## paper uses a value of n=1000
-#                 ## 'layers_units': (equalto('n', GLOBAL),),
-#                 'layers_units': (equalto('n', GLOBAL), equalto('n', GLOBAL),),
-#                 ## 'dropout': None # No dropout by default
-#                 })
-#             )
-#     )
-
-# @staticmethod of Im2LatexModelParams
-# def makeProto(GLOBAL=GlobalParams()):
-#     return GlobalParams.proto + (
-#     ### Training Parameters ####
-#         PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
-#             'of the bin-size',
-#             boolean,
-#             True
-#             ),
-#         PD('squash_input_seq', '(boolean): Remove whitespace from target sequences',
-#             boolean,
-#             False
-#             ),
-#         PD('input_queue_capacity', 'Capacity of input queue.',
-#             integer(1),
-#             LambdaVal(lambda _, d: d.num_gpus * 3)
-#             ),
-#         PD('DecodingSlack',
-#             "Since we ignore blanks/spaces in loss and accuracy measurement, the network is free "
-#             "to insert blanks into the decoded/predicted sequence. Therefore the predicted sequence "
-#             "can be arbitrarily long. However, we need to limit the max decoded sequence length. We "
-#             "do so by determining the extra slack to give to the network - the more slack we give it "
-#             "presumably that much easier the learning will be. This parameter includes that slack. In "
-#             "other words, MaxDecodeLen = MaxSeqLen + DecodingSlack",
-#             integer(0),
-#             20
-#             ),
-#         PD('MaxDecodeLen',
-#             "See the description for MaxSeqLen and DecodingSlack",
-#             integer(151),
-#             LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
-#             ),
-#         PD('no_ctc_merge_repeated',
-#            "(boolean): Negated value of ctc_merge_repeated argubeamsearch_length_penatlyment for ctc operations",
-#            boolean,
-#            True),
-#         PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
-#             integer(1)
-#             ),
-#         PD('seq2seq_beam_width', 'Beam Width to use for seq2seq.BeamSearchDecoder, which is different from the ctc_beamsearch_decoder',
-#             integer(1)
-#             ),
-#         PD('beamsearch_length_penalty',
-#             'length_penalty_weight used by beamsearch decoder. Same as alpha value of length-penalty described in https://arxiv.org/pdf/1609.08144.pdf'
-#             'In the paper they used a value of alpha in the range [0.6,0.7]. A value of 0 turns length-penalty off.',
-#             decimal(0.,1.),
-#             0.6
-#             ),
-#         PD('swap_memory',
-#            'swap_memory option to tf.scan',
-#             boolean,
-#             False
-#             ),
-#         PD('tf_session_allow_growth',
-#            'tf ConfigProto.gpu_option_allow_growth. Setting this will allow the gpu memory to be allocated incrementally instead of all at once.',
-#             boolean,
-#             False
-#             ),
-#         PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
-#            instanceof(float),
-#            0.0001 # default in tf.train.AdamOptimizer is 0.001
-#           ),
-#         PD('optimizer',
-#            'tensorflow optimizer function (e.g. AdamOptimizer).',
-#            instanceof(tf.train.Optimizer),
-#            ## Value set in self._trickledown
-#            ## tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
-#            ),
-#         PD('no_towers', 'Should be always set to False. Indicates code-switch to build without towers which will not work',
-#            (False,),
-#            False
-#            ),
-#         PD('num_gpus', 'Number of GPUs employed in parallel',
-#            integer(1)
-#            ),
-#         PD('data_reader_B', 'batch_size for the data_reader', 
-#            integer(1),
-#            LambdaVal(lambda _, d: d.B * d.num_gpus)
-#            ),
-#     ### Embedding Layer ###
-#         PD('embeddings_initializer', 'Initializer for embedding weights', 
-#             iscallable(),
-#            ## tf.contrib.layers.xavier_initializer()
-#            equalto('weights_initializer')
-#            ),
-#     PD('embeddings_regularizer',
-#           'L1 / L2 norm regularization',
-#           iscallableOrNone(),
-#           equalto('weights_regularizer')
-#           ),
-#     ### ConvNet Params ###
-#         PD('CONVNET', 'ConvStackParams for the convent',
-#             instanceofOrNone(ConvStackParams),
-#             ## Value is set dynamically inside make_hyper
-#             ),
-#         PD('image_frame_width',
-#             'Width of an extra padding frame around the (possibly already padded) image. This extra padding is used '
-#             'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
-#             'in the first conv-net layer without losing any information. The effect of doing this is to simulate SAME padding '
-#             'but using custom padding values (background color in this case) instead of zeroes (which is what SAME padding would do). '
-#             'This value should be equal to (kernel_size-1)/2 using kernel_size of the first convolution layer.'
-#             ,
-#             integer(),
-#             LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0]-1)/2 )
-#             ## Dynamically set to = (kernel_size-1)/2 given kernel_size of first conv-net layer
-#             ),
-#         PD('image_shape',
-#             'Shape of input images. Should be a python sequence.'
-#             '= image_shape_unpadded + image_frame_width around it',
-#             issequenceof(int),
-#             LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
-#             ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
-#             ),
-#     ### Decoder CALSTM Params ###
-#         PD('CALSTM_STACK',
-#            'sequence of CALSTMParams, one for each CALSTM layer in the stack. The paper '
-#            "has code for more than one layer, but mentions that it is not well-tested. I take that to mean "
-#            "that the published results are based on one layer alone.",
-#            issequenceof(CALSTMParams)
-#            ),
-#     ### Output MLP
-#         PD('output_follow_paper',
-#            '(boolean): Output deep layer uses some funky logic in the paper instead of a straight MLP'
-#            'Setting this value to True (default) will follow the paper"s logic. Otherwise'
-#            "a straight MLP will be used.",
-#            boolean,
-#            True
-#            ),
-#         PD('output_layers',
-#            "(MLPParams): Parameters for the output MLP. The last layer outputs the logits and therefore "
-#            "must have num_units = K. If output_follow_paper==True, an additional initial layer is created "
-#            "with num_units = m and activtion tanh. Note: In the paper all layers have num_units=m",
-#            instanceof(tfc.MLPParams),
-#                tfc.MLPParams(GLOBAL).updated({
-#                     ## One layer with num_units = m is added if output_follow_paper == True
-#                     ## Last layer must have num_units = K because it outputs logits.
-#                     ## paper has all layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-#                     'layers_units': (equalto('m',GLOBAL), equalto('K',GLOBAL)),
-#                     'activation_fn': tf.nn.relu, # paper has it set to relu
-#                     'op_name': 'yLogits_MLP'
-#                     }).freeze()
-#             ),
-#     ### Initializer MLP ###
-#         PD('init_model',
-#            'MLP stack of the init_state model. In addition to the stack specified here, an additional FC '
-#            "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
-#            "Hence, this is a 'multi-headed' MLP because it has multiple top-layers.",
-#            instanceof(tfc.MLPParams),
-#                tfc.MLPParams(GLOBAL).updated({
-#                    'layers_units': (equalto('D', GLOBAL),), ## The paper's source sets all hidden units to D
-#                    ## paper sets hidden activations=relu and final=tanh
-#                    'activation_fn': tf.nn.relu
-#                    }).freeze()
-#            ),
-#         PD('init_model_final_layers', '',
-#            instanceof(tfc.FCLayerParams),
-#                tfc.FCLayerParams(GLOBAL).updated({
-#                    ## num_units to be set dynamically
-#                    ## paper sets hidden activations=relu and final=tanh
-#                    'activation_fn': tf.nn.tanh
-#                    }).freeze()
-#            ),
-#     ### Loss / Cost Layer ###
-#         PD('sum_logloss',
-#            'Whether to normalize log-loss per sample as in standard log perplexity '
-#            'calculation or whether to just sum up log-losses as in the paper. Defaults'
-#            'to True in conformance with the paper.',
-#            boolean,
-#            True
-#           ),
-#         PD('MeanSumAlphaEquals1',
-#           '(boolean): When calculating the alpha penalty, the paper uses the term: '
-#            'square{1 - sum_over_t{alpha_t_i}}). This assumes that the mean sum_over_t should be 1. '
-#            "However, that's not true, since the mean of sum_over_t term should be C/L. This "
-#            "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
-#            "The default value is True in conformance with the paper.",
-#           boolean,
-#           True),
-#         PD('pLambda', 'Lambda value for alpha penalty',
-#            decimal(0),
-#            0.0005), # default in the paper is 00001
-#         PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
-#            integer(1),
-#            5)
-#     )
