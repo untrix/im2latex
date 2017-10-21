@@ -275,8 +275,8 @@ class CALSTMParams(dlc.HyperParams):
                 'op_name': 'MLP_shared',
                 # Number of units in all layers of the attention model = D in the paper"s source-code.
                 'layers': (
-                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
                     FCLayerParams(self).updated({'num_units': 1,      'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
@@ -288,9 +288,9 @@ class CALSTMParams(dlc.HyperParams):
             self.att_layers = MLPParams(self).updated({
                 'op_name': 'MLP_full',
                 'layers': (
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None,       'dropout': None}).freeze(),
                     )
                 }).freeze()
             assert self.att_layers.layers[-1].num_units == self.L, 'num_units of the final layer of the att_MLP should equal L(%d)'%self.L
