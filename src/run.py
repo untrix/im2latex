@@ -122,6 +122,10 @@ def main():
     parser.add_argument("--squash-input-seq", dest="squash_input_seq", action='store_true',
                         help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
                         default=False)
+    parser.add_argument("--num-snapshots", dest="num_snapshots", type=int,
+                        help="Number of latest snapshots to save. Defaults to 50 if unspecified",
+                        default=50)
+
 
     args = parser.parse_args()
     data_folder = args.data_folder
@@ -141,7 +145,8 @@ def main():
         vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
 
     if args.restore_logdir is not None:
-        assert args.logdir is None, 'Only one of --args-logdir and --logdir can be specified.'
+        assert args.logdir is None, 'Only one of --restore-logdir and --logdir can be specified.'
+        assert args.logdir_tag is None, "--logdir-tag can't be specified alongside --logdir"
         tb = tfc.TensorboardParams({'tb_logdir': os.path.dirname(args.restore_logdir)}).freeze()
     elif args.logdir is not None:
         tb = tfc.TensorboardParams({'tb_logdir': args.logdir, 'logdir_tag': args.logdir_tag}).freeze()
@@ -157,6 +162,7 @@ def main():
                                     'print_steps': args.print_steps,
                                     'num_steps': args.num_steps,
                                     'num_epochs': args.num_epochs,
+                                    'num_snapshots': args.num_snapshots,
                                     'data_dir': data_folder,
                                     'generated_data_dir': os.path.join(data_folder, 'generated2'),
                                     'image_dir': image_folder,
@@ -217,7 +223,7 @@ def main():
     logger.addHandler(fh)
     dtc.setLogLevel(logger, args.logging_level)
 
-    logger.info(' '.join(sys.argv[1:]))
+    logger.info(' '.join(sys.argv))
     logger.info('\n#################### Default Param Overrides: ####################\n%s',globalParams.pformat())
     logger.info('##################################################################\n')
     logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())

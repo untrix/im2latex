@@ -870,27 +870,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-# def sync_testing_towers2(hyper, tower_ops):
-#     return dlc.Properties({
-#         'top1_lens': None, # (n*B,)
-#         'top1_mean_ed': None, # scalar
-#         'top1_accuracy': None, # scalar
-#         'top1_num_hits': None, # scalar
-#         'top1_ids': None,# (n*B,)
-#         'bok_ids': None,# (n*B,)
-#         'y_s': None, # (n*B, T)
-#         'logs_top1': None,
-#         'logs_topK': None,
-#         'ph_top1_seq_lens': None,
-#         'ph_edit_distance': None,
-#         'ph_num_hits': None,
-#         'ph_accuracy': None,
-#         'ph_valid_time': None,
-#         'ph_BoK_distance': None,
-#         'ph_BoK_accuracy': None,
-#         'logs_agg_top1': None,
-#         'logs_agg_bok': None
-#         })
 
 def sync_testing_towers(hyper, tower_ops):
     n = len(tower_ops)
