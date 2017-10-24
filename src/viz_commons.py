@@ -27,6 +27,7 @@ import pandas as pd
 import numpy as np
 import data_commons as dtc
 import dl_commons as dlc
+import h5py
 
 class VisualizeDir(object):
     def __init__(self, storedir, gen_datadir='../data/generated2'):
@@ -66,7 +67,7 @@ class VisualizeDir(object):
     
     @property
     def max_steps(self):
-        steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir)]
+        steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
         epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
         return sorted(steps)[-1], sorted(epoch_steps)[-1]
         
@@ -110,20 +111,29 @@ class VisualizeDir(object):
         
         ## each token's string version - excepting backslash - has a space appended to it,
         ## therefore the string output should be compile if the prediction was syntactically correct
+        ar1 = ["".join(row) for row in df_str.itertuples(index=False)]
         if key2 == None:
-            return pd.DataFrame(["".join(row) for row in df_str.itertuples(index=False)])
+            return pd.DataFrame(ar1)
         else:
+            ar2 = ["".join(row) for row in df_str2.itertuples(index=False)]
             if mingle:
-                ar1 = ["".join(row) for row in df_str.itertuples(index=False)]
-                ar2 = ["".join(row) for row in df_str2.itertuples(index=False)]
-                data = {'%s_%d %s / %s\t\t(%s)'%(graph, step, key, key2, self._storedir): [e for t in zip(ar1, ar2) for e in t]}
+                # d = [(i,e) for i,t in enumerate(zip(ar1, ar2)) for e in t]
+                # d = zip(*d)
+                # index = d[0]
+                # data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d[1]}
+                d = [e for t in zip(ar1, ar2) for e in t]
+                data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d}
+                index = ['%d (%s)'%(i,l) for i in range(len(ar1)) for l in ('k1', 'k2')]
             else:
-                data = {'%s_%d.%s\t\t(%s)'%(graph, step, key, self._storedir): ["".join(row) for row in df_str.itertuples(index=False)], '%s_%d.%s\t\t(%s)'%(graph, step, key2, self._storedir): ["".join(row) for row in df_str2.itertuples(index=False)]}
-
-            df = pd.DataFrame(data)
+                data = {'%s\t%s_%d\t[%s]'%(key, graph, step, self._storedir): ar1, '%s\t%s_%d\t[%s]'%(key2, graph, step, self._storedir): ar2}
+                index = range(len(ar1))
+            df = pd.DataFrame(data=data, index=index)
 #             df.style.set_caption('%s/%s_%s'%(self._storedir, graph, step))
             return df
-        
+    
+    def alpha(self, graph, step, key, key2=None):
+        pass
+
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
         def get_step(f):

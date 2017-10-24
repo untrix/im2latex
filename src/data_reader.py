@@ -344,7 +344,7 @@ class BatchImageIterator2(ShuffleIterator):
                                })
 
 
-InpTup = collections.namedtuple('InpTup', ('y_s', 'seq_len', 'y_ctc', 'ctc_len', 'im'))
+InpTup = collections.namedtuple('InpTup', ('y_s', 'seq_len', 'y_ctc', 'ctc_len', 'im', 'image_name'))
 class BatchImageIterator3(ShuffleIterator):
     def __init__(self,
                  df,
@@ -400,13 +400,17 @@ class BatchImageIterator3(ShuffleIterator):
                                'step': nxt.step # scalar
                                })
 
+    @property
+    def out_tup_types(self):
+        int_type = self._hyper.int_type
+        return (int_type, int_type, int_type, int_type, self._hyper.dtype, tf.string)
+
     def get_pyfunc(self):
         def func(x=None):
             d = self.next()
-            return InpTup(d.y_s, d.seq_len, d.y_ctc, d.ctc_len, d.im)
+            return InpTup(d.y_s, d.seq_len, d.y_ctc, d.ctc_len, d.im, d.image_name)
 
-        int_type = self._hyper.int_type
-        return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
+        return tf.py_func(func,[0], self.out_tup_types)
 
     def get_pyfunc_with_split(self, num_splits):
         def split(a, num, size):
@@ -423,12 +427,13 @@ class BatchImageIterator3(ShuffleIterator):
                           split(d.seq_len,  num_splits,split_size), 
                           split(d.y_ctc,    num_splits,split_size), 
                           split(d.ctc_len,  num_splits,split_size), 
-                          split(d.im,       num_splits,split_size))
+                          split(d.im,       num_splits,split_size),
+                          split(d.image_name,  num_splits,split_size))
 
         split_size = self._batch_size // num_splits
         assert (self._batch_size / num_splits) == split_size, 'Batchsize:%d is not divisible by num_splits: %d'%(self._batch_size, num_splits)
         int_type = self._hyper.int_type
-        return tf.py_func(func,[0],[int_type, int_type, int_type, int_type, self._hyper.dtype])
+        return tf.py_func(func,[0], self.out_tup_types)
 
 class BatchContextIterator(BatchImageIterator3):
     def __init__(self,

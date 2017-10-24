@@ -150,10 +150,7 @@ def main(raw_data_folder,
             with tf.name_scope('Training'):
                 ## hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)hyper.data_reader_
                 with tf.variable_scope('InputQueue'):
-                    train_q = tf.FIFOQueue(hyper.input_queue_capacity,
-                                        (hyper.int_type, hyper.int_type,
-                                        hyper.int_type, hyper.int_type,
-                                        hyper.dtype))
+                    train_q = tf.FIFOQueue(hyper.input_queue_capacity, train_it.out_tup_types)
                     tf_enqueue_train_queue = train_q.enqueue_many(train_it.get_pyfunc_with_split(hyper.num_gpus))
                     tf_close_train_queue = train_q.close(cancel_pending_enqueues=True)
                 for i in range(args.num_gpus):
@@ -178,10 +175,7 @@ def main(raw_data_folder,
             with tf.name_scope('Validation'):
                 hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.variable_scope('InputQueue'):
-                    valid_q = tf.FIFOQueue(hyper.input_queue_capacity,
-                                        (hyper.int_type, hyper.int_type,
-                                        hyper.int_type, hyper.int_type,
-                                        hyper.dtype))
+                    valid_q = tf.FIFOQueue(hyper.input_queue_capacity, valid_it.out_tup_types)
                     enqueue_op2 = valid_q.enqueue_many(valid_it.get_pyfunc_with_split(hyper.num_gpus))
                     close_queue2 = valid_q.close(cancel_pending_enqueues=True)
                 for i in range(args.num_gpus):
@@ -273,16 +267,17 @@ def main(raw_data_folder,
                                     train_ops.ctc_loss,
                                     train_ops.tb_logs
                                 ))
-                            predicted_ids_list = y_s_list = None
+                            predicted_ids_list = y_s_list = alpha = image_name_list = None
                         else:
-                            _, ctc_loss, log, y_s_list, predicted_ids_list, alpha = session.run(
+                            _, ctc_loss, log, y_s_list, predicted_ids_list, alpha, image_name_list = session.run(
                                 (
                                     train_ops.train, 
                                     train_ops.ctc_loss,
                                     train_ops.tb_logs,
                                     train_ops.y_s_list,
                                     train_ops.predicted_ids_list,
-                                    train_ops.alpha
+                                    train_ops.alpha,
+                                    train_ops.image_name_list
                                 ))
 
                         ## Accumulate metrics
@@ -300,7 +295,8 @@ def main(raw_data_folder,
                             with dtc.Storer(args, 'training', step) as storer:
                                 storer.write('predicted_ids', predicted_ids_list, np.int16)
                                 storer.write('y', y_s_list, np.int16)
-                                storer.write('alpha', alpha, np.float32)
+                                storer.write('alpha', alpha, np.float32, batch_axis=1)
+                                storer.write('image_name', image_name_list, dtype=np.unicode_)
 
                             accuracy_res = evaluate(
                                 session,
@@ -465,9 +461,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits
                                     ))
-                top1_ids_list = y_s_list = None
+                top1_ids_list = y_s_list = top1_alpha_list = image_name_list = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list, image_name_list = session.run((
                 # l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
@@ -476,6 +472,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
                                     valid_ops.top1_alpha_list,
+                                    valid_ops.image_name_list
                                     # valid_ops.all_ids_list,
                                     # valid_ops.output_ids_list
                                     ))
@@ -493,6 +490,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                     storer.write('predicted_ids', top1_ids_list, np.int16)
                     storer.write('y', y_s_list, np.int16)
                     storer.write('alpha', top1_alpha_list, batch_axis=1)
+                    storer.write('image_name', image_name_list, dtype=np.unicode_)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 

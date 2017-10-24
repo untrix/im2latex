@@ -103,11 +103,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 self._seq_len = tf.identity(inp_tup.seq_len, name='seq_len')
                 self._y_ctc = tf.identity(inp_tup.y_ctc, name='y_ctc')
                 self._ctc_len = tf.identity(inp_tup.ctc_len, name='ctc_len')
+                self._image_name = tf.identity(inp_tup.image_name, name="image_name")
                 ## Set tensor shapes because they get forgotten in the queue
                 self._y_s.set_shape((self.C.B, None))
                 self._seq_len.set_shape((self.C.B,))
                 self._y_ctc.set_shape((self.C.B, None))
                 self._ctc_len.set_shape((self.C.B,))
+                self._image_name.set_shape((self.C.B,))
 
                 ## Image features/context
                 if self._params.build_image_context == 0:
@@ -372,7 +374,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """ Build the training graph of the model """
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
-#                with tf.variable_scope('TrainingGraph'):
                 ## tf.scan requires time-dimension to be the first dimension
                 # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s') # (T, B)
                 y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
@@ -416,7 +417,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     log_time = tf.summary.scalar('training/time_per100', ph_train_time, collections=['training_aggregate'])
 
                 return optimizer_ops.updated({
-                                              'inp_q':self._inp_q
+                                              'inp_q':self._inp_q,
+                                              'image_name': self._image_name
                                             #   'tb_logs': tb_logs,
                                             #   'ph_train_time': ph_train_time,
                                             #   'log_time': log_time
@@ -836,6 +838,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
+                    'image_name': self._image_name, #[(B,), ...]
                     'y_s': self._y_s, # (B, T)
                     'top1_ids': top1_ids, # (B, T)
                     'top1_scores': top1_seq_scores, # (B,)
@@ -870,6 +873,65 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
+def sync_training_towers(hyper, tower_ops, global_step):
+    with tf.variable_scope('SyncTowers') as var_scope:
+        def gather(prop_name):
+            return [o[prop_name] for o in tower_ops]
+        def get_mean(prop_name, op_name=None):
+            return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
+        def get_sum(prop_name, op_name=None):
+            return tf.reduce_sum(gather(prop_name), name=op_name or prop_name)
+        def concat(prop_name, axis=0):
+            return tf.concat(gather(prop_name), axis=axis)
+
+        log_likelihood = get_mean('log_likelihood')
+        ctc_loss = get_mean('ctc_loss')
+        alpha_penalty = get_mean('alpha_penalty')
+        reg_loss = get_sum('reg_loss')
+        if hyper.use_ctc_loss:
+            cost = ctc_loss + alpha_penalty + reg_loss
+        else:
+            cost = log_likelihood + alpha_penalty + reg_loss
+
+        grads = average_gradients(gather('grads'))
+        with tf.variable_scope('optimizer'):
+            apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
+
+        with tf.variable_scope('Instrumentation'):
+            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
+            tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
+            tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
+            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
+            tf.summary.scalar('training/total_cost/', cost, collections=['training'])
+            tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
+            tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
+            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
+            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
+            tf.summary.histogram('training/ctc_ed/', concat('ctc_ed'), collections=['training'])
+            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
+
+            tb_logs = tf.summary.merge(tf.get_collection('training'))
+
+            ## Placeholder for injecting training-time from outside
+            ph_train_time =  tf.placeholder(hyper.dtype)
+            ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
+            log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
+
+    return dlc.Properties({
+        'image_name_list': gather('image_name'), # [(B,), ...]
+        'alpha': concat('alpha', axis=1), # [(N, B, H, W, T), ...]
+        'log_likelihood': log_likelihood, # scalar
+        'ctc_loss': ctc_loss, # scalar
+        'alpha_penalty': alpha_penalty, # scalar
+        'reg_loss': reg_loss, # scalar
+        'cost': cost, # scalar
+        'train': apply_grads, # op
+        'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
+        'y_s_list': gather('y_s'), # [(B,T),...]
+        'tb_logs':tb_logs, # summary string
+        'ph_train_time': ph_train_time, # scalar
+        'log_time': log_time # summary string
+        })
 
 def sync_testing_towers(hyper, tower_ops):
     n = len(tower_ops)
@@ -948,6 +1010,7 @@ def sync_testing_towers(hyper, tower_ops):
             logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
     return dlc.Properties({
+        'image_name_list': gather('image_name'),
         'top1_lens': top1_lens, # (n*B,)
         'top1_len_ratio': top1_len_ratio, #(n*B,)
         'top1_mean_ed': top1_mean_ed, # scalar
@@ -971,63 +1034,4 @@ def sync_testing_towers(hyper, tower_ops):
         'ph_BoK_accuracy': ph_BoK_accuracy,
         'logs_agg_top1': logs_agg_top1,
         'logs_agg_bok': logs_agg_bok
-        })
-
-def sync_training_towers(hyper, tower_ops, global_step):
-    with tf.variable_scope('SyncTowers') as var_scope:
-        def gather(prop_name):
-            return [o[prop_name] for o in tower_ops]
-        def get_mean(prop_name, op_name=None):
-            return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
-        def get_sum(prop_name, op_name=None):
-            return tf.reduce_sum(gather(prop_name), name=op_name or prop_name)
-        def concat(prop_name, axis=0):
-            return tf.concat(gather(prop_name), axis=axis)
-
-        log_likelihood = get_mean('log_likelihood')
-        ctc_loss = get_mean('ctc_loss')
-        alpha_penalty = get_mean('alpha_penalty')
-        reg_loss = get_sum('reg_loss')
-        if hyper.use_ctc_loss:
-            cost = ctc_loss + alpha_penalty + reg_loss
-        else:
-            cost = log_likelihood + alpha_penalty + reg_loss
-
-        grads = average_gradients(gather('grads'))
-        with tf.variable_scope('optimizer'):
-            apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
-
-        with tf.variable_scope('Instrumentation'):
-            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
-            tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
-            tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
-            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
-            tf.summary.scalar('training/total_cost/', cost, collections=['training'])
-            tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
-            tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
-            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
-            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
-            tf.summary.histogram('training/ctc_ed/', concat('ctc_ed'), collections=['training'])
-            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
-
-            tb_logs = tf.summary.merge(tf.get_collection('training'))
-
-            ## Placeholder for injecting training-time from outside
-            ph_train_time =  tf.placeholder(hyper.dtype)
-            ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
-            log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
-
-    return dlc.Properties({
-        'alpha': concat('alpha', axis=1),
-        'log_likelihood': log_likelihood, # scalar
-        'ctc_loss': ctc_loss, # scalar
-        'alpha_penalty': alpha_penalty, # scalar
-        'reg_loss': reg_loss, # scalar
-        'cost': cost, # scalar
-        'train': apply_grads, # op
-        'predicted_ids_list': gather('predicted_ids'), # ((B,T),...)
-        'y_s_list': gather('y_s'), # ((B,T),...)
-        'tb_logs':tb_logs, # summary string
-        'ph_train_time': ph_train_time, # scalar
-        'log_time': log_time # summary string
         })

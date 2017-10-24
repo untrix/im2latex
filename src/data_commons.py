@@ -113,8 +113,8 @@ class Storer(object):
     def close(self):
         self._h5.close()
 
-    def write(self, key, ar, dtype=None, batch_axis=0):
-        if isinstance(ar, tuple) or isinstance(ar, list):
+    def write(self, key, ar, dtype=None, batch_axis=0, doUnwrap=True):
+        if (isinstance(ar, tuple) or isinstance(ar, list)) and doUnwrap:
             return self._write(key, ar, dtype, batch_axis)
         else:
             return self._write(key, [ar], dtype, batch_axis)
@@ -131,7 +131,11 @@ class Storer(object):
         max_shape = [max(d) for d in dims]
         ## We'll concatenate all arrays along axis=batch_axis
         max_shape[batch_axis] = sum(dims[batch_axis])
-        dataset = self._h5.create_dataset(key, max_shape, dtype=dtype, fillvalue=-2 if np.issubdtype(dtype, np.integer) else np.nan)
+        if dtype == np.unicode_:
+            dt = h5py.special_dtype(vlen=unicode)
+            dataset = self._h5.create_dataset(key, max_shape, dtype=dt)
+        else:
+            dataset = self._h5.create_dataset(key, max_shape, dtype=dtype, fillvalue=-2 if np.issubdtype(dtype, np.integer) else np.nan)
 
         def make_slice(row, shape, batch_axis):
             """
