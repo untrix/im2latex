@@ -31,7 +31,7 @@ import h5py
 import matplotlib.pyplot as plt
 from data_reader import ImagenetProcessor
 from mpl_toolkits.axes_grid1 import ImageGrid
-
+import matplotlib as mpl
 
 class VGGnetProcessor(ImagenetProcessor):
     def __init__(self, params, image_dir_):
@@ -62,11 +62,11 @@ def plotImage(image_detail, axes):
     title = os.path.splitext(os.path.basename(path))[0] + ' %s'%(image_data.shape,)
     axes.set_title( title )
     axes.set_xlim(-10,1500)
-    axes.imshow(image_data)
+    axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear')
     print 'plotted image ', path, ' with shape ', image_data.shape
     return
 
-def plotImages(image_details, fig=None):
+def plotImages(image_details, fig=None, dpi=None):
     """ 
     image_details should be an array of image path and image_data - [(path1, image_data1), (path2, image_data2) ...]
     where image_data is a int/float numpy array of shape MxN or MxNx3 or MxNx4 as required by axes.imshow. Also, do note
@@ -76,14 +76,20 @@ def plotImages(image_details, fig=None):
         plt.close(fig)
     except:
         pass
-    my_dpi = 96
-    fig = plt.figure(num=1, figsize=(15,15*len(image_details)), dpi=my_dpi)
-    grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L")
-    for i in range(len(image_details)):
-        plotImage(image_details[i], grid[i])
-        
-    return
 
+    # fig = plt.figure(num=fig, figsize=(15,15*len(image_details)), dpi=my_dpi)
+    # grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L")
+    # for i in range(len(image_details)):
+    #     plotImage(image_details[i], grid[i])
+
+    orig_dpi = plt.rcParams['figure.dpi']
+    with mpl.rc_context(rc={'figure.dpi': dpi or orig_dpi}):
+        fig = plt.figure(figsize=(15.,3.*len(image_details)))
+        grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L", aspect=False)
+        for i in range(len(image_details)):
+            plotImage(image_details[i], grid[i])
+
+    return
 
 class VisualizeDir(object):
     def __init__(self, storedir):
@@ -204,7 +210,7 @@ class VisualizeDir(object):
         df = self._df_train_image
         image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
                                                      df.width.loc[image_name], self._padded_im_dim )
-        plotImages([(image_name, image_data)])
+        plotImages([(image_name, image_data)], dpi=72)
         for i in xrange(T):
             pass
 
