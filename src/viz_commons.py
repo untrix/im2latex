@@ -28,9 +28,65 @@ import numpy as np
 import data_commons as dtc
 import dl_commons as dlc
 import h5py
+import matplotlib.pyplot as plt
+from data_reader import ImagenetProcessor
+from mpl_toolkits.axes_grid1 import ImageGrid
+
+
+class VGGnetProcessor(ImagenetProcessor):
+    def __init__(self, params, image_dir_):
+        ImagenetProcessor.__init__(self, params)
+
+    def get_one(self, image_name_, height_, width_, padded_dim_):
+        """Get image-array padded and aligned as it was done to extract vgg16 features using convnet.py."""
+        image_data = ImagenetProcessor.get_array(self, image_name_, height_, width_, padded_dim_)
+        whitened =  self.whiten(np.asarray([image_data]))
+        return whitened[0]
+
+    def get_array(self):
+        raise NotImplementedError()
+
+    def whiten(self, image_batch):
+        """
+        normalize values to lie between 0.0 and 1.0 as required by matplotlib.axes.Axes.imshow.
+        We skip the preprocessing required by VGGnet since we are not going to pass this into VGGnet.
+        Arguments:
+            image_batch: (ndarray) Batch of images.
+        """
+        assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
+        return image_batch / 255.0
+
+def plotImage(image_detail, axes):
+    path = image_detail[0]
+    image_data = image_detail[1]
+    title = os.path.splitext(os.path.basename(path))[0] + ' %s'%(image_data.shape,)
+    axes.set_title( title )
+    axes.set_xlim(-10,1500)
+    axes.imshow(image_data)
+    print 'plotted image ', path, ' with shape ', image_data.shape
+    return
+
+def plotImages(image_details, fig=None):
+    """ 
+    image_details should be an array of image path and image_data - [(path1, image_data1), (path2, image_data2) ...]
+    where image_data is a int/float numpy array of shape MxN or MxNx3 or MxNx4 as required by axes.imshow. Also, do note
+    that all elements of the arrays should have a value between 0.0 and 1.0 as required by axes.imshow.
+    """
+    try:
+        plt.close(fig)
+    except:
+        pass
+    my_dpi = 96
+    fig = plt.figure(num=1, figsize=(15,15*len(image_details)), dpi=my_dpi)
+    grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L")
+    for i in range(len(image_details)):
+        plotImage(image_details[i], grid[i])
+        
+    return
+
 
 class VisualizeDir(object):
-    def __init__(self, storedir, gen_datadir='../data/generated2'):
+    def __init__(self, storedir):
         self._storedir = storedir
         self._logdir = os.path.join(storedir, '..')
         try:
@@ -39,6 +95,10 @@ class VisualizeDir(object):
         except:
             self._hyper = dtc.load(self._storedir, 'hyper.pkl')
             self._args = dtc.load(self._storedir, 'args.pkl')
+        self._image_dir = self._args['image_dir']
+        self._generated_data_dir = gen_datadir = self._args['generated_data_dir']
+        self._data_dir = self._args['data_dir']
+        self._raw_data_dir = os.path.join(gen_datadir, 'training')
 
         self._word2id = pd.read_pickle(os.path.join(gen_datadir, 'dict_vocab.pkl'))
         i2w = pd.read_pickle(os.path.join(gen_datadir, 'dict_id2word.pkl'))
@@ -52,7 +112,17 @@ class VisualizeDir(object):
             else:
                 self._id2word[i] = w 
         self._id2word[self._word2id['id']['\\']] = '\\'
-    
+
+        ## Image processor to load and preprocess images
+        self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
+
+        ## Train/Test DataFrames
+        self._df_train = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))
+        self._df_train_image = self._df_train.copy()
+        self._df_train_image.index = self._df_train_image.image
+        # self._df_test = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))
+        self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
+
     @property
     def storedir(self):
         return self._storedir
@@ -83,7 +153,7 @@ class VisualizeDir(object):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
             return h5.keys()
 
-    def np(self, graph, step, key):
+    def nd(self, graph, step, key):
         """
         Args:
             graph: 'training' or 'validation'
@@ -94,16 +164,11 @@ class VisualizeDir(object):
             return h5[key][...]
     
     def df(self, graph, step, key):
-        return pd.DataFrame(self.np(graph, step, key))
+        return pd.DataFrame(self.nd(graph, step, key))
     
-    def words(self, graph, step, key, key2=None):
+    def words(self, graph, step, key):
         df = self.df(graph, step, key)
-        df2 = self.df(graph, step, key2) if (key2 is not None) else None
-        
-        if key2 is None:
-            return df.applymap(lambda x: self._id2word[x])
-        else:
-            return pd.DataFrame({'%s'%key: df.applymap(lambda x: self._id2word[x]), '%s'%key2: df2.applymap(lambda x: self._id2word[x])})
+        return df.applymap(lambda x: self._id2word[x])
 
     def strs(self, graph, step, key, key2=None, mingle=True):
         df_str = self.words(graph, step, key)
@@ -131,8 +196,19 @@ class VisualizeDir(object):
 #             df.style.set_caption('%s/%s_%s'%(self._storedir, graph, step))
             return df
     
-    def alpha(self, graph, step, key, key2=None):
-        pass
+    def alpha(self, graph, step, sample_num=0):
+        nd_words = self.words(graph, step, 'predicted_ids').iloc[sample_num].values
+        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_num] #(N,B,H,W,T)
+        image_name = self.nd(graph, step, 'image_name')[sample_num] #(B,)
+        T = len(nd_words)
+        df = self._df_train_image
+        image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
+                                                     df.width.loc[image_name], self._padded_im_dim )
+        plotImages([(image_name, image_data)])
+        for i in xrange(T):
+            pass
+
+        return image_data
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
@@ -188,24 +264,28 @@ class VisualizeDir(object):
                 print '%d files removed\n'%len(files_to_remove), pd.Series(files_to_remove)
         
 class VisualizeStep():
-    def __init__(self, visualizer, step):
+    def __init__(self, visualizer, graph, step):
         self._step = step
         self._visualizer = visualizer
+        self._graph = graph
         
-    def keys(self, graph):
-        return self._visualizer.keys(graph, self._step)
+    def keys(self):
+        return self._visualizer.keys(self._graph, self._step)
     
-    def np(self, graph, key):
-        return self._visualizer.np(graph, self._step, key)
+    def nd(self, key):
+        return self._visualizer.nd(self._graph, self._step, key)
     
-    def df(self, graph, step, key):
-        return pd.DataFrame.df(self.np(graph, step, key))
+    def df(self, step, key):
+        return pd.DataFrame.df(self.nd(self._graph, step, key))
     
-    def words(self, graph, key, key2=None):
-        return self._visualizer.words(graph, self._step, key, key2)
+    def words(self, key):
+        return self._visualizer.words(self._graph, self._step, key)
 
-    def strs(self, graph, key, key2=None, mingle=True):
-        return self._visualizer.strs(graph, self._step, key, key2, mingle)
+    def strs(self, key, key2=None, mingle=True):
+        return self._visualizer.strs(self._graph, self._step, key, key2, mingle)
+
+    def alpha(self, sample_num=0):
+        return self._visualizer.alpha(self._graph, self._step, sample_num)
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):

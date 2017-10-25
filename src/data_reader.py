@@ -111,6 +111,9 @@ class ImageProcessor3(object):
         if (height < padded_height) or (width < padded_width):
             ar = np.full((padded_height, padded_width, channels), 255.0, dtype=self._params.dtype_np)
             h = (padded_height - height)//2
+            ## BUG: Change to [h:h+height, self._params.image_frame_width:self._params.image_frame_width+width] = im_ar
+            ## as required by CONVNET when build_image_context==2. For all other cases the frame-width==0 and hence this
+            ## works.
             ar[h:h+height, 0:width] = im_ar
             im_ar = ar
         return im_ar
@@ -133,6 +136,9 @@ class ImageProcessor3_RGB(ImageProcessor3):
         ImageProcessor3.__init__(self, params, image_dir_, grayscale=False)
 
 class ImageProcessor3_BW(ImageProcessor3):
+    ## BUG: image_processor.get_array does not frame the x-axis as required by the CONVNET. The CONVNET requires a frame of 
+    ## width = hyper.image_frame_width to be padded around the image. While this is done implicitly for the y (height) axis,
+    ## it was overlooked for the x-axis.
     def __init__(self, params, image_dir_):
         ImageProcessor3.__init__(self, params, image_dir_, grayscale=True)
 
@@ -601,6 +607,9 @@ def create_BW_image_iterators(raw_data_dir_, hyper, args):
                                        args,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
+    ## BUG: image_processor.get_array does not frame the x-axis as required by the CONVNET. The CONVNET requires a frame of 
+    ## width = hyper.image_frame_width to be padded around the image. While this is done implicitly for the y (height) axis,
+    ## it was overlooked for the x-axis.
     image_processor = ImageProcessor3_BW(hyper, args.image_dir)
     batch_iterator_train = BatchImageIterator3(df_train,
                                                 raw_data_dir_,
