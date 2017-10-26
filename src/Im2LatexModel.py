@@ -613,6 +613,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         # 'global_step':global_step, # scalar
                         'log_likelihood': log_likelihood, # scalar
                         'ctc_loss': ctc_loss, # scalar
+                        'loss': ctc_loss if self.C.use_ctc_loss else log_likelihood,
                         'alpha_penalty': alpha_penalty, # scalar
                         'reg_loss': reg_loss, # scalar
                         'cost': cost, # scalar
@@ -702,12 +703,17 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## Extract Alpha Values for Debugging
                 ## states.shape=Im2LatexState(calstm_states=(CALSTMState(lstm_state=(LSTMStateTuple(c=[B, T, BW, n], h=[20, None, 10, 1000]), LSTMStateTuple(c=[20, None, 10, 1000], h=[20, None, 10, 1000])), alpha=[B, T, BW, L], ztop=[20, None, 10, 512]),), yProbs=[20, None, 10, 557])
                 alphas = []
+                betas  = []
                 for i in range(N):
                     alpha = tf.transpose(outputs.states.calstm_states[i].alpha, (0,2,3,1)) ## (B, T, BW, L) -> (B, BW, L, T)
                     alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1)) # (B, BW, L, T) -> (B, BW, H, W, T)
                     alphas.append(alpha)
+                    beta = tf.transpose(outputs.states.calstm_states[i].beta, (0,2,3,1)) ## (B, T, BW, 1) -> (B, BW, 1, T)
+                    betas.append(beta)
                 alphas = tf.stack(alphas, axis=0) # (N, B, BW, H, W, T)
+                betas  = tf.stack(betas,  axis=0) # (N, B, BW, 1, T)
                 assert alphas.shape.as_list() == [N, B, BW, H, W, None], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, None])
+                assert K.int_shape(betas) == (N, B, BW, 1, T), '%s != %s'%(K.int_shape(betas), (N, B, BW, 1, T))
 
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
@@ -845,6 +851,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_lens': top1_seq_lens, # (B,)
                     'top1_len_ratio': top1_len_ratio,  # (B,)
                     'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
+                    'top1_beta': betas[:, :, 0, :, :], ## (N, B, BW, 1, T) -> (N, B, 1, T)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
@@ -854,8 +861,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'all_seq_lens': bm_seq_lens, # (B, Seq2SeqBeamWidth)
                     'top1_num_hits': top1_num_hits, # scalar
                     'top1_accuracy': top1_accuracy, # scalar
-                    'top1_mean_ed': top1_mean_ed, # scalartop1_ids
+                    'top1_ed': top1_ed, #(B,)
+                    'top1_mean_ed': top1_mean_ed, # scalar
                     'bok_accuracy': bok_accuracy, # scalar
+                    'bok_ed': tf.squeeze(bok_ed, axis=[1], name='bok_ed'), #(B,)
                     'bok_mean_ed': bok_mean_ed, # scalar
                     'bok_seq_lens': bok_seq_lens, # (B,)
                     'bok_seq_scores': bok_seq_scores, #(B,)
@@ -917,21 +926,23 @@ def sync_training_towers(hyper, tower_ops, global_step):
             ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
             log_time = tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
 
-    return dlc.Properties({
-        'image_name_list': gather('image_name'), # [(B,), ...]
-        'alpha': concat('alpha', axis=1), # [(N, B, H, W, T), ...]
-        'log_likelihood': log_likelihood, # scalar
-        'ctc_loss': ctc_loss, # scalar
-        'alpha_penalty': alpha_penalty, # scalar
-        'reg_loss': reg_loss, # scalar
-        'cost': cost, # scalar
-        'train': apply_grads, # op
-        'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
-        'y_s_list': gather('y_s'), # [(B,T),...]
-        'tb_logs':tb_logs, # summary string
-        'ph_train_time': ph_train_time, # scalar
-        'log_time': log_time # summary string
-        })
+        return dlc.Properties({
+            'image_name_list': gather('image_name'), # [(B,), ...]
+            'alpha': concat('alpha', axis=1), # [(N, B, H, W, T), ...]
+            'log_likelihood': log_likelihood, # scalar
+            'ctc_loss': ctc_loss, # scalar
+            'loss': ctc_loss if hyper.use_ctc_loss else log_likelihood, # scalar
+            'alpha_penalty': alpha_penalty, # scalar
+            'reg_loss': reg_loss, # scalar
+            'cost': cost, # scalar
+            'train': apply_grads, # op
+            'ctc_ed': concat('ctc_ed'), # (B,)
+            'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
+            'y_s_list': gather('y_s'), # [(B,T),...]
+            'tb_logs':tb_logs, # summary string
+            'ph_train_time': ph_train_time, # scalar
+            'log_time': log_time # summary string
+            })
 
 def sync_testing_towers(hyper, tower_ops):
     n = len(tower_ops)
@@ -1009,29 +1020,32 @@ def sync_testing_towers(hyper, tower_ops):
             logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
             logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
-    return dlc.Properties({
-        'image_name_list': gather('image_name'),
-        'top1_lens': top1_lens, # (n*B,)
-        'top1_len_ratio': top1_len_ratio, #(n*B,)
-        'top1_mean_ed': top1_mean_ed, # scalar
-        'top1_accuracy': top1_accuracy, # scalar
-        'top1_num_hits': top1_num_hits, # scalar
-        'top1_ids_list': gather('top1_ids'),# ((B,T),...)
-        'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
-        'bok_ids_list': gather('bok_ids'),# ((B,T),...)
-        'y_s_list': gather('y_s'), # ((B,T),...)
-        'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)
-        'output_ids_list': gather('output_ids'),
-        'logs_top1': logs_top1,
-        'logs_topK': logs_topK,
-        'ph_top1_seq_lens': ph_top1_seq_lens,
-        'ph_top1_len_ratio': ph_top1_len_ratio,
-        'ph_edit_distance': ph_edit_distance,
-        'ph_num_hits': ph_num_hits,
-        'ph_accuracy': ph_accuracy,
-        'ph_valid_time': ph_valid_time,
-        'ph_BoK_distance': ph_BoK_distance,
-        'ph_BoK_accuracy': ph_BoK_accuracy,
-        'logs_agg_top1': logs_agg_top1,
-        'logs_agg_bok': logs_agg_bok
-        })
+        return dlc.Properties({
+            'image_name_list': gather('image_name'),
+            'top1_lens': top1_lens, # (n*B,)
+            'top1_len_ratio': top1_len_ratio, #(n*B,)
+            'top1_ed': concat('top1_ed'), # (B,)
+            'bok_ed': concat('bok_ed'), # (B,)
+            'top1_mean_ed': top1_mean_ed, # scalar
+            'top1_accuracy': top1_accuracy, # scalar
+            'top1_num_hits': top1_num_hits, # scalar
+            'top1_ids_list': gather('top1_ids'),# ((B,T),...)
+            'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
+            'top1_beta_list': gather('top1_beta'), # [(N, B, 1, T), ...]
+            'bok_ids_list': gather('bok_ids'),# ((B,T),...)
+            'y_s_list': gather('y_s'), # ((B,T),...)
+            'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)
+            'output_ids_list': gather('output_ids'),
+            'logs_top1': logs_top1,
+            'logs_topK': logs_topK,
+            'ph_top1_seq_lens': ph_top1_seq_lens,
+            'ph_top1_len_ratio': ph_top1_len_ratio,
+            'ph_edit_distance': ph_edit_distance,
+            'ph_num_hits': ph_num_hits,
+            'ph_accuracy': ph_accuracy,
+            'ph_valid_time': ph_valid_time,
+            'ph_BoK_distance': ph_BoK_distance,
+            'ph_BoK_accuracy': ph_BoK_accuracy,
+            'logs_agg_top1': logs_agg_top1,
+            'logs_agg_bok': logs_agg_bok
+            })

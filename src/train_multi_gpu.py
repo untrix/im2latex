@@ -255,24 +255,24 @@ def main(raw_data_folder,
                 if args.doTrain:
                     logger.info('Starting training')
                     ## Set metrics
-                    train_time = []; ctc_losses = []; logs = []
+                    train_time = []; losses = []; logs = []
                     while not coord.should_stop():
                         step_start_time = time.time()
                         step += 1
                         doLog = do_log(step, args, train_it, valid_it)
                         if not doLog:
-                            _, ctc_loss, log = session.run(
+                            _, loss, log = session.run(
                                 (
                                     train_ops.train,
-                                    train_ops.ctc_loss,
+                                    train_ops.loss,
                                     train_ops.tb_logs
                                 ))
                             predicted_ids_list = y_s_list = alpha = image_name_list = None
                         else:
-                            _, ctc_loss, log, y_s_list, predicted_ids_list, alpha, image_name_list = session.run(
+                            _, loss, log, y_s_list, predicted_ids_list, alpha, image_name_list = session.run(
                                 (
                                     train_ops.train, 
-                                    train_ops.ctc_loss,
+                                    train_ops.loss,
                                     train_ops.tb_logs,
                                     train_ops.y_s_list,
                                     train_ops.predicted_ids_list,
@@ -281,7 +281,7 @@ def main(raw_data_folder,
                                 ))
 
                         ## Accumulate metrics
-                        ctc_losses.append(ctc_loss[()])
+                        losses.append(loss[()])
                         logs.append(log)
                         train_time.append(time.time()-step_start_time)
 
@@ -320,8 +320,8 @@ def main(raw_data_folder,
                                 
                             ## emit training graph metrics of the minimum and maximum loss batches
                             
-                            i_min = np.argmin(ctc_losses)
-                            i_max = np.argmax(ctc_losses)
+                            i_min = np.argmin(losses)
+                            i_max = np.argmax(losses)
                             i_min_step = log_step(step-args.print_steps + i_min+1)
                             i_max_step = log_step(step-args.print_steps + i_max+1)
                             if i_min < i_max:
@@ -347,7 +347,7 @@ def main(raw_data_folder,
                             # logger.info( '############ END OF RANDOM TRAINING BATCH ############')
 
                             ## Reset metrics
-                            train_time = []; ctc_losses = []; logs = []
+                            train_time = []; losses = []; logs = []
 
                 ############################# Validation Only ##############################
                 elif args.doValidate:

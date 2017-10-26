@@ -34,7 +34,7 @@ import collections
 from hyper_params import CALSTMParams
 
 
-CALSTMState = collections.namedtuple("CALSTMState", ('lstm_state', 'alpha', 'ztop'))
+CALSTMState = collections.namedtuple("CALSTMState", ('lstm_state', 'alpha', 'ztop', 'beta'))
 
 class CALSTM(tf.nn.rnn_cell.RNNCell):
     """
@@ -75,9 +75,10 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
     def state_size(self):
         L = self.C.L # sizeof alpha
         D = self.C.D # size of z
+        sizeof_beta = 1 # beta is a scalar
 
         # must match CALSTMState
-        return CALSTMState(self._LSTM_stack.state_size, L, D)
+        return CALSTMState(self._LSTM_stack.state_size, L, D, sizeof_beta)
 
     def assertOutputShape(self, output):
         """
@@ -94,7 +95,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     return CALSTMState(
                         self._LSTM_stack.zero_state(batch_size, dtype),
                         tf.zeros((batch_size, self.C.L), dtype=dtype, name='alpha'),
-                        tf.zeros((batch_size, self.C.D), dtype=dtype, name='ztop')
+                        tf.zeros((batch_size, self.C.D), dtype=dtype, name='ztop'),
+                        tf.zeros((batch_size, 1), dtype=dtype, name='beta')
                         )
 
     @property
@@ -188,10 +190,11 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     alpha = tf.identity(tf.nn.softmax(alpha_), name='alpha')
                     assert K.int_shape(alpha) == (B, L)
 
-                    ## Attention Modulator
+                    ## Attention Modulator: Beta
                     if CONF.att_modulator is not None:
                         beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
                         beta = tf.identity(beta, name='beta')
+                        assert K.int_shape(beta) == (B,1)
 
                     return alpha, beta
 
@@ -227,7 +230,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 ## State
                 htop_1 = state.lstm_state.h if self._LSTM_stack.num_layers == 1 else state.lstm_state[-1].h
                 lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
-                alpha_t_1 = state.alpha            # shape = (B, L)
+                unused_alpha_t_1 = state.alpha            # shape = (B, L)
+                unused_beta_t_1 = state.beta # (B,1)
                 a = self._a
                 ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
                 ## to the input batch.
@@ -241,16 +245,20 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
         #        Kv =CONF.K
 
                 assert K.int_shape(Ex_t) == (B, m)
-                assert K.int_shape(alpha_t_1) == (B, L)
+                assert K.int_shape(unused_alpha_t_1) == (B, L)
+                assert K.int_shape(unused_beta_t_1) == (B, 1)
                 self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
                 ################ Attention Model ################
-                alpha_t, beta_t = self._attention_model(a, htop_1) # alpha.shape = (B, L)
+                alpha_t, beta_t = self._attention_model(a, htop_1) # alpha.shape = (B, L), beta (B,)
+                assert K.int_shape(alpha_t) == (B,L)
+                assert K.int_shape(beta_t) == (B, 1)
 
                 ################ Soft deterministic attention: z = alpha-weighted mean of a ################
-                ## (B, L) batch_dot (B,L,D) -> (B, D)
                 with tf.variable_scope('Phi'):
-                    z_t = beta_t * K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
+                    ## (B, L) batch_dot (B,L,D) -> (B, D)
+                    z_t = K.batch_dot(alpha_t, a, axes=[1,1]) # z_t.shape = (B, D)
+                    z_t = tf.multiply(beta_t, z_t, name='beta_t.z') # elementwise multiply (B,1)*(B,D) -> (B,D)
                     z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
 
                 ################ Decoder Layer ################
@@ -265,5 +273,6 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 ## assert K.int_shape(yProbs_t) == (B, Kv)
                 ## assert K.int_shape(yLogits_t) == (B, Kv)
                 assert K.int_shape(alpha_t) == (B, L)
+                assert K.int_shape(beta_t) == (B,1)
 
-                return htop_t, CALSTMState(lstm_states_t, alpha_t, z_t)
+                return htop_t, CALSTMState(lstm_states_t, alpha_t, z_t, beta_t)
