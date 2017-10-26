@@ -393,16 +393,21 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ## SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
                 yLogits_s = out_s.yLogits
                 alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_states], axis=0) # (N, T, B, L)
+                beta_s_n = tf.stack([cs.beta for cs in out_s.state.calstm_states], axis=0) # (N, T, B, 1)
                 ## Switch the batch dimension back to first position - (B, T, ...)
                 ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
                 # yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
                 # alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
                 yLogits = tf.transpose(yLogits_s, [1,0,2], name='yLogits')
                 alpha = tf.transpose(alpha_s_n, [0,2,1,3], name='alpha') # (N, B, T, L)
+                beta = tf.transpose(beta_s_n, [0,2,1,3], name='beta') # (N, B, T, 1)
+                assert K.int_shape(beta) == (N, B, None, 1)
+                beta_out = tf.transpose(beta, [0, 1, 3, 2]) # (N, B, T, 1) -> (N, B, 1, T)
 
                 optimizer_ops = self._optimizer(yLogits,
                                             self._y_s,
                                             alpha,
+                                            beta,
                                             self._seq_len,
                                             self._y_ctc,
                                             self._ctc_len)
@@ -418,14 +423,15 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q,
-                                              'image_name': self._image_name
+                                              'image_name': self._image_name,
+                                              'beta': beta_out # (N, B, 1, T)
                                             #   'tb_logs': tb_logs,
                                             #   'ph_train_time': ph_train_time,
                                             #   'log_time': log_time
                                               })
 
 
-    def _optimizer(self, yLogits, y_s, alpha, sequence_lengths, y_ctc, ctc_len):
+    def _optimizer(self, yLogits, y_s, alpha, beta, sequence_lengths, y_ctc, ctc_len):
         with tf.variable_scope(self.outer_scope) as var_scope:
             with tf.name_scope(var_scope.original_name_scope):
                 B = self.C.B
@@ -438,6 +444,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
                 assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
+                assert K.int_shape(beta) == (N, B, None, 1) # (N, B, T, 1)
                 assert K.int_shape(y_s) == (B, None) # (B, T)
                 assert K.int_shape(sequence_lengths) == (B,)
                 assert K.int_shape(y_ctc) == (B, None) # (B, T)
