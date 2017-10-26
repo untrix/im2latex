@@ -56,17 +56,20 @@ class VGGnetProcessor(ImagenetProcessor):
         assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
         return image_batch / 255.0
 
-def plotImage(image_detail, axes):
+def plotImage(image_detail, axes, cmap=None):
     path = image_detail[0]
     image_data = image_detail[1]
-    title = os.path.splitext(os.path.basename(path))[0] + ' %s'%(image_data.shape,)
+    title = os.path.splitext(os.path.basename(path))[0]
     axes.set_title( title )
     axes.set_xlim(-10,1500)
-    axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear')
-    print 'plotted image ', path, ' with shape ', image_data.shape
+    if cmap is not None:
+        axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
+    else:
+        axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear')
+    # print 'plotted image ', path, ' with shape ', image_data.shape
     return
 
-def plotImages(image_details, fig=None, dpi=None):
+def plotImages(image_details, fig=None, dpi=None, cmap=None):
     """ 
     image_details should be an array of image path and image_data - [(path1, image_data1), (path2, image_data2) ...]
     where image_data is a int/float numpy array of shape MxN or MxNx3 or MxNx4 as required by axes.imshow. Also, do note
@@ -87,7 +90,7 @@ def plotImages(image_details, fig=None, dpi=None):
         fig = plt.figure(figsize=(15.,3.*len(image_details)))
         grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L", aspect=False)
         for i in range(len(image_details)):
-            plotImage(image_details[i], grid[i])
+            plotImage(image_details[i], grid[i], cmap)
 
     return
 
@@ -123,8 +126,8 @@ class VisualizeDir(object):
         self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
 
         ## Train/Test DataFrames
-        self._df_train = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))
-        self._df_train_image = self._df_train.copy()
+        self._df_train_image = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
+        # self._df_train_image = self._df_train.copy()
         self._df_train_image.index = self._df_train_image.image
         # self._df_test = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))
         self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
@@ -203,18 +206,57 @@ class VisualizeDir(object):
             return df
     
     def alpha(self, graph, step, sample_num=0):
-        nd_words = self.words(graph, step, 'predicted_ids').iloc[sample_num].values
-        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_num] #(N,B,H,W,T)
-        image_name = self.nd(graph, step, 'image_name')[sample_num] #(B,)
+        nd_words = self.words(graph, step, 'predicted_ids').iloc[sample_num].values # (B,T) --> (T,)
+        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_num] #(N,B,H,W,T) --> (H,W,T)
+        image_name = self.nd(graph, step, 'image_name')[sample_num] #(B,) --> (,)
         T = len(nd_words)
         df = self._df_train_image
         image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
-                                                     df.width.loc[image_name], self._padded_im_dim )
-        plotImages([(image_name, image_data)], dpi=72)
-        for i in xrange(T):
-            pass
+                                                   df.width.loc[image_name], self._padded_im_dim) #(H,W,C)
+        maxpool_factor = 32
+        pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*maxpool_factor
+        pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*maxpool_factor
 
-        return image_data
+        def project_alpha(alpha_t, expand_dims=True):
+            pa = np.repeat(alpha_t, repeats=maxpool_factor, axis=0)
+            pa = np.repeat(pa, maxpool_factor, axis=1)
+            pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0.0)
+            pa = 1.0 - pa
+            if expand_dims:
+                pa = np.expand_dims(pa, axis=2) #(H,W,1)
+            return pa
+        
+        def composit_image(image_data, alpha_t):
+            return np.concatenate((image_data, project_alpha(alpha_t)), axis=2)
+
+        image_details=[(image_name, image_data), ('alpha_0', project_alpha(nd_alpha[:,:,0], expand_dims=False))]
+        for t in xrange(T):
+            if nd_words[t] == 'NUL':
+                break
+            else:
+                ## Project alpha onto image
+                # pa = np.repeat(nd_alpha[:,:,t], repeats=maxpool_factor, axis=0)
+                # pa = np.repeat(pa, maxpool_factor, axis=1)
+                # pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0 )
+                # pa = np.expand_dims(pa, axis=2) #(H,W,1)
+                # pa = pa*0.0 + 1
+                composit = composit_image(image_data, nd_alpha[:,:,t])
+                image_details.append((nd_words[t], composit))
+
+        ## Colormap possible values are: Accent, Accent_r, Blues, Blues_r, BrBG, BrBG_r, BuGn, BuGn_r, BuPu, BuPu_r, CMRmap, 
+        ## CMRmap_r, Dark2, Dark2_r, GnBu, GnBu_r, Greens, Greens_r, Greys, Greys_r, OrRd, OrRd_r, Oranges, Oranges_r, PRGn, PRGn_r,
+        # Paired, Paired_r, Pastel1, Pastel1_r, Pastel2, Pastel2_r, PiYG, PiYG_r, PuBu, PuBuGn, PuBuGn_r, PuBu_r, PuOr, PuOr_r, PuRd, 
+        # PuRd_r, Purples, Purples_r, RdBu, RdBu_r, RdGy, RdGy_r, RdPu, RdPu_r, RdYlBu, RdYlBu_r, RdYlGn, RdYlGn_r, Reds, Reds_r, 
+        # Set1, Set1_r, Set2, Set2_r, Set3, Set3_r, Spectral, Spectral_r, Vega10, Vega10_r, Vega20, Vega20_r, Vega20b, Vega20b_r, 
+        # Vega20c, Vega20c_r, Wistia, Wistia_r, YlGn, YlGnBu, YlGnBu_r, YlGn_r, YlOrBr, YlOrBr_r, YlOrRd, YlOrRd_r, afmhot, afmhot_r,
+        # autumn, autumn_r, binary, binary_r, bone, bone_r, brg, brg_r, bwr, bwr_r, cool, cool_r, coolwarm, coolwarm_r, copper, 
+        # copper_r, cubehelix, cubehelix_r, flag, flag_r, gist_earth, gist_earth_r, gist_gray, gist_gray_r, gist_heat, gist_heat_r, 
+        # gist_ncar, gist_ncar_r, gist_rainbow, gist_rainbow_r, gist_stern, gist_stern_r, gist_yarg, gist_yarg_r, gnuplot, gnuplot2, 
+        # gnuplot2_r, gnuplot_r, gray, gray_r, hot, hot_r, hsv, hsv_r, inferno, inferno_r, jet, jet_r, magma, magma_r, nipy_spectral, 
+        # nipy_spectral_r, ocean, ocean_r, pink, pink_r, plasma, plasma_r, prism, prism_r, rainbow, rainbow_r, seismic, seismic_r, 
+        # spectral, spectral_r, spring, spring_r, summer, summer_r, terrain, terrain_r, viridis, viridis_r, winter, winter_r
+        # plotImages(image_details, dpi=72, cmap='gray')
+        plotImages(image_details, dpi=144, cmap='gray')
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
