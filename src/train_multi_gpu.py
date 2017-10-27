@@ -62,7 +62,7 @@ def printVars(logger):
     total_output = 0
     total_embedding = 0
 
-    logger.info( 'Trainable Variables')
+    logger.info('Trainable Variables')
     for var in tf.trainable_variables():
         n = tfc.sizeofVar(var)
         total_n += n
@@ -267,9 +267,9 @@ def main(raw_data_folder,
                                     train_ops.loss,
                                     train_ops.tb_logs
                                 ))
-                            predicted_ids_list = y_s_list = alpha = image_name_list = None
+                            predicted_ids_list = y_s_list = alpha = beta = image_name_list = ctc_ed = None
                         else:
-                            _, loss, log, y_s_list, predicted_ids_list, alpha, image_name_list = session.run(
+                            _, loss, log, y_s_list, predicted_ids_list, alpha, beta, image_name_list, ctc_ed = session.run(
                                 (
                                     train_ops.train, 
                                     train_ops.loss,
@@ -277,7 +277,9 @@ def main(raw_data_folder,
                                     train_ops.y_s_list,
                                     train_ops.predicted_ids_list,
                                     train_ops.alpha,
-                                    train_ops.image_name_list
+                                    train_ops.beta,
+                                    train_ops.image_name_list,
+                                    train_ops.ctc_ed
                                 ))
 
                         ## Accumulate metrics
@@ -296,7 +298,9 @@ def main(raw_data_folder,
                                 storer.write('predicted_ids', predicted_ids_list, np.int16)
                                 storer.write('y', y_s_list, np.int16)
                                 storer.write('alpha', alpha, np.float32, batch_axis=1)
+                                storer.write('beta', beta, np.float32, batch_axis=1)
                                 storer.write('image_name', image_name_list, dtype=np.unicode_)
+                                storer.write('ed', ctc_ed, np.float32)
 
                             accuracy_res = evaluate(
                                 session,
@@ -461,10 +465,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits
                                     ))
-                top1_ids_list = y_s_list = top1_alpha_list = image_name_list = None
+                top1_ids_list = y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
             else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list, image_name_list = session.run((
-                # l, ed, accuracy, num_hits, top1_ids_list, y_s_list = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
@@ -472,9 +475,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_ids_list,
                                     valid_ops.y_s_list,
                                     valid_ops.top1_alpha_list,
-                                    valid_ops.image_name_list
-                                    # valid_ops.all_ids_list,
-                                    # valid_ops.output_ids_list
+                                    valid_ops.top1_beta_list,
+                                    valid_ops.image_name_list,
+                                    valid_ops.top1_ed
                                     ))
                 logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
                 beam = 0
@@ -489,8 +492,10 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                 with dtc.Storer(args, 'validation', step) as storer:
                     storer.write('predicted_ids', top1_ids_list, np.int16)
                     storer.write('y', y_s_list, np.int16)
-                    storer.write('alpha', top1_alpha_list, batch_axis=1)
+                    storer.write('alpha', top1_alpha_list, dtype=np.float32, batch_axis=1)
+                    storer.write('beta', top1_beta_list, dtype=np.float32, batch_axis=1)
                     storer.write('image_name', image_name_list, dtype=np.unicode_)
+                    storer.write('ed', top1_ed, dtype=np.float32)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 

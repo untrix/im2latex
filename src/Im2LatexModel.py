@@ -372,18 +372,26 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
     def build_training_tower(self):
         """ Build the training graph of the model """
+        B = self.C.B
+        Kv =self.C.K
+        L = self.C.L
+        N = self._num_calstm_layers
+        H = self.C.H
+        W = self.C.W
+        T = None
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## tf.scan requires time-dimension to be the first dimension
                 # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s') # (T, B)
                 y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
+                assert K.int_shape(y_s) == (T,B)
 
                 ################ Build x_s ################
                 ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
                 ## last token of y_s which is <eos> token (zero) will not appear in x_s
                 x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
+                assert K.int_shape(x_s) == (T,B)
 
-                # accum = self.ScanOut(None,
                 accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # The init-value is not used
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
@@ -401,8 +409,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 yLogits = tf.transpose(yLogits_s, [1,0,2], name='yLogits')
                 alpha = tf.transpose(alpha_s_n, [0,2,1,3], name='alpha') # (N, B, T, L)
                 beta = tf.transpose(beta_s_n, [0,2,1,3], name='beta') # (N, B, T, 1)
-                assert K.int_shape(beta) == (N, B, None, 1)
-                beta_out = tf.transpose(beta, [0, 1, 3, 2]) # (N, B, T, 1) -> (N, B, 1, T)
+                assert K.int_shape(beta) == (N, B, T, 1)
+                beta_out = tf.squeeze(beta, axis=3, name='beta_out') # (N, B, T, 1) -> (N, B, T)
+                assert K.int_shape(beta_out) == (N, B, T)
 
                 optimizer_ops = self._optimizer(yLogits,
                                             self._y_s,
@@ -529,8 +538,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha))
                         alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
                         self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha_out))
-                        alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2)) # (N, B, T, H, W)->(N, B, H, W, T)
-                        alpha_out = tf.identity(alpha_out, name='alpha_out')
+                        alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2), name='alpha_out') # (N, B, T, H, W)->(N, B, H, W, T)
                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
 
 
@@ -690,7 +698,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         BW = self.Seq2SeqBeamWidth
         k = min([self.C.k, BW])
         N = self._num_calstm_layers
-        T = None,
+        T = None
         H = self.C.H
         W = self.C.W
         
@@ -701,11 +709,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 outputs = self._beamsearch()
                 T_shape = tf.shape(outputs.ids)[1]
                 bm_ids = tf.transpose(outputs.ids, perm=(0,2,1)) # (B, Seq2SeqBeamWidth, T)
-                assert bm_ids.get_shape().as_list() == [B, BW, None], 'bm_ids shape %s != %s'%(bm_ids.get_shape().as_list(), [B, BW, None])
+                assert bm_ids.get_shape().as_list() == [B, BW, T], 'bm_ids shape %s != %s'%(bm_ids.get_shape().as_list(), [B, BW, T])
                 bm_seq_lens = outputs.seq_lens # (B, BW)
                 assert K.int_shape(bm_seq_lens) == (B, BW)
                 bm_scores = tf.transpose(outputs.scores, perm=[0,2,1]) # (B, Seq2SeqBeamWidth, T)
-                assert bm_scores.get_shape().as_list() == [B, BW, None]
+                assert bm_scores.get_shape().as_list() == [B, BW, T]
 
                 ## Extract Alpha Values for Debugging
                 ## states.shape=Im2LatexState(calstm_states=(CALSTMState(lstm_state=(LSTMStateTuple(c=[B, T, BW, n], h=[20, None, 10, 1000]), LSTMStateTuple(c=[20, None, 10, 1000], h=[20, None, 10, 1000])), alpha=[B, T, BW, L], ztop=[20, None, 10, 512]),), yProbs=[20, None, 10, 557])
@@ -713,28 +721,30 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 betas  = []
                 for i in range(N):
                     alpha = tf.transpose(outputs.states.calstm_states[i].alpha, (0,2,3,1)) ## (B, T, BW, L) -> (B, BW, L, T)
-                    alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1)) # (B, BW, L, T) -> (B, BW, H, W, T)
+                    alpha = tf.reshape(alpha, shape=(B, BW, H, W, -1), name='alpha_out') # (B, BW, L, T) -> (B, BW, H, W, T)
                     alphas.append(alpha)
-                    beta = tf.transpose(outputs.states.calstm_states[i].beta, (0,2,3,1)) ## (B, T, BW, 1) -> (B, BW, 1, T)
+                    beta = tf.squeeze(outputs.states.calstm_states[i].beta, axis=3) # (B, T, BW, 1)
+                    assert K.int_shape(beta) == (B, T, BW)
+                    beta = tf.transpose(beta, (0,2,1), name='beta_out') ## (B, T, BW) -> (B, BW, T)
                     betas.append(beta)
-                alphas = tf.stack(alphas, axis=0) # (N, B, BW, H, W, T)
-                betas  = tf.stack(betas,  axis=0) # (N, B, BW, 1, T)
-                assert alphas.shape.as_list() == [N, B, BW, H, W, None], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, None])
-                assert K.int_shape(betas) == (N, B, BW, 1, T), '%s != %s'%(K.int_shape(betas), (N, B, BW, 1, T))
+                alphas = tf.stack(alphas, axis=0, name='alphas_out') # (N, B, BW, H, W, T)
+                betas  = tf.stack(betas,  axis=0, name='betas_out') # (N, B, BW, 1, T)
+                assert alphas.shape.as_list() == [N, B, BW, H, W, T], '%s != %s'%(alphas.shape.as_list(),[N, B, BW, H, W, T])
+                assert K.int_shape(betas) == (N, B, BW, T), '%s != %s'%(K.int_shape(betas), (N, B, BW, T))
 
                 with tf.name_scope('Score'):
                     ## Prepare a sequence mask for EOS padding
                     seq_lens_flat = tf.reshape(bm_seq_lens, shape=[-1]) # (B*Seq2SeqBeamWidth,)
                     assert K.int_shape(seq_lens_flat) == (B*BW,)
                     seq_mask_flat = tf.sequence_mask(seq_lens_flat, maxlen=T_shape, dtype=tf.int32) # (B*Seq2SeqBeamWidth, T)
-                    assert K.int_shape(seq_mask_flat) == (B*BW, None)
+                    assert K.int_shape(seq_mask_flat) == (B*BW, T)
 
                     # scores are log-probabilities which are negative values
                     # zero out scores (log probabilities) of words after EOS. Tantamounts to setting their probs = 1
                     # Hence they will have no effect on the sequence probabilities
                     scores_flat = tf.reshape(bm_scores, shape=(B*BW, -1))  * tf.to_float(seq_mask_flat) # (B*Seq2SeqBeamWidth, T)
                     scores = tf.reshape(scores_flat, shape=(B, BW, -1)) # (B, Seq2SeqBeamWidth, T)
-                    assert K.int_shape(scores) == (B, BW, None)
+                    assert K.int_shape(scores) == (B, BW, T)
                     ## Sum of log-probabilities == Product of probabilities
                     seq_scores = tf.reduce_sum(scores, axis=2) # (B, Seq2SeqBeamWidth)
 
@@ -749,7 +759,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Top 1. I verified that beams in beamsearch_outputs are already sorted by seq_scores.
                     top1_seq_scores = seq_scores[:,0] # (B,)
                     top1_ids = bm_ids[:,0,:] # (B, T)
-                    assert top1_ids.get_shape().as_list() == [B, None]
+                    assert top1_ids.get_shape().as_list() == [B, T]
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
                     top1_len_ratio = tf.divide(top1_seq_lens,self._seq_len)
                     if self.C.no_towers: ## Old Code without towers
@@ -770,7 +780,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     topK_seq_lens = bm_seq_lens[:, :k] # (B, k)
                     assert K.int_shape(topK_seq_scores) == (B, k)
                     assert K.int_shape(topK_seq_lens) == (B, k)
-                    assert K.int_shape(topK_ids) == (B, k, None)
+                    assert K.int_shape(topK_ids) == (B, k, T)
 
 
                 ## BLEU scores
@@ -815,39 +825,39 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
                             tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
 
-                if self.C.no_towers: ## Old Code without towers
-                    logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
-                    logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
+                # if self.C.no_towers: ## Old Code without towers
+                #     logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
+                #     logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
 
-                    ## Aggregate metrics injected into the graph from outside
-                    with tf.name_scope('AggregateMetrics'):
-                        ph_top1_seq_lens = tf.placeholder(self.C.int_type)
-                        ph_edit_distance = tf.placeholder(self.C.dtype)
-                        ph_num_hits =  tf.placeholder(self.C.dtype)
-                        ph_accuracy =  tf.placeholder(self.C.dtype)
-                        ph_valid_time =  tf.placeholder(self.C.dtype)
+                #     ## Aggregate metrics injected into the graph from outside
+                #     with tf.name_scope('AggregateMetrics'):
+                #         ph_top1_seq_lens = tf.placeholder(self.C.int_type)
+                #         ph_edit_distance = tf.placeholder(self.C.dtype)
+                #         ph_num_hits =  tf.placeholder(self.C.dtype)
+                #         ph_accuracy =  tf.placeholder(self.C.dtype)
+                #         ph_valid_time =  tf.placeholder(self.C.dtype)
 
-                        ph_BoK_distance =  tf.placeholder(self.C.int_type)
-                        ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
+                #         ph_BoK_distance =  tf.placeholder(self.C.int_type)
+                #         ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
 
-                        agg_num_hits = tf.reduce_sum(ph_num_hits)
-                        agg_accuracy = tf.reduce_mean(ph_accuracy)
-                        agg_ed = tf.reduce_mean(ph_edit_distance)
-                        agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
-                        agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
+                #         agg_num_hits = tf.reduce_sum(ph_num_hits)
+                #         agg_accuracy = tf.reduce_mean(ph_accuracy)
+                #         agg_ed = tf.reduce_mean(ph_edit_distance)
+                #         agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
+                #         agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
-                        tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
-                        tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
-                        tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
-                        tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
-                        tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
-                        tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
-                        tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
-                        tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
-                        tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
+                #         tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+                #         tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
+                #         tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
+                #         tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
+                #         tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
+                #         tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
+                #         tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
+                #         tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
+                #         tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
-                        logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
-                        logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
+                #         logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
+                #         logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
@@ -858,7 +868,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_lens': top1_seq_lens, # (B,)
                     'top1_len_ratio': top1_len_ratio,  # (B,)
                     'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
-                    'top1_beta': betas[:, :, 0, :, :], ## (N, B, BW, 1, T) -> (N, B, 1, T)
+                    'top1_beta': betas[:, :, 0, :], ## (N, B, BW, T) -> (N, B, T)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
                     'topK_lens': topK_seq_lens, # (B,k)
@@ -936,6 +946,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
         return dlc.Properties({
             'image_name_list': gather('image_name'), # [(B,), ...]
             'alpha': concat('alpha', axis=1), # [(N, B, H, W, T), ...]
+            'beta': concat('beta', axis=1), # [(N,B,T), ...]
             'log_likelihood': log_likelihood, # scalar
             'ctc_loss': ctc_loss, # scalar
             'loss': ctc_loss if hyper.use_ctc_loss else log_likelihood, # scalar
@@ -1038,7 +1049,7 @@ def sync_testing_towers(hyper, tower_ops):
             'top1_num_hits': top1_num_hits, # scalar
             'top1_ids_list': gather('top1_ids'),# ((B,T),...)
             'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
-            'top1_beta_list': gather('top1_beta'), # [(N, B, 1, T), ...]
+            'top1_beta_list': gather('top1_beta'), # [(N, B, T), ...]
             'bok_ids_list': gather('bok_ids'),# ((B,T),...)
             'y_s_list': gather('y_s'), # ((B,T),...)
             'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)

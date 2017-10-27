@@ -148,7 +148,7 @@ class VisualizeDir(object):
     def max_steps(self):
         steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
         epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        return sorted(steps)[-1], sorted(epoch_steps)[-1]
+        return sorted(steps)[-1] if (len(steps) > 0) else None, sorted(epoch_steps)[-1] if (len(epoch_steps) > 0) else None
         
     @property
     def args(self):
@@ -175,19 +175,37 @@ class VisualizeDir(object):
     def df(self, graph, step, key):
         return pd.DataFrame(self.nd(graph, step, key))
     
-    def words(self, graph, step, key):
-        df = self.df(graph, step, key)
-        return df.applymap(lambda x: self._id2word[x])
+    def _words(self, graph, step, key, _get_ids=False, _get_ed=False):
+        assert key == 'predicted_ids' or key == 'y'
+        df_ids = self.df(graph, step, key)
+        df_words = df_ids.applymap(lambda x: self._id2word[x])
+        df_words = df_words.assign(ed=self.df(graph, step, 'ed'))
+        df_words.sort_values('ed', ascending=True, inplace=True)
+        sr_ed = df_words.ed
+        df_words.drop('ed', axis=1, inplace=True)
 
-    def strs(self, graph, step, key, key2=None, mingle=True):
-        df_str = self.words(graph, step, key)
+        if (not _get_ids) and (not _get_ed):
+            return df_words
+        else:
+            ret_tuple = (df_words,)
+            if _get_ids:
+                ret_tuple = ret_tuple + (df_ids,)
+            if _get_ed:
+                ret_tuple = ret_tuple + (sr_ed,)
+            return ret_tuple
+
+    def words(self, graph, step, key):
+        return self._words(graph, step, key, _get_ids=False, _get_ed=False)
+
+    def strs(self, graph, step, key, key2=None, mingle=False):
+        df_str, sr_ed = self._words(graph, step, key, _get_ed=True)
         df_str2 = self.words(graph, step, key2) if (key2 is not None) else None
         
         ## each token's string version - excepting backslash - has a space appended to it,
         ## therefore the string output should be compile if the prediction was syntactically correct
         ar1 = ["".join(row) for row in df_str.itertuples(index=False)]
         if key2 == None:
-            return pd.DataFrame(ar1)
+            return pd.DataFrame({'edit_distance':sr_ed, key: ar1}, index=df_str.index)
         else:
             ar2 = ["".join(row) for row in df_str2.itertuples(index=False)]
             if mingle:
@@ -196,20 +214,56 @@ class VisualizeDir(object):
                 # index = d[0]
                 # data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d[1]}
                 d = [e for t in zip(ar1, ar2) for e in t]
-                data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d}
-                index = ['%d (%s)'%(i,l) for i in range(len(ar1)) for l in ('k1', 'k2')]
+                data = {'%s/%s'%(key, key2): d}
+                index = ['%s (%s)'%(i,l) for i in df_str.index for l in ('k1', 'k2')]
             else:
-                data = {'%s\t%s_%d\t[%s]'%(key, graph, step, self._storedir): ar1, '%s\t%s_%d\t[%s]'%(key2, graph, step, self._storedir): ar2}
-                index = range(len(ar1))
+                data = {'edit_distance':sr_ed, key: ar1, key2: ar2}
+                index = df_str.index
             df = pd.DataFrame(data=data, index=index)
-#             df.style.set_caption('%s/%s_%s'%(self._storedir, graph, step))
             return df
     
+    @staticmethod
+    def _project_alpha(alpha_t, maxpool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0):
+        pa = np.repeat(alpha_t, repeats=maxpool_factor, axis=0)
+        pa = np.repeat(pa, maxpool_factor, axis=1)
+        pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
+        pa = 1.0 - pa
+        if expand_dims:
+            pa = np.expand_dims(pa, axis=2) #(H,W,1)
+        return pa
+
+    def _composit_image(self, image_data, alpha_t, maxpool_factor, pad_0, pad_1):
+        return np.concatenate((image_data, self._project_alpha(alpha_t, maxpool_factor, pad_0, pad_1)), axis=2)
+
+    def test_alpha_viz(self):
+        H = self._hyper.H
+        W = self._hyper.W
+        maxpool_factor = 32
+        pad_0 = self._hyper.image_shape[0] - H*maxpool_factor
+        pad_1 = self._hyper.image_shape[1] - W*maxpool_factor
+        print('test_alpha_viz: pad_0=%d, pad_1=%d'%(pad_0, pad_1))
+        alphas = np.ones((H*W,H,W), dtype=float)*0.5
+        image_details = []
+        for h in range(H):
+            for w in range(W):
+                alpha = alphas[w+h*W]
+                alpha[h,w] = 1.0
+                pa = self._project_alpha(alpha, maxpool_factor, pad_0, pad_1, expand_dims=False, pad_value=0.25)
+                image_details.append(('alpha[%d,%d]=1.0'%(h,w), pa))
+
+        plotImages(image_details, dpi=144)
+
     def alpha(self, graph, step, sample_num=0):
-        nd_words = self.words(graph, step, 'predicted_ids').iloc[sample_num].values # (B,T) --> (T,)
-        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_num] #(N,B,H,W,T) --> (H,W,T)
-        image_name = self.nd(graph, step, 'image_name')[sample_num] #(B,) --> (,)
+        nd_y = self.strs(graph, step, 'y')
+        df_words, df_ids = self._words(graph, step, 'predicted_ids', _get_ids=True)
+        sample_idx = df_words.iloc[sample_num].name ## Top index in sort order
+        nd_ids = df_ids.loc[sample_idx].values # (B,T) --> (T,)
+        nd_words = df_words.loc[sample_idx].values # (B,T) --> (T,)
+        ## Careful with sample_idx
+        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx] #(N,B,H,W,T) --> (H,W,T)
+        image_name = self.nd(graph, step, 'image_name')[sample_idx] #(B,) --> (,)
         T = len(nd_words)
+        assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
         df = self._df_train_image
         image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
                                                    df.width.loc[image_name], self._padded_im_dim) #(H,W,C)
@@ -217,31 +271,19 @@ class VisualizeDir(object):
         pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*maxpool_factor
         pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*maxpool_factor
 
-        def project_alpha(alpha_t, expand_dims=True):
-            pa = np.repeat(alpha_t, repeats=maxpool_factor, axis=0)
-            pa = np.repeat(pa, maxpool_factor, axis=1)
-            pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0.0)
-            pa = 1.0 - pa
-            if expand_dims:
-                pa = np.expand_dims(pa, axis=2) #(H,W,1)
-            return pa
-        
-        def composit_image(image_data, alpha_t):
-            return np.concatenate((image_data, project_alpha(alpha_t)), axis=2)
-
-        image_details=[(image_name, image_data), ('alpha_0', project_alpha(nd_alpha[:,:,0], expand_dims=False))]
+        print(self.strs(graph, step, 'predicted_ids', 'y', mingle=False).loc[sample_idx])
+        image_details=[(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], maxpool_factor, pad_0, pad_1, expand_dims=False))]
         for t in xrange(T):
-            if nd_words[t] == 'NUL':
+            ## Project alpha onto image
+            # pa = np.repeat(nd_alpha[:,:,t], repeats=maxpool_factor, axis=0)
+            # pa = np.repeat(pa, maxpool_factor, axis=1)
+            # pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0 )
+            # pa = np.expand_dims(pa, axis=2) #(H,W,1)
+            # pa = pa*0.0 + 1
+            composit = self._composit_image(image_data, nd_alpha[:,:,t], maxpool_factor, pad_0, pad_1)
+            image_details.append((nd_words[t], composit))
+            if nd_ids[t] == 0:
                 break
-            else:
-                ## Project alpha onto image
-                # pa = np.repeat(nd_alpha[:,:,t], repeats=maxpool_factor, axis=0)
-                # pa = np.repeat(pa, maxpool_factor, axis=1)
-                # pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0 )
-                # pa = np.expand_dims(pa, axis=2) #(H,W,1)
-                # pa = pa*0.0 + 1
-                composit = composit_image(image_data, nd_alpha[:,:,t])
-                image_details.append((nd_words[t], composit))
 
         ## Colormap possible values are: Accent, Accent_r, Blues, Blues_r, BrBG, BrBG_r, BuGn, BuGn_r, BuPu, BuPu_r, CMRmap, 
         ## CMRmap_r, Dark2, Dark2_r, GnBu, GnBu_r, Greens, Greens_r, Greys, Greys_r, OrRd, OrRd_r, Oranges, Oranges_r, PRGn, PRGn_r,
@@ -256,7 +298,7 @@ class VisualizeDir(object):
         # nipy_spectral_r, ocean, ocean_r, pink, pink_r, plasma, plasma_r, prism, prism_r, rainbow, rainbow_r, seismic, seismic_r, 
         # spectral, spectral_r, spring, spring_r, summer, summer_r, terrain, terrain_r, viridis, viridis_r, winter, winter_r
         # plotImages(image_details, dpi=72, cmap='gray')
-        plotImages(image_details, dpi=144, cmap='gray')
+        plotImages(image_details, dpi=144)
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
