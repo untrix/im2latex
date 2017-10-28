@@ -423,10 +423,10 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'in order to ensure that there is enough whites-space around the edges of the image, so as to enable VALID padding '
                 'in the first conv-net layer without losing any information. The effect of doing this is to simulate SAME padding '
                 'but using custom padding values (background color in this case) instead of zeroes (which is what SAME padding would do). '
-                'This value should be equal to (kernel_size-1)/2 using kernel_size of the first convolution layer.'
+                'This value should be equal to (kernel_size)//2 using kernel_size of the first convolution layer.'
                 ,
                 integer(),
-                LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0]-1)/2 )
+                LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0])//2 )
                 ## Dynamically set to = (kernel_size-1)/2 given kernel_size of first conv-net layer
                 ),
             PD('image_shape',
@@ -552,7 +552,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         ######## Init Model ########
-        if True: ## No hidden init layers by default
+        if True: ## No hidden init layers by default in the Show&Tell paper
             self.init_model_hidden = MLPParams(self).updated({
                 'layers': (
                     ## paper sets hidden activations=relu and final=tanh

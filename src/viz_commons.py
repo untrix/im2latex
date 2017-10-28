@@ -251,7 +251,7 @@ class VisualizeDir(object):
                 pa = self._project_alpha(alpha, maxpool_factor, pad_0, pad_1, expand_dims=False, pad_value=0.25)
                 image_details.append(('alpha[%d,%d]=1.0'%(h,w), pa))
 
-        plotImages(image_details, dpi=144)
+        plotImages(image_details, dpi=200)
 
     def alpha(self, graph, step, sample_num=0):
         nd_y = self.strs(graph, step, 'y')
@@ -298,7 +298,7 @@ class VisualizeDir(object):
         # nipy_spectral_r, ocean, ocean_r, pink, pink_r, plasma, plasma_r, prism, prism_r, rainbow, rainbow_r, seismic, seismic_r, 
         # spectral, spectral_r, spring, spring_r, summer, summer_r, terrain, terrain_r, viridis, viridis_r, winter, winter_r
         # plotImages(image_details, dpi=72, cmap='gray')
-        plotImages(image_details, dpi=144)
+        plotImages(image_details, dpi=200)
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
