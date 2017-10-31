@@ -23,6 +23,7 @@ Created on Mon Jul 17 19:58:00 2017
 @author: Sumeet S Singh
 """
 import os
+import itertools
 import pandas as pd
 import numpy as np
 import data_commons as dtc
@@ -32,6 +33,7 @@ import matplotlib.pyplot as plt
 from data_reader import ImagenetProcessor
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
+from IPython.display import Math, display
 
 class VGGnetProcessor(ImagenetProcessor):
     def __init__(self, params, image_dir_):
@@ -172,10 +174,61 @@ class VisualizeDir(object):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
             return h5[key][...]
     
+    @staticmethod
+    def _assertKeyIsID(key):
+        assert (key == 'predicted_ids') or (key == 'y')
+
     def df(self, graph, step, key):
-        return pd.DataFrame(self.nd(graph, step, key))
-    
+        nd = self.nd(graph, step, key)
+        return pd.DataFrame(nd, dtype=nd.dtype)
+
+    def df_ids(self, graph, step, key, sortkey='ed', trim=False):
+        """
+        Returns
+            1) a list of 'B' word-lists optionally trimmed,
+            2) optionally a list of 'B' id-lists and
+            3) optionally a list of 'B' sortkey values
+        key must represent an id-sequences such as 'predicted_ids' and 'y', i.e. _assertKeyIsID(key) must pass.
+        """
+        self._assertKeyIsID(key)
+        df_ids = self.df(graph, step, key)
+
+        ## sort
+        df_sortkey = self.df(graph, step, sortkey)
+        assert len(df_ids) == len(df_sortkey)
+        df_ids[sortkey] = df_sortkey
+        assert len(df_ids) == len(df_sortkey)
+        df_ids.sort_values(sortkey, ascending=True, inplace=True)
+        sr_sortkey = df_ids[sortkey]
+        df_ids.drop(sortkey, axis=1, inplace=True)
+
+        ## id2word and trim
+        def accumRow(d, id):
+            d['ids'].append(id)
+            d['words'].append(self._id2word[id])
+            return d
+        def reduce_trim_row(row):
+            return reduce(accumRow, itertools.takewhile(lambda id: id>0, row), {'ids':[], 'words':[]})
+        def reduce_row(row):
+            return reduce(accumRow, row, {'ids':[], 'words':[]})
+        def accumCol(d, row):
+            rows = reduce_row(row)
+            d['ids'].append(rows['ids'])
+            d['words'].append(rows['words'])
+            return d
+        def accumColTrim(d, row):
+            d2 = reduce_trim_row(row)
+            d['ids'].append(d2['ids'])
+            d['words'].append(d2['words'])
+            return d
+
+        ids_words = reduce(accumColTrim if trim else accumCol, df_ids.values, {'ids':[], 'words':[]})
+
+        ## return
+        return pd.DataFrame({sortkey: sr_sortkey, 'ids': ids_words['ids'], 'words': ids_words['words']}, index=df_ids.index)
+
     def _words(self, graph, step, key, _get_ids=False, _get_ed=False):
+        # type: (object, object, object, object, object) -> object
         assert key == 'predicted_ids' or key == 'y'
         df_ids = self.df(graph, step, key)
         df_words = df_ids.applymap(lambda x: self._id2word[x])
@@ -197,31 +250,52 @@ class VisualizeDir(object):
     def words(self, graph, step, key):
         return self._words(graph, step, key, _get_ids=False, _get_ed=False)
 
-    def strs(self, graph, step, key, key2=None, mingle=False):
-        df_str, sr_ed = self._words(graph, step, key, _get_ed=True)
-        df_str2 = self.words(graph, step, key2) if (key2 is not None) else None
+    def strs(self, graph, step, key, key2=None, mingle=False, trim=False):
+        df1 = self.df_ids(graph, step, key, trim=trim)
+        df2 = self.df_ids(graph, step, key2, trim=trim) if (key2 is not None) else None
         
         ## each token's string version - excepting backslash - has a space appended to it,
         ## therefore the string output should be compile if the prediction was syntactically correct
-        ar1 = ["".join(row) for row in df_str.itertuples(index=False)]
+        ar1 = ["".join(row) for row in df1.words.values]
         if key2 == None:
-            return pd.DataFrame({'edit_distance':sr_ed, key: ar1}, index=df_str.index)
+            return pd.DataFrame({'edit_distance':df1.ed, key: ar1}, index=df1.index)
         else:
-            ar2 = ["".join(row) for row in df_str2.itertuples(index=False)]
+            ar2 = ["".join(row) for row in df2.words.values]
             if mingle:
-                # d = [(i,e) for i,t in enumerate(zip(ar1, ar2)) for e in t]
-                # d = zip(*d)
-                # index = d[0]
-                # data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d[1]}
                 d = [e for t in zip(ar1, ar2) for e in t]
                 data = {'%s/%s'%(key, key2): d}
-                index = ['%s (%s)'%(i,l) for i in df_str.index for l in ('k1', 'k2')]
+                index = ['%s (%s)'%(i,l) for i in df1.index for l in ('k1', 'k2')]
             else:
-                data = {'edit_distance':sr_ed, key: ar1, key2: ar2}
-                index = df_str.index
+                data = {'edit_distance':df1.ed, key: ar1, key2: ar2}
+                index = df1.index
             df = pd.DataFrame(data=data, index=index)
             return df
     
+    # def strs(self, graph, step, key, key2=None, mingle=False, trim=False):
+    #     df_words, sr_ed = self._words(graph, step, key, _get_ed=True)
+    #     df_words2 = self.words(graph, step, key2) if (key2 is not None) else None
+        
+    #     ## each token's string version - excepting backslash - has a space appended to it,
+    #     ## therefore the string output should be compile if the prediction was syntactically correct
+    #     ar1 = ["".join(row) for row in df_words.itertuples(index=False)]
+    #     if key2 == None:
+    #         return pd.DataFrame({'edit_distance':sr_ed, key: ar1}, index=df_words.index)
+    #     else:
+    #         ar2 = ["".join(row) for row in df_words2.itertuples(index=False)]
+    #         if mingle:
+    #             # d = [(i,e) for i,t in enumerate(zip(ar1, ar2)) for e in t]
+    #             # d = zip(*d)
+    #             # index = d[0]
+    #             # data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d[1]}
+    #             d = [e for t in zip(ar1, ar2) for e in t]
+    #             data = {'%s/%s'%(key, key2): d}
+    #             index = ['%s (%s)'%(i,l) for i in df_words.index for l in ('k1', 'k2')]
+    #         else:
+    #             data = {'edit_distance':sr_ed, key: ar1, key2: ar2}
+    #             index = df_words.index
+    #         df = pd.DataFrame(data=data, index=index)
+    #         return df
+
     @staticmethod
     def _project_alpha(alpha_t, maxpool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0):
         pa = np.repeat(alpha_t, repeats=maxpool_factor, axis=0)
@@ -254,11 +328,11 @@ class VisualizeDir(object):
         plotImages(image_details, dpi=200)
 
     def alpha(self, graph, step, sample_num=0):
-        nd_y = self.strs(graph, step, 'y')
-        df_words, df_ids = self._words(graph, step, 'predicted_ids', _get_ids=True)
-        sample_idx = df_words.iloc[sample_num].name ## Top index in sort order
-        nd_ids = df_ids.loc[sample_idx].values # (B,T) --> (T,)
-        nd_words = df_words.loc[sample_idx].values # (B,T) --> (T,)
+#        df_words, df_ids = self._words(graph, step, 'predicted_ids', _get_ids=True)
+        df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
+        sample_idx = df_all.iloc[sample_num].name ## Top index in sort order
+        nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
+        nd_words = df_all.loc[sample_idx].words # (B,T) --> (T,)
         ## Careful with sample_idx
         nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx] #(N,B,H,W,T) --> (H,W,T)
         image_name = self.nd(graph, step, 'image_name')[sample_idx] #(B,) --> (,)
@@ -271,15 +345,16 @@ class VisualizeDir(object):
         pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*maxpool_factor
         pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*maxpool_factor
 
-        print(self.strs(graph, step, 'predicted_ids', 'y', mingle=False).loc[sample_idx])
+        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
+        y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
+        display(Math(predicted_ids))
+        display(predicted_ids)
+        display(Math(y))
+        display(y)
+        
         image_details=[(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], maxpool_factor, pad_0, pad_1, expand_dims=False))]
         for t in xrange(T):
             ## Project alpha onto image
-            # pa = np.repeat(nd_alpha[:,:,t], repeats=maxpool_factor, axis=0)
-            # pa = np.repeat(pa, maxpool_factor, axis=1)
-            # pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=0 )
-            # pa = np.expand_dims(pa, axis=2) #(H,W,1)
-            # pa = pa*0.0 + 1
             composit = self._composit_image(image_data, nd_alpha[:,:,t], maxpool_factor, pad_0, pad_1)
             image_details.append((nd_words[t], composit))
             if nd_ids[t] == 0:
@@ -371,8 +446,8 @@ class VisualizeStep():
     def words(self, key):
         return self._visualizer.words(self._graph, self._step, key)
 
-    def strs(self, key, key2=None, mingle=True):
-        return self._visualizer.strs(self._graph, self._step, key, key2, mingle)
+    def strs(self, key, key2=None, mingle=True, trim=False):
+        return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim)
 
     def alpha(self, sample_num=0):
         return self._visualizer.alpha(self._graph, self._step, sample_num)
