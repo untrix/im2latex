@@ -333,9 +333,9 @@ def main(raw_data_folder,
                         step += 1
                         doLog = do_log(step, args, train_it, valid_it)
                         if not doLog:
-                            batch_metrics = TFOpNames(ops_accumulate, None)
+                            batch_ops = TFOpNames(ops_accumulate, None)
                         else:
-                            batch_metrics = TFOpNames( ops_accumulate + (
+                            batch_ops = TFOpNames( ops_accumulate + (
                                     'y_s_list',
                                     'predicted_ids_list',
                                     'alpha',
@@ -343,13 +343,13 @@ def main(raw_data_folder,
                                     'image_name_list',
                                 ), None)
 
-                        batch_metrics.run_ops(session, train_ops)
+                        batch_ops.run_ops(session, train_ops)
                         ## Accumulate Metrics
-                        accum.append(batch_metrics)
-                        accum.append({'train_time': time.time()-step_start_time})
-                        accum.extend({
-                                'bleu_scores': bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len)
-                                })
+                        accum.append(batch_ops)
+                        train_time = time.time()-step_start_time
+                        bleu = bleu_scores(batch_ops.pred_squash_ids_list, batch_ops.pred_squash_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
+                        accum.append({'train_time': train_time})
+                        accum.extend({'bleu_scores': bleu})
 
                         if doLog:
                             logger.info('Step %d',step)
@@ -359,13 +359,13 @@ def main(raw_data_folder,
                                 saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
 
                             with dtc.Storer(args, 'training', step) as storer:
-                                storer.write('predicted_ids', predicted_ids_list, np.int16)
-                                storer.write('y', y_s_list, np.int16)
-                                storer.write('alpha', alpha, np.float32, batch_axis=1)
-                                storer.write('beta', beta, np.float32, batch_axis=1)
-                                storer.write('image_name', image_name_list, dtype=np.unicode_)
-                                storer.write('ed', ctc_ed, np.float32)
-                                storer.write('bleu', bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len),np.float32)
+                                storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
+                                storer.write('y', batch_ops.y_s_list, np.int16)
+                                storer.write('alpha', batch_ops.alpha, np.float32, batch_axis=1)
+                                storer.write('beta', batch_ops.beta, np.float32, batch_axis=1)
+                                storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
+                                storer.write('ed', batch_ops.ctc_ed, np.float32)
+                                storer.write('bleu', bleu, np.float32)
 
                             accuracy_res = evaluate(
                                 session,
@@ -388,26 +388,26 @@ def main(raw_data_folder,
                                     train_time_per100))
 
                             ## Log Batch Metrics
-                            i_min = np.argmin(losses)
-                            i_max = np.argmax(losses)
-                            i_min_step = log_step(step-args.print_steps + i_min+1)
-                            i_max_step = log_step(step-args.print_steps + i_max+1)
-                            if i_min < i_max:
-                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
-                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
-                            elif i_min > i_max:
-                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
-                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
-                            else:
-                                if step == 1:
-                                    tf_sw.add_summary(logs[i_min], global_step=log_step(1))
-                                else:
-                                    tf_sw.add_summary(logs[i_min], global_step=i_min_step)
+#                            i_min = np.argmin(losses)
+#                            i_max = np.argmax(losses)
+#                            i_min_step = log_step(step-args.print_steps + i_min+1)
+#                            i_max_step = log_step(step-args.print_steps + i_max+1)
+#                            if i_min < i_max:
+#                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
+#                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
+#                            elif i_min > i_max:
+#                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
+#                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
+#                            else:
+#                                if step == 1:
+#                                    tf_sw.add_summary(logs[i_min], global_step=log_step(1))
+#                                else:
+#                                    tf_sw.add_summary(logs[i_min], global_step=i_min_step)
 
                             ## Log Aggregate Metrics
-                            tb_agg_logs = session.run(tb_agg_logs, feed_dict={
+                            tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
                                                                               train_ops.ph_train_time: train_time_per100,
-                                                                              train_ops.ph_bleu_score: bleu_scores,
+                                                                              train_ops.ph_bleu_score: bleu,
                                                                               train_ops.ph_losses: losses,
                                                                               train_ops.ph_ctc_losses: ctc_losses
                                                                               })
