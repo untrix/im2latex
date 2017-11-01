@@ -181,7 +181,7 @@ def main(raw_data_folder,
                 for i in range(args.num_gpus):
                     with tf.name_scope('gpu_%d'%i):
                         with tf.device('/gpu:%d'%i):
-                            reuse_vars = False if ((i==0) and not args.doTrain) else True 
+                            reuse_vars = False if ((i==0) and not args.doTrain) else True
                             logger.info('reuse_vars = %s'%reuse_vars)
                             model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=reuse_vars)
                             valid_tower_ops.append(model_predict.build_testing_tower())
@@ -248,32 +248,46 @@ def main(raw_data_folder,
 
             ## Ensure that everything was initialized
             assert len(tf.report_uninitialized_variables().eval()) == 0
-            
+
             try:
                 start_time = time.time()
+                def reset_metrics():
+                    return [], [], [], [], []
                 ############################# Training (with Validation) Cycle ##############################
                 if args.doTrain:
                     logger.info('Starting training')
-                    ## Set metrics
-                    train_time = []; losses = []; logs = []
+                    ## Reset metrics
+                    train_time, losses, logs, bleu_scores, ctc_losses = reset_metrics()
+
                     while not coord.should_stop():
                         step_start_time = time.time()
                         step += 1
                         doLog = do_log(step, args, train_it, valid_it)
                         if not doLog:
-                            _, loss, log = session.run(
+                            _, loss, ctc_loss, log, y_ctc_list, ctc_len, pred_squash_ids_list, pred_squash_lens = session.run(
                                 (
                                     train_ops.train,
                                     train_ops.loss,
-                                    train_ops.tb_logs
+                                    train_ops.ctc_loss,
+                                    train_ops.tb_logs,
+                                    train_ops.y_ctc_list,
+                                    train_ops.ctc_len,
+                                    train_ops.pred_squash_ids_list,
+                                    train_ops.pred_squash_lens
                                 ))
                             predicted_ids_list = y_s_list = alpha = beta = image_name_list = ctc_ed = None
                         else:
-                            _, loss, log, y_s_list, predicted_ids_list, alpha, beta, image_name_list, ctc_ed = session.run(
+                            _, loss, ctc_loss, log, y_ctc_list, ctc_len, pred_squash_ids_list, pred_squash_lens, y_s_list, predicted_ids_list, alpha, beta, image_name_list, ctc_ed = session.run(
                                 (
-                                    train_ops.train, 
+                                    train_ops.train,
                                     train_ops.loss,
+                                    train_ops.ctc_loss,
                                     train_ops.tb_logs,
+                                    train_ops.y_ctc_list,
+                                    train_ops.ctc_len,
+                                    train_ops.pred_squash_ids_list,
+                                    train_ops.pred_squash_lens
+                                    ##
                                     train_ops.y_s_list,
                                     train_ops.predicted_ids_list,
                                     train_ops.alpha,
@@ -282,10 +296,12 @@ def main(raw_data_folder,
                                     train_ops.ctc_ed
                                 ))
 
-                        ## Accumulate metrics
+                        ## Accumulate Metrics
                         losses.append(loss[()])
+                        ctc_losses.append(ctc_loss[()])
                         logs.append(log)
                         train_time.append(time.time()-step_start_time)
+                        bleu_scores.extend(bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len))
 
                         if doLog:
                             logger.info('Step %d',step)
@@ -301,14 +317,15 @@ def main(raw_data_folder,
                                 storer.write('beta', beta, np.float32, batch_axis=1)
                                 storer.write('image_name', image_name_list, dtype=np.unicode_)
                                 storer.write('ed', ctc_ed, np.float32)
+                                storer.write('bleu', bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len),np.float32)
 
                             accuracy_res = evaluate(
                                 session,
-                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
+                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
                                 dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
                                 hyper,
                                 args,
-                                step, 
+                                step,
                                 tf_sw)
                             if accuracy_res:
                                 logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
@@ -321,9 +338,8 @@ def main(raw_data_folder,
                                     step,
                                     time.time()-start_time,
                                     train_time_per100))
-                                
-                            ## emit training graph metrics of the minimum and maximum loss batches
-                            
+
+                            ## Log Batch Metrics
                             i_min = np.argmin(losses)
                             i_max = np.argmax(losses)
                             i_min_step = log_step(step-args.print_steps + i_min+1)
@@ -340,29 +356,29 @@ def main(raw_data_folder,
                                 else:
                                     tf_sw.add_summary(logs[i_min], global_step=i_min_step)
 
-                            log_time = session.run(train_ops.log_time, feed_dict={train_ops.ph_train_time: train_time_per100})
-                            tf_sw.add_summary(log_time, global_step=log_step(step))
+                            ## Log Aggregate Metrics
+                            tb_agg_logs = session.run(tb_agg_logs, feed_dict={
+                                                                              train_ops.ph_train_time: train_time_per100,
+                                                                              train_ops.ph_bleu_score: bleu_scores,
+                                                                              train_ops.ph_losses: losses,
+                                                                              train_ops.ph_ctc_losses: ctc_losses
+                                                                              })
+                            tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
                             tf_sw.flush()
-                            
-                            # logger.info( '############ RANDOM TRAINING BATCH ############')
-                            # str_list = ids2str_list(y_s_list, predicted_ids_list, hyper)
-                            # for i in range(len(str_list)):
-                            #     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
-                            # logger.info( '############ END OF RANDOM TRAINING BATCH ############')
 
-                            ## Reset metrics
-                            train_time = []; losses = []; logs = []
+                            ## Reset Metrics
+                            train_time, losses, logs, bleu_scores = reset_metrics()
 
                 ############################# Validation Only ##############################
                 elif args.doValidate:
                     logger.info('Starting Validation Cycle')
                     evaluate(
                             session,
-                            dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}), 
+                            dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
                             dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
                             hyper,
                             args,
-                            step, 
+                            step,
                             tf_sw)
 
             except tf.errors.OutOfRangeError, StopIteration:
@@ -374,6 +390,19 @@ def main(raw_data_folder,
                 logger.info('Elapsed time for %d steps = %f'%(step, time.time()-start_time))
                 coord.request_stop()
                 coord.join(enqueue_threads)
+
+def bleu_scores(pred_ar_list, pred_lens, target_ar_list, target_lens):
+    assert len(pred_ar_list) == len(target_ar_list)
+    bleu_scores = []
+    n = 0
+    for i in range(len(pred_ar_list)):
+        _n = len(pred_ar_list[i])
+        assert len(target_ar_list[i]) == _n
+        p_lens = pred_lens[n:n+_n]
+        t_lens = target_lens[n:n+_n]
+        bleu_scores.append(dlc.squashed_bleu_scores(pred_ar_list[i], p_lens, target_ar_list[i], t_lens))
+        n += _n
+    return bleu_scores
 
 def ids2str_list(target_ids, predicted_ids, hyper):
     """
@@ -423,7 +452,7 @@ def do_validate(step, args, train_it, valid_it):
         epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
         period = int(epoch_frac * train_it.epoch_size)
         do_validate = (step % period == 0) or (step == train_it.max_steps)
-        
+
     num_valid_batches = valid_it.epoch_size if do_validate else 0
     logger.debug('do_validate returning %s at step %d', do_validate, step)
     return do_validate, num_valid_batches

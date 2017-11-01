@@ -28,7 +28,6 @@ import logging
 import dill as pickle
 import numpy as np
 import h5py
-from pprint import pprint, pformat
 
 dict_id2word = None
 i2w_ufunc = None

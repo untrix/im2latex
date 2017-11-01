@@ -22,11 +22,10 @@ Tested on python 2.7
 @author: Sumeet S Singh
 """
 import collections
-import inspect
 import pprint
 import numpy as np
-import data_commons as dtc
 from data_commons import logger
+import nltk
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -106,14 +105,14 @@ class Properties(dict):
         Will not throw an exception if invalid/unset values are detected in order to be useful for debugging. The output file can be passed to 'from_pickle'.
         NOTE however, that all functions (isCallable types) are reduced to their printable string representation before storing and can't be recovered
         later by a call to 'from_pickle'. Lambda functions embedded within LambdaVal objects are also invoked and resolved and therefore are not pickled.
-        Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the 
+        Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the
         LambdaVals and function values.
         """
         return self.to_picklable_dict()
 
     def __setstate__(self, d):
         return self.updated(d)
-        
+
     def __reduce__(self):
         return (Properties_Factory, tuple(), self.__getstate__())
 
@@ -124,7 +123,7 @@ class Properties(dict):
     def update(self, other):
         dict.update(self, other)
         self._trickledown()
-        
+
     def updated(self, other):
         """ chain-update
         Same as dict.update except that it returns self and therefore
@@ -145,30 +144,30 @@ class Properties(dict):
     def to_picklable_dict(self):
         return to_picklable_dict(self)
 
-    def to_dict_old(self):
-        """
-        Returns a dictionary with all values resolved but not validated and functions converted to strings
-        via 'repr'. Suitable for pickling but suitable for debugging and pretty printing only. Will not throw an exception
-        if invalid/unset values are detected in order to be useful for debugging.
-        All functions (isCallable types) are reduced to their printable string representation.
-        """
-        resolved = {}
-        for key in self.keys():
-            ## Resolve LambdaVals but do not validate them because we
-            ## need this method to work for debugging purposes, therefore we need to
-            ## see the state of the dictionary - especially the invalid values.
-            val = self._get_unvalidated_val(key)
-            if isinstance(val, Properties):
-                resolved[key] = val.to_dict_old()
-            elif issequence(val):
-                resolved[key] = [(v.to_dict_old() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
-
-            # elif isinstance(val, dict):
-            #     resolved[key] = {k : (v.to_dict_old() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
-            else:
-                resolved[key] = val if not isFunction(val) else repr(val)
-
-        return resolved
+#    def to_dict_old(self):
+#        """
+#        Returns a dictionary with all values resolved but not validated and functions converted to strings
+#        via 'repr'. Suitable for pickling but suitable for debugging and pretty printing only. Will not throw an exception
+#        if invalid/unset values are detected in order to be useful for debugging.
+#        All functions (isCallable types) are reduced to their printable string representation.
+#        """
+#        resolved = {}
+#        for key in self.keys():
+#            ## Resolve LambdaVals but do not validate them because we
+#            ## need this method to work for debugging purposes, therefore we need to
+#            ## see the state of the dictionary - especially the invalid values.
+#            val = self._get_unvalidated_val(key)
+#            if isinstance(val, Properties):
+#                resolved[key] = val.to_dict_old()
+#            elif issequence(val):
+#                resolved[key] = [(v.to_dict_old() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
+#
+#            # elif isinstance(val, dict):
+#            #     resolved[key] = {k : (v.to_dict_old() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
+#            else:
+#                resolved[key] = val if not isFunction(val) else repr(val)
+#
+#        return resolved
 
     def to_table(self, prefix=None):
         """
@@ -285,7 +284,7 @@ class ParamDesc(Properties):
             #     print 'WARNING: Setting None default value for property %s'%name
 
             Properties.__init__(self, {'name':name, 'text':text, 'validator':validator, 'default':default})
-        
+
         self.freeze()
 
     # def defaultIsSet(self):
@@ -426,7 +425,6 @@ class Params(Properties):
             if name not in props:
                 try:
                     props[name] = prop
-                    # _vals[name] = vals_init_[name] if (name in vals_init_) else vals_params_[name] if (name in vals_params_) else prop.default
                     val_init = vals_init_._rvn(name)
                     val_param = vals_params_._rvn(name)
                     if name in vals_init_:
@@ -435,6 +433,7 @@ class Params(Properties):
                         _vals[name] = check_immutable(val_param)
                     elif prop.defaultIsSet():
                         _vals[name] = check_immutable(prop.default)
+                    # else do not insert key into dictionary
 
                 except:
                     print('##### Error while processing property: \n', prop, '\n')
@@ -670,17 +669,6 @@ class Params(Properties):
         """ WARNING: Partial implementation: Delegates to  Properties.from_pickle and returns a Properties object. """
         return Properties.from_pickle(*paths)
 
-    # def filled(self, other={}):
-    #     """
-    #     Sets unset or None properties of self with values in other if present.
-    #     """
-    #     for prop in self.protoS:
-    #         # if ((not prop.name in self) or (self[prop.name] is None)) and prop.name in other:
-    #         if (not prop.name in self) and (prop.name in other):
-    #             self[prop.name] = other[prop.name]
-
-    #     return self
-
     @property
     def protoS(self):
         # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
@@ -692,7 +680,6 @@ class Params(Properties):
         # self._descr_dict won't call __getattr__ because __getattribute__ returns successfully
         #return self._descr_dict
         return object.__getattribute__(self, '_descr_dict')
-
 
 class HyperParams(Params):
     """
@@ -888,12 +875,11 @@ class _anyok(_ParamValidator):
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
 
-import numpy as np
-
-def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
+def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, EOSToken=0):
     assert np_seq_batch.ndim == 2
     assert EOSToken == 0
-    assert remove_val != EOSToken
+    assert remove_val1 != EOSToken
+    assert remove_val2 != EOSToken
     sq_batch = []
 
     for i, np_seq in enumerate(np_seq_batch):
@@ -906,25 +892,29 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val, EOSToken=0):
             trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
             logger.warn('More than one EOS tokens in sequence of length %d'%seq_len)
 
-        squashed = trunc[trunc != remove_val]
+        if remove_val1 is not None:
+            trunc = trunc[trunc != remove_val1]
+        if remove_val2 is not None:
+            trunc = trunc[trunc != remove_val2]
+
+        squashed = trunc
         sq_batch.append(squashed.tolist())
         # sq_batch.append(np.pad(squashed, (0, T-squashed.shape[0]), mode='constant', constant_values=0))
     return sq_batch
 
-def get_bleu_weights(max_len=200, frac=1.0):
-    weights = [None]
-    for i in range(1, max_len+1):
-        o = int(np.ceil([i*(1.-frac)])[0])
-        if o == 0:
-            o = 1
-        w = np.ones(o, dtype=float) / o
-        z = np.zeros(i-o, dtype=float)
-        weights.append( np.concatenate((z, w)) )
-    return weights
-BLEU_WEIGHTS = get_bleu_weights()
+# def get_bleu_weights(max_len=200, frac=1.0):
+#     weights = [None]
+#     for i in range(1, max_len+1):
+#         o = int(np.ceil([i*(1.-frac)])[0])
+#         if o == 0:
+#             o = 1
+#         w = np.ones(o, dtype=float) / o
+#         z = np.zeros(i-o, dtype=float)
+#         weights.append( np.concatenate((z, w)) )
+#     return weights
+# BLEU_WEIGHTS = get_bleu_weights()
 
-import nltk
-def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token):
+def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None):
     """
     Removes space-tokens from predicted_ids and then computes the bleu scores of a batch of
     sequences.
@@ -933,21 +923,22 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
         predicted_lens: Numpy array of predicted sequence lengths - (B,)
         target_ids: Numpy array of reference sequence tokens - (B, T')
         target_lens: Numpy array of reference sequence lengths - (B,)
-        space_token: (token-type) Space/Blank token to remove from predicted_ids
+        space_token: (token-type) Space token to remove from predicted_ids
+        blank_token: (token-type) CTC Blank token to remove from predicted_ids
     """
     scores = []
-    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token)
+    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token)
     for i, predicted_seq in enumerate(squashed_ids):
         target_len = target_lens[i]
         target = target_ids[i][:target_len]
-        score = nltk.translate.bleu_score.sentence_bleu([target], 
-                                                        predicted_seq,
-                                                        weights=BLEU_WEIGHTS[target_len])
+        score = nltk.translate.bleu_score.sentence_bleu([target],
+                                                        predicted_seq)
+                                                        # weights=BLEU_WEIGHTS[target_len])
         scores.append(score)
-        print ('BLEU Score = %f'%score)
-        print ('Target = %s'%target)
-        print ('Predicted = %s'%predicted_seq)
-        print ('BLEU Weights = %s'%BLEU_WEIGHTS[target_len])
+        # print ('BLEU Score = %f'%score)
+        # print ('Target = %s'%target)
+        # print ('Predicted = %s'%predicted_seq)
+        # print ('BLEU Weights = %s'%BLEU_WEIGHTS[target_len])
 
     return scores
 # nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)
@@ -1039,7 +1030,7 @@ def to_flat_dict(dict_obj):
     return _flatten('', d, {})
 
 def to_set(dict_obj, sep=' ===> '):
-    """ 
+    """
     Returns:
         set(['key1 ==> val1', 'key2 ==> val2', ...])
 
@@ -1077,7 +1068,7 @@ def diff_table(dict_obj, other):
     """
     sep = ' ===> '
     def extract_keys(s):
-        return set([''.join(e.split(sep)[:-1]) for e in s])    
+        return set([''.join(e.split(sep)[:-1]) for e in s])
 
     s1 = to_set(dict_obj, sep)
     s2 = to_set(other, sep)

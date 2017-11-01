@@ -328,7 +328,6 @@ class VisualizeDir(object):
         plotImages(image_details, dpi=200)
 
     def alpha(self, graph, step, sample_num=0):
-#        df_words, df_ids = self._words(graph, step, 'predicted_ids', _get_ids=True)
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         sample_idx = df_all.iloc[sample_num].name ## Top index in sort order
         nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
