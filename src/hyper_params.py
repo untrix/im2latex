@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+ #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 """
     Hyper-parameters for the model.
@@ -34,7 +34,7 @@ import dl_commons as dlc
 import tf_commons as tfc
 from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
                         iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
-from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams, 
+from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams,
                         DropoutParams, TensorboardParams, RNNParams)
 
 def pad_image_shape(shape, padding):
@@ -180,7 +180,7 @@ class GlobalParams(dlc.HyperParams):
             False),
         PD('biases_regularizer',
               'L1 / L2 norm regularization',
-              iscallable(noneokay=True), 
+              iscallable(noneokay=True),
               None),
         PD('use_peephole',
             '(boolean): whether to employ peephole connections in the decoder LSTM',
@@ -202,7 +202,7 @@ class GlobalParams(dlc.HyperParams):
 class CALSTMParams(dlc.HyperParams):
     proto = GlobalParams.proto + (
         ### Attention Model Params ###
-            PD('att_layers', 'MLP or Convnet parameters for attention model', 
+            PD('att_layers', 'MLP or Convnet parameters for attention model',
                 dlc.either(instanceof(MLPParams), instanceof(ConvStackParams)),
                 ## Set dynamically in self._trickledown()
                 ),
@@ -236,7 +236,7 @@ class CALSTMParams(dlc.HyperParams):
        ## "therefore their input dimensionality will not be equal to the embedding dimensionality, rather "
        ## " it will be equal to output_size of the previous CALSTM. That's why the value of m needs to be "
        ## "appropriately adjusted for upper CALSTM layers."
-        assert initVals['m'] is not None        
+        assert initVals['m'] is not None
         dlc.HyperParams.__init__(self, self.proto, initVals, seal=False)
         ## No dropout within CALSTM
         self.dropout = None
@@ -398,12 +398,12 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('num_gpus', 'Number of GPUs employed in parallel',
                integer(1)
                ),
-            PD('data_reader_B', 'batch_size for the data_reader', 
+            PD('data_reader_B', 'batch_size for the data_reader',
                integer(1),
                LambdaVal(lambda _, d: d.B * d.num_gpus)
                ),
         ### Embedding Layer ###
-            PD('embeddings_initializer', 'Initializer for embedding weights', 
+            PD('embeddings_initializer', 'Initializer for embedding weights',
                 iscallable(),
                ## tf.contrib.layers.xavier_initializer()
                equalto('weights_initializer')
@@ -546,7 +546,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
-            
+
         assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'
         if (not self.output_reuse_embeddings):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
@@ -623,12 +623,12 @@ def make_hyper(initVals={}, freeze=True):
                 # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
             )
         })
-    
+
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),
         'CONVNET': CONVNET
         })
-        
+
     if freeze:
         HYPER.freeze()
 

@@ -286,7 +286,7 @@ def main(raw_data_folder,
                                     train_ops.y_ctc_list,
                                     train_ops.ctc_len,
                                     train_ops.pred_squash_ids_list,
-                                    train_ops.pred_squash_lens
+                                    train_ops.pred_squash_lens,
                                     ##
                                     train_ops.y_s_list,
                                     train_ops.predicted_ids_list,

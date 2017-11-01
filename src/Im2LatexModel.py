@@ -927,10 +927,10 @@ def sync_training_towers(hyper, tower_ops, global_step):
 #            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
 #            tf.summary.scalar('training/total_cost/', cost, collections=['training'])
 #            tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
-            tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
-            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
-            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
-            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
+#            tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
+#            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
+#            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
+#            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
 
             tb_logs = tf.summary.merge(tf.get_collection('training'))
 
@@ -943,42 +943,47 @@ def sync_training_towers(hyper, tower_ops, global_step):
             ph_alpha_penalty = tf.placeholder(hyper.dtype)
             ph_costs = tf.placeholder(hyper.dtype)
             ph_mean_norm_ases = tf.placeholder(hyper.dtype)
+            ph_pred_len_ratio = tf.placeholder(hyper.dtype)
+            ph_num_hits = tf.placeholder(hyper.int_type)
 
             ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
-            tf.summary.scalar('training/agg/time_per100/', ph_train_time, collections=['training_aggregate'])
-            tf.summary.histogram('training/agg/bleu/', ph_bleu_scores, collections=['training_aggregate'])
-            tf.summary.scalar('training/agg/bleu_avg/', tf.reduce_mean(ph_bleu_scores), collections=['training_aggregate'])
-            tf.summary.histogram('training/agg/ctc_ed/', ph_ctc_eds, collections=['training_aggregate'])
-            tf.summary.scalar('training/agg/ctc_ed_avg/', tf.reduce_mean(ph_ctc_eds), collections=['training_aggregate'])
-            mean_loss = tf.reduce_mean(ph_loglosses)
-            min_loss = tf.reduce_min(ph_loglosses)
-            max_loss = tf.reduce_max(ph_loglosses)
-            tf.summary.scalar('training/logloss/', mean_loss, collections=['training_aggregate'])
-            tf.summary.scalar('training/logloss_min/', min_loss,  collections=['training_aggregate'])
-            tf.summary.scalar('training/logloss_max/', max_loss,  collections=['training_aggregate'])
+            tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
+            tf.summary.histogram('training/bleu_dist/', ph_bleu_scores, collections=['training_aggregate'])
+            tf.summary.scalar('training/bleu/', tf.reduce_mean(ph_bleu_scores), collections=['training_aggregate'])
+            tf.summary.histogram('training/ctc_ed_dist/', ph_ctc_eds, collections=['training_aggregate'])
+            tf.summary.scalar('training/ctc_ed/', tf.reduce_mean(ph_ctc_eds), collections=['training_aggregate'])
+            tf.summary.scalar('training/mean_logloss/', tf.reduce_mean(ph_loglosses), collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_mean_logloss_min/', tf.reduce_min(ph_loglosses),  collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_mean_logloss_max/', tf.reduce_max(ph_loglosses),  collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_loss/', tf.reduce_mean(ph_ctc_losses), collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_loss_min/', tf.reduce_min(ph_ctc_losses),  collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_loss_max/', tf.reduce_max(ph_ctc_losses),  collections=['training_aggregate'])
             tf.summary.scalar('training/alpha_penalty/', tf.reduce_mean(ph_alpha_penalty), collections=['training_aggregate'])
-            tf.summary.scalar('training/alpha_penalty_min/', tf.reduce_min(ph_alpha_penalty), collections=['training_aggregate'])
-            tf.summary.scalar('training/alpha_penalty_max/', tf.reduce_max(ph_alpha_penalty), collections=['training_aggregate'])
             tf.summary.scalar('training/total_cost/', tf.reduce_mean(ph_costs), collections=['training_aggregate'])
             tf.summary.scalar('training/mean_norm_ase/', tf.reduce_mean(ph_mean_norm_ases), collections=['training_aggregate'])
+            tf.summary.histogram('training/mean_norm_ase_dist/', (ph_mean_norm_ases), collections=['training_aggregate'])
+            tf.summary.scalar('training/pred_len_ratio_avg/', tf.reduce_mean(ph_pred_len_ratio), collections=['training_aggregate'])
+            tf.summary.histogram('training/pred_len_ratio_dist/', ph_pred_len_ratio, collections=['training_aggregate'])
+            mean_hits = tf.reduce_mean(ph_num_hits)
+            tf.summary.scalar('training/num_hits/', mean_hits, collections=['training_aggregate'])
+            tf.summary.scalar('training/accuracy/', (mean_hits*1.0)/(hyper.num_gpus*hyper.B), collections=['training_aggregate'])
 
             tb_agg_logs = tf.summary.merge(tf.get_collection('training_aggregate'))
 
         return dlc.Properties({
             'image_name_list': gather('image_name'), # [(B,), ...]
-            'alpha': concat('alpha', axis=1), # [(N, B, H, W, T), ...]
-            'beta': concat('beta', axis=1), # [(N,B,T), ...]
+            'alpha': concat('alpha', axis=1), # [(N, num_gpus*B, H, W, T), ...]
+            'beta': concat('beta', axis=1), # [(N, num_gpus*B,T), ...]
             'log_likelihood': log_likelihood, # scalar
+            'ph_loglosses': ph_loglosses, # (num_steps,)
             'ctc_loss': ctc_loss, # scalar
             'loss': ctc_loss if hyper.use_ctc_loss else log_likelihood, # scalar
             'alpha_penalty': alpha_penalty, # scalar
             'reg_loss': reg_loss, # scalar
             'cost': cost, # scalar
             'train': apply_grads, # op
-            'ctc_ed': concat('ctc_ed'), # (B,)
+            'ctc_ed': concat('ctc_ed'), # (num_gpus*B,)
+            'ph_ctc_eds': ph_ctc_eds, # (num_steps*num_gpus*B,)
             'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
             'pred_squash_ids_list': gather('predicted_squashed_ids'), # [(B,T), ...]
             'pred_squash_lens': concat('pred_squash_lens'), # (num_gpus*B,)
@@ -987,7 +992,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
             'ctc_len': concat('ctc_len'), # (num_gpus*B,)
             'tb_logs':tb_logs, # summary string
             'ph_train_time': ph_train_time, # scalar
-            'ph_bleu_scores': ph_bleu_scores, # (B,)
+            'ph_bleu_scores': ph_bleu_scores, # (num_steps*num_gpus*B,)
             'tb_agg_logs': tb_agg_logs, # summary string
             })
 

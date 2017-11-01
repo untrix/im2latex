@@ -115,3 +115,4 @@ bin/activate
 bin/deactivate
 .DS_Store
 ._.DS_Store
+.idea/
