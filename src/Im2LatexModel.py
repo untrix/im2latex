@@ -635,7 +635,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'sequence_lengths': sequence_lengths, # (B,)
                         'ctc_len': ctc_len, # (B,)
                         'pred_squash_lens': ctc_squashed_lens, # (B,)
-                        'pred_len_ratio': pred_len_ratio,
+                        'pred_len_ratio': pred_len_ratio, # (B,)
                         'num_hits': num_hits,
                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
                         # 'mean_sum_alpha_i': mean_sum_alpha_i,
@@ -910,7 +910,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
         log_likelihood = get_mean('log_likelihood')
         ctc_loss = get_mean('ctc_loss')
         alpha_penalty = get_mean('alpha_penalty')
-        reg_loss = get_sum('reg_loss')
+        reg_loss = tower_ops['reg_loss'][0] # RegLoss should be same for all towers
         if hyper.use_ctc_loss:
             cost = ctc_loss + alpha_penalty + reg_loss
         else:
@@ -921,7 +921,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
             apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
 
         with tf.variable_scope('Instrumentation'):
-            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
+#            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
 #            tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
 #            tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
 #            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
@@ -940,11 +940,12 @@ def sync_training_towers(hyper, tower_ops, global_step):
             ph_ctc_eds = tf.placeholder(hyper.dtype)
             ph_loglosses = tf.placeholder(hyper.dtype)
             ph_ctc_losses = tf.placeholder(hyper.dtype)
-            ph_alpha_penalty = tf.placeholder(hyper.dtype)
+            ph_alpha_penalties = tf.placeholder(hyper.dtype)
             ph_costs = tf.placeholder(hyper.dtype)
             ph_mean_norm_ases = tf.placeholder(hyper.dtype)
-            ph_pred_len_ratio = tf.placeholder(hyper.dtype)
+            ph_pred_len_ratios = tf.placeholder(hyper.dtype)
             ph_num_hits = tf.placeholder(hyper.int_type)
+            ph_reg_losses = tf.placeholder(hyper.dtype)
 
             ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
             tf.summary.scalar('training/time_per100/', ph_train_time, collections=['training_aggregate'])
@@ -958,15 +959,16 @@ def sync_training_towers(hyper, tower_ops, global_step):
             tf.summary.scalar('training/ctc_loss/', tf.reduce_mean(ph_ctc_losses), collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_loss_min/', tf.reduce_min(ph_ctc_losses),  collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_loss_max/', tf.reduce_max(ph_ctc_losses),  collections=['training_aggregate'])
-            tf.summary.scalar('training/alpha_penalty/', tf.reduce_mean(ph_alpha_penalty), collections=['training_aggregate'])
+            tf.summary.scalar('training/alpha_penalty/', tf.reduce_mean(ph_alpha_penalties), collections=['training_aggregate'])
             tf.summary.scalar('training/total_cost/', tf.reduce_mean(ph_costs), collections=['training_aggregate'])
             tf.summary.scalar('training/mean_norm_ase/', tf.reduce_mean(ph_mean_norm_ases), collections=['training_aggregate'])
             tf.summary.histogram('training/mean_norm_ase_dist/', (ph_mean_norm_ases), collections=['training_aggregate'])
-            tf.summary.scalar('training/pred_len_ratio_avg/', tf.reduce_mean(ph_pred_len_ratio), collections=['training_aggregate'])
-            tf.summary.histogram('training/pred_len_ratio_dist/', ph_pred_len_ratio, collections=['training_aggregate'])
+            tf.summary.scalar('training/pred_len_ratio_avg/', tf.reduce_mean(ph_pred_len_ratios), collections=['training_aggregate'])
+            tf.summary.histogram('training/pred_len_ratio_dist/', ph_pred_len_ratios, collections=['training_aggregate'])
             mean_hits = tf.reduce_mean(ph_num_hits)
             tf.summary.scalar('training/num_hits/', mean_hits, collections=['training_aggregate'])
             tf.summary.scalar('training/accuracy/', (mean_hits*1.0)/(hyper.num_gpus*hyper.B), collections=['training_aggregate'])
+            tf.summary.scalar('training/regLoss/', tf.reduce_mean(ph_reg_losses), collections=['training_aggregate'])
 
             tb_agg_logs = tf.summary.merge(tf.get_collection('training_aggregate'))
 
@@ -974,17 +976,27 @@ def sync_training_towers(hyper, tower_ops, global_step):
             'image_name_list': gather('image_name'), # [(B,), ...]
             'alpha': concat('alpha', axis=1), # [(N, num_gpus*B, H, W, T), ...]
             'beta': concat('beta', axis=1), # [(N, num_gpus*B,T), ...]
-            'log_likelihood': log_likelihood, # scalar
+            'log_likelihood': log_likelihood, # scalara
             'ph_loglosses': ph_loglosses, # (num_steps,)
             'ctc_loss': ctc_loss, # scalar
+            'ph_ctc_losses': ph_ctc_losses, # (num_steps,)
             'loss': ctc_loss if hyper.use_ctc_loss else log_likelihood, # scalar
             'alpha_penalty': alpha_penalty, # scalar
+            'ph_alpha_penalties': ph_alpha_penalties, # (num_steps,)
+            'mean_norm_ase': get_mean('mean_norm_ase'), # scalar between 0. and 100.
+            'ph_mean_norm_ases': ph_mean_norm_ases, # (num_steps,)
+            'num_hits': get_sum('num_hits'), # scalar
+            'ph_num_hits': ph_num_hits, # (num_steps,)
             'reg_loss': reg_loss, # scalar
+            'ph_reg_losses': ph_reg_losses, # (num_steps,)
             'cost': cost, # scalar
+            'ph_costs': ph_costs, # (num_steps,)
             'train': apply_grads, # op
             'ctc_ed': concat('ctc_ed'), # (num_gpus*B,)
             'ph_ctc_eds': ph_ctc_eds, # (num_steps*num_gpus*B,)
             'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
+            'pred_len_ratio': concat('pred_len_ratio'), # (num_gpus*B,)
+            'ph_pred_len_ratios': ph_pred_len_ratios, # (num_steps*num_gpus*B,)
             'pred_squash_ids_list': gather('predicted_squashed_ids'), # [(B,T), ...]
             'pred_squash_lens': concat('pred_squash_lens'), # (num_gpus*B,)
             'y_s_list': gather('y_s'), # [(B,T),...]

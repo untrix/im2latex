@@ -24,9 +24,7 @@ Created on Tue Jul 25 13:41:32 2017
 
 Tested on python 2.7
 """
-import os
 import time
-import logging
 import numpy as np
 import tensorflow as tf
 import tf_commons as tfc
@@ -111,6 +109,63 @@ def make_log_step(hyper):
         return (step * B) // 64
     return log_step
 log_step = None
+
+class Accumulator(dlc.Properties):
+#    _props = (
+#                'train_times',
+#                'bleu_scores',
+#                'ctc_eds',
+#                'loglosses',
+#                'ctc_losses',
+#                'alpha_penalties',
+#                'costs',
+#                'mean_norm_ases',
+#                'pred_len_ratios',
+#                'num_hits',
+#                'reg_losses',
+#            )
+    def __init__(self, props_accum):
+        dlc.Properties.__init__(self)
+        self.reset()
+    def reset(self):
+        for k in self.keys():
+            del self[k]
+    def append(self, d):
+        for k, v in d.iteritems():
+            if k not in self:
+                self[k] = []
+            self[k].append(v)
+    def extend(self, d):
+        for k, v in d.iteritems():
+            if k not in self:
+                self[k] = []
+            self[k].extend(v)
+
+
+class TFOpNames(dlc.Properties):
+    def __init__(self, props, val):
+        dlc.Properties.__init__(self)
+        self._props = props
+        self.reset_vals(val)
+        self.seal()
+
+    @property
+    def props(self):
+        return self._props
+    def reset_vals(self, val):
+        for prop in self._props:
+            self[prop] = val
+    def set_vals(self, vals):
+        assert len(vals) == len(self._props)
+        for i in range(len(vals)):
+            self[self._props[i]] = vals[i]
+    def op_tuple(self, op_dict):
+        l = []
+        for name in self._props:
+            l.append(op_dict[name])
+        return tuple(l)
+    def run_ops(self, session, op_dict):
+        self.set(session.run(self.op_tuple(op_dict)))
 
 def main(raw_data_folder,
           vgg16_folder,
@@ -251,57 +306,50 @@ def main(raw_data_folder,
 
             try:
                 start_time = time.time()
-                def reset_metrics():
-                    return [], [], [], [], []
                 ############################# Training (with Validation) Cycle ##############################
                 if args.doTrain:
                     logger.info('Starting training')
                     ## Reset metrics
-                    train_time, losses, logs, bleu_scores, ctc_losses = reset_metrics()
+                    ops_accumulate = (
+                            'train',
+                            'pred_squash_ids_list',
+                            'pred_squash_lens',
+                            'y_ctc_list',
+                            'ctc_len',
+                            'ctc_ed',
+                            'log_likelihood',
+                            'ctc_loss',
+                            'alpha_penalty',
+                            'cost',
+                            'mean_norm_ase',
+                            'pred_len_ratio',
+                            'num_hits',
+                            'reg_loss',
+                        )
+                    accum = Accumulator()
 
                     while not coord.should_stop():
                         step_start_time = time.time()
                         step += 1
                         doLog = do_log(step, args, train_it, valid_it)
                         if not doLog:
-                            _, loss, ctc_loss, log, y_ctc_list, ctc_len, pred_squash_ids_list, pred_squash_lens = session.run(
-                                (
-                                    train_ops.train,
-                                    train_ops.loss,
-                                    train_ops.ctc_loss,
-                                    train_ops.tb_logs,
-                                    train_ops.y_ctc_list,
-                                    train_ops.ctc_len,
-                                    train_ops.pred_squash_ids_list,
-                                    train_ops.pred_squash_lens
-                                ))
-                            predicted_ids_list = y_s_list = alpha = beta = image_name_list = ctc_ed = None
+                            batch_metrics = TFOpNames(ops_accumulate, None)
                         else:
-                            _, loss, ctc_loss, log, y_ctc_list, ctc_len, pred_squash_ids_list, pred_squash_lens, y_s_list, predicted_ids_list, alpha, beta, image_name_list, ctc_ed = session.run(
-                                (
-                                    train_ops.train,
-                                    train_ops.loss,
-                                    train_ops.ctc_loss,
-                                    train_ops.tb_logs,
-                                    train_ops.y_ctc_list,
-                                    train_ops.ctc_len,
-                                    train_ops.pred_squash_ids_list,
-                                    train_ops.pred_squash_lens,
-                                    ##
-                                    train_ops.y_s_list,
-                                    train_ops.predicted_ids_list,
-                                    train_ops.alpha,
-                                    train_ops.beta,
-                                    train_ops.image_name_list,
-                                    train_ops.ctc_ed
-                                ))
+                            batch_metrics = TFOpNames( ops_accumulate + (
+                                    'y_s_list',
+                                    'predicted_ids_list',
+                                    'alpha',
+                                    'beta',
+                                    'image_name_list',
+                                ), None)
 
+                        batch_metrics.run_ops(session, train_ops)
                         ## Accumulate Metrics
-                        losses.append(loss[()])
-                        ctc_losses.append(ctc_loss[()])
-                        logs.append(log)
-                        train_time.append(time.time()-step_start_time)
-                        bleu_scores.extend(bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len))
+                        accum.append(batch_metrics)
+                        accum.append({'train_time': time.time()-step_start_time})
+                        accum.extend({
+                                'bleu_scores': bleu_scores(pred_squash_ids_list, pred_squash_lens, y_ctc_list, ctc_len)
+                                })
 
                         if doLog:
                             logger.info('Step %d',step)

@@ -410,11 +410,8 @@ class Params(Properties):
 
         object.__setattr__(self, '_desc_list', tuple(descriptors) )
 
-        def check_immutable(v):
+        def assert_immutable(v):
             ## warn if doing shallow-copy of a dictionary
-            # if isinstance(v, Properties):
-            #     if not v.isFrozen():
-            #         raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(pformat(v),))
             if isMutable(v):
                 raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(pformat(v),))
 
@@ -428,11 +425,11 @@ class Params(Properties):
                     val_init = vals_init_._rvn(name)
                     val_param = vals_params_._rvn(name)
                     if name in vals_init_:
-                        _vals[name] = check_immutable(val_init)
+                        _vals[name] = assert_immutable(val_init)
                     elif name in vals_params_:
-                        _vals[name] = check_immutable(val_param)
+                        _vals[name] = assert_immutable(val_param)
                     elif prop.defaultIsSet():
-                        _vals[name] = check_immutable(prop.default)
+                        _vals[name] = assert_immutable(prop.default)
                     # else do not insert key into dictionary
 
                 except:
@@ -461,127 +458,6 @@ class Params(Properties):
         if seal:
             self.seal()
 
-    def _init_old_(self, prototype, initVals=None):
-        """
-        Takes property descriptors and their values. After initialization, no new params
-        may be created - i.e. the object is sealed (see class Properties). The
-        property values can be modified however (unless you call freeze()).
-
-        @param prototype (sequence of ParamDesc): Sequence of ParamDesc objects which serve as the list of
-            valid properties. Can be a sequence of ParamDesc objects or another Params object.
-            If it was a Params object, then descriptors would be derived
-            from prototype.protoS.
-            This object will also provide the property values if not specified in
-            the vals argument (below). If this was a list of ParamDesc objects,
-            then the default property values would be used (ParamDesc.default). If
-            on the other hand, this was a Params object, then its property
-            value would be used (i.e. the return value of Params['prop_name']).
-
-        @param initVals (dict): provides initial values of the properties of this object.
-            May specify a subset of the object's properties, or none at all. Unspecified
-            property values will be initialized from the prototype object.
-            Should be either a dictionary of name:value pairs or unspecified (None).
-
-        If a value (even default value) is a callable (i.e. function-like) but is
-        expected to be a non-callable (i.e. validator does not derive from _iscallable)
-        then it will
-        be called in order to get the actual value of the parameter. The callable function will
-        be passed in name of the property and a dictionary of all the properties
-        with their initVals or default vals as appropriate. Callables are called
-        in a second pass - after the initVals and default-values of all the properties
-        have been resolved (this happens in the first pass). However, at this point the callable
-        objects are not invoked and therefore (internally) show up as values of the property.
-        In the second pass, the callable objects are
-        are invoked in the order in which the properties were declared in the prototype.
-        The final value of a property will be set to the return value of the callable.
-        Hence the callable function should expect that properties that occur
-        later in the prototype sequence will still have their values set to
-        callable objects (if any). Both initVal and default values maybe
-        callables. Just don't get into loops. also, the dictionary passed into
-        the callable is a copy of the resolved values, and therefore changing
-        some other property's value will have no impact. This feature is used
-        to set one property's value based on others. See the example below.
-
-        Examples:
-        o1 = Params(
-                    [
-                     ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                     ParamDesc('layer_type', 'Type of layers to be created'),
-                     ParamDesc('num_layers', 'Number of layers. Defaults to 1', xrange(1,101), 1),
-                     ParamDesc('num_units', 'Number of units per layer. Defaults to 10000 / num_layers',
-                               xrange(1, 10000),
-                               lambda name, props: 10000 // props["num_layers"]), ## Lambda function will be invoked
-                     ParamDesc('activation_fn', 'tensorflow activation function',
-                               iscallable(tf.nn.relu, tf.nn.tanh, None),
-                               tf.nn.relu) ## Function will not be invoked because the param-type is callable.
-                    ])
-        o2 = Params(o1) # copies prototype from o1, uses default values
-        o3 = Params(o1, initVals={'model_name':'im2latex'}) # uses descriptors from o1.protoS,
-            initializes with val from vals if available otherwise with default from o1.protoS
-        """
-        Properties.__init__(self)
-        descriptors = prototype
-        props = Properties()
-        vals1_ = Properties()
-        vals2_ = Properties()
-        _vals = {}
-
-        if isinstance(prototype, Params):
-            descriptors = prototype.protoS
-            if initVals is None:
-                vals1_ = prototype
-            else:
-                vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
-                vals2_ = prototype
-        else:
-            if initVals is not None:
-                vals1_ = initVals if isinstance(initVals, Properties) else Properties(initVals)
-
-        object.__setattr__(self, '_desc_list', tuple(descriptors) )
-
-        derivatives = []
-        for prop in descriptors:
-            name = prop.name
-            if name not in props:
-                try:
-                    props[name] = prop
-                    # _vals[name] = vals1_[name] if (name in vals1_) else vals2_[name] if (name in vals2_) else prop.default
-                    val1 = vals1_._rvn(name)
-                    val2 = vals2_._rvn(name)
-                    ## TODO: Fix prop.default - use it only if a default value was set. Otherwise leave the value unset (i.e. do not insert the key into dict.)
-                    _vals[name] = val1 if (name in vals1_) else val2 if (name in vals2_) else prop.default
-                    # if (prop.validator is None) or (None not in prop.validator):
-                    #     _vals[name] = val1 if (val1 is not None) else val2 if (val2 is not None) else prop.default
-                    # else:
-                    #     _vals[name] = val1
-
-                    if isinstance(_vals[name], LambdaVal):
-                        ## This is a case where a proxy function has been provided
-                        ## in place of a value.
-                        derivatives.append(name)
-                except:
-                    print('##### Error while processing property: \n', prop, '\n')
-                    raise
-            else:
-                raise ParamsValueError('property %s has already been initialized with value %s'%(name,
-                                                                                                 _vals[name]))
-
-        object.__setattr__(self, '_descr_dict', props.freeze())
-
-        # Validation: Now insert the property values one by one. Doing so will invoke
-        # self._set_val_ which will validate their values against self._descr_dict.
-        for prop in descriptors:
-            try:
-                _name = prop.name
-                self[_name] = _vals[_name]
-            except ParamsValueError:
-                raise
-            except:
-                print('##### Error while processing property: \n', prop, '\n')
-                raise
-
-        # Finally, seal the object so that no new properties may be added.
-        self.seal()
 
     def _set_val_(self, name, val):
         """ Polymorphic override of _set_val_. Be careful of recursion. """
