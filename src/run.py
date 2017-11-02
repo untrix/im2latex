@@ -33,8 +33,6 @@ import data_commons as dtc
 import train_multi_gpu
 import logging
 import hyper_params
-import pandas as pd
-import h5py
 
 def main():
     _data_folder = '../data'
@@ -228,7 +226,7 @@ def main():
     logger.info('##################################################################\n')
     logger.info( '\n#########################  Hyper-params: #########################\n%s', hyper.pformat())
     logger.info('##################################################################\n')
-    
+
     train_multi_gpu.main(raw_data_folder,
           vgg16_folder,
           globalParams,

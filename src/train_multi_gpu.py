@@ -111,20 +111,7 @@ def make_log_step(hyper):
 log_step = None
 
 class Accumulator(dlc.Properties):
-#    _props = (
-#                'train_times',
-#                'bleu_scores',
-#                'ctc_eds',
-#                'loglosses',
-#                'ctc_losses',
-#                'alpha_penalties',
-#                'costs',
-#                'mean_norm_ases',
-#                'pred_len_ratios',
-#                'num_hits',
-#                'reg_losses',
-#            )
-    def __init__(self, props_accum):
+    def __init__(self):
         dlc.Properties.__init__(self)
         self.reset()
     def reset(self):
@@ -165,7 +152,7 @@ class TFOpNames(dlc.Properties):
             l.append(op_dict[name])
         return tuple(l)
     def run_ops(self, session, op_dict):
-        self.set(session.run(self.op_tuple(op_dict)))
+        self.set_vals(session.run(self.op_tuple(op_dict)))
 
 def main(raw_data_folder,
           vgg16_folder,
@@ -309,8 +296,7 @@ def main(raw_data_folder,
                 ############################# Training (with Validation) Cycle ##############################
                 if args.doTrain:
                     logger.info('Starting training')
-                    ## Reset metrics
-                    ops_accumulate = (
+                    ops_accum = (
                             'train',
                             'pred_squash_ids_list',
                             'pred_squash_lens',
@@ -327,15 +313,14 @@ def main(raw_data_folder,
                             'reg_loss',
                         )
                     accum = Accumulator()
-
                     while not coord.should_stop():
                         step_start_time = time.time()
                         step += 1
                         doLog = do_log(step, args, train_it, valid_it)
                         if not doLog:
-                            batch_ops = TFOpNames(ops_accumulate, None)
+                            batch_ops = TFOpNames(ops_accum, None)
                         else:
-                            batch_ops = TFOpNames( ops_accumulate + (
+                            batch_ops = TFOpNames( ops_accum + (
                                     'y_s_list',
                                     'predicted_ids_list',
                                     'alpha',
@@ -347,7 +332,7 @@ def main(raw_data_folder,
                         ## Accumulate Metrics
                         accum.append(batch_ops)
                         train_time = time.time()-step_start_time
-                        bleu = bleu_scores(batch_ops.pred_squash_ids_list, batch_ops.pred_squash_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
+                        bleu = bleu_scores(batch_ops.pred_squash_ids_list, batch_ops.pred_squash_lens, batch_ops.y_ctc_list, batch_ops.ctc_len, silent=True)
                         accum.append({'train_time': train_time})
                         accum.extend({'bleu_scores': bleu})
 
@@ -387,35 +372,24 @@ def main(raw_data_folder,
                                     time.time()-start_time,
                                     train_time_per100))
 
-                            ## Log Batch Metrics
-#                            i_min = np.argmin(losses)
-#                            i_max = np.argmax(losses)
-#                            i_min_step = log_step(step-args.print_steps + i_min+1)
-#                            i_max_step = log_step(step-args.print_steps + i_max+1)
-#                            if i_min < i_max:
-#                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
-#                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
-#                            elif i_min > i_max:
-#                                tf_sw.add_summary(logs[i_max], global_step= i_max_step)
-#                                tf_sw.add_summary(logs[i_min], global_step= i_min_step)
-#                            else:
-#                                if step == 1:
-#                                    tf_sw.add_summary(logs[i_min], global_step=log_step(1))
-#                                else:
-#                                    tf_sw.add_summary(logs[i_min], global_step=i_min_step)
-
-                            ## Log Aggregate Metrics
+                            ## Run aggregated metrics logs
                             tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
                                                                               train_ops.ph_train_time: train_time_per100,
-                                                                              train_ops.ph_bleu_score: bleu,
-                                                                              train_ops.ph_losses: losses,
-                                                                              train_ops.ph_ctc_losses: ctc_losses
+                                                                              train_ops.ph_bleu_scores: accum.bleu_scores,
+                                                                              train_ops.ph_ctc_eds: accum.ctc_ed,
+                                                                              train_ops.ph_loglosses: accum.log_likelihood,
+                                                                              train_ops.ph_ctc_losses: accum.ctc_loss,
+                                                                              train_ops.ph_alpha_penalties: accum.alpha_penalty,
+                                                                              train_ops.ph_costs: accum.cost,
+                                                                              train_ops.ph_mean_norm_ases: accum.mean_norm_ase,
+                                                                              train_ops.ph_pred_len_ratios: accum.pred_len_ratio,
+                                                                              train_ops.ph_num_hits: accum.num_hits,
+                                                                              train_ops.ph_reg_losses: accum.reg_loss
                                                                               })
                             tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
                             tf_sw.flush()
-
                             ## Reset Metrics
-                            train_time, losses, logs, bleu_scores = reset_metrics()
+                            accum.reset()
 
                 ############################# Validation Only ##############################
                 elif args.doValidate:
@@ -439,7 +413,7 @@ def main(raw_data_folder,
                 coord.request_stop()
                 coord.join(enqueue_threads)
 
-def bleu_scores(pred_ar_list, pred_lens, target_ar_list, target_lens):
+def bleu_scores(pred_ar_list, pred_lens, target_ar_list, target_lens, silent=False):
     assert len(pred_ar_list) == len(target_ar_list)
     bleu_scores = []
     n = 0
@@ -448,9 +422,9 @@ def bleu_scores(pred_ar_list, pred_lens, target_ar_list, target_lens):
         assert len(target_ar_list[i]) == _n
         p_lens = pred_lens[n:n+_n]
         t_lens = target_lens[n:n+_n]
-        bleu_scores.append(dlc.squashed_bleu_scores(pred_ar_list[i], p_lens, target_ar_list[i], t_lens))
+        bleu_scores.append(dlc.squashed_bleu_scores(pred_ar_list[i], p_lens, target_ar_list[i], t_lens, silent=silent))
         n += _n
-    return bleu_scores
+    return np.asarray(bleu_scores)
 
 def ids2str_list(target_ids, predicted_ids, hyper):
     """
@@ -527,44 +501,56 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
         epoch_size = batch_it.epoch_size
         ## Print a batch randomly
         print_batch_num = np.random.randint(1, epoch_size+1) if args.print_batch else -1
-        eds = []; best_eds = []
-        accuracies = []; best_accuracies = []
+        eds = []
+        accuracies = []
         lens = []
         hits = []
+        bleus = []
         n = 0
         hyper.logger.info('validation cycle starting for %d steps', num_steps)
         while n < num_steps:
             n += 1
             if (n != print_batch_num):
-                l, ed, accuracy, num_hits = session.run((
-                                    valid_ops.top1_len_ratio,
-                                    valid_ops.top1_mean_ed,
-                                    valid_ops.top1_accuracy,
-                                    valid_ops.top1_num_hits
-                                    ))
-                top1_ids_list = y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
-            else:
-                l, ed, accuracy, num_hits, top1_ids_list, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
+                l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
                                     valid_ops.top1_len_ratio,
                                     valid_ops.top1_mean_ed,
                                     valid_ops.top1_accuracy,
                                     valid_ops.top1_num_hits,
                                     valid_ops.top1_ids_list,
+                                    valid_ops.top1_lens,
+                                    valid_ops.y_ctc_list,
+                                    valid_ops.ctc_len
+                                    ))
+                y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
+            else:
+                l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
+                                    valid_ops.top1_len_ratio,
+                                    valid_ops.top1_mean_ed,
+                                    valid_ops.top1_accuracy,
+                                    valid_ops.top1_num_hits,
+                                    valid_ops.top1_ids_list,
+                                    valid_ops.top1_lens,
+                                    valid_ops.y_ctc_list,
+                                    valid_ops.ctc_len,
                                     valid_ops.y_s_list,
                                     valid_ops.top1_alpha_list,
                                     valid_ops.top1_beta_list,
                                     valid_ops.image_name_list,
                                     valid_ops.top1_ed
                                     ))
+
+            bleu = bleu_scores(top1_ids_list, top1_lens, y_ctc_list, ctc_len)
+            lens.append(l)
+            eds.append(ed)
+            accuracies.append(accuracy)
+            hits.append(num_hits)
+            bleus.append(bleu)
+
+            if (n == print_batch_num):
                 logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
-                beam = 0
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
-                # str_list = ids2str_list(y_s_list, top1_ids_list, hyper)
-                # str_list2 = ids2str3D_list(all_ids_list, hyper)
-                # for i in range(len(str_list)):
-                #     logger.info('[target_ids, predicted_ids]=\n%s', str_list[i])
 
                 with dtc.Storer(args, 'validation', step) as storer:
                     storer.write('predicted_ids', top1_ids_list, np.int16)
@@ -573,26 +559,23 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                     storer.write('beta', top1_beta_list, dtype=np.float32, batch_axis=1)
                     storer.write('image_name', image_name_list, dtype=np.unicode_)
                     storer.write('ed', top1_ed, dtype=np.float32)
+                    storer.write('bleu', bleu, dtype=np.float32)
 
                 logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
-            lens.append(l)
-            eds.append(ed)
-            accuracies.append(accuracy)
-            hits.append(num_hits)
 
-        metrics = dlc.Properties({
-            'valid_time_per100': (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
-            })
+        valid_time_per100 = (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={
                                         valid_ops.ph_top1_len_ratio: lens,
                                         valid_ops.ph_edit_distance: eds,
                                         valid_ops.ph_num_hits: hits,
                                         valid_ops.ph_accuracy: accuracies,
-                                        valid_ops.ph_valid_time : metrics.valid_time_per100
+                                        valid_ops.ph_valid_time : valid_time_per100,
+                                        valid_ops.ph_bleus: bleus
                                     })
+
         tf_sw.add_summary(logs_agg_top1, log_step(step))
         tf_sw.flush()
         hyper.logger.info('validation cycle finished')
-        return metrics
+        return dlc.Properties({'valid_time_per100': valid_time_per100})

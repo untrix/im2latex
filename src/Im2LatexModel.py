@@ -860,6 +860,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'inp_q': self._inp_q,
                     'image_name': self._image_name, #[(B,), ...]
                     'y_s': self._y_s, # (B, T)
+                    'y_ctc': self._y_ctc, # (B,T)
+                    'ctc_len': self._ctc_len, # (B,)
                     'top1_ids': top1_ids, # (B, T)
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
@@ -910,7 +912,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
         log_likelihood = get_mean('log_likelihood')
         ctc_loss = get_mean('ctc_loss')
         alpha_penalty = get_mean('alpha_penalty')
-        reg_loss = tower_ops['reg_loss'][0] # RegLoss should be same for all towers
+        reg_loss = tower_ops[0]['reg_loss'] # RegLoss should be same for all towers
         if hyper.use_ctc_loss:
             cost = ctc_loss + alpha_penalty + reg_loss
         else:
@@ -932,7 +934,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
 #            tf.summary.scalar('training/mean_ctc_ed/', get_mean('mean_ctc_ed'), collections=['training'])
 #            tf.summary.scalar('training/num_hits/', get_sum('num_hits'), collections=['training'])
 
-            tb_logs = tf.summary.merge(tf.get_collection('training'))
+#            tb_logs = tf.summary.merge(tf.get_collection('training'))
 
             ## Placeholder for injecting training-time from outside
             ph_train_time = tf.placeholder(hyper.dtype)
@@ -953,21 +955,25 @@ def sync_training_towers(hyper, tower_ops, global_step):
             tf.summary.scalar('training/bleu/', tf.reduce_mean(ph_bleu_scores), collections=['training_aggregate'])
             tf.summary.histogram('training/ctc_ed_dist/', ph_ctc_eds, collections=['training_aggregate'])
             tf.summary.scalar('training/ctc_ed/', tf.reduce_mean(ph_ctc_eds), collections=['training_aggregate'])
-            tf.summary.scalar('training/mean_logloss/', tf.reduce_mean(ph_loglosses), collections=['training_aggregate'])
-            tf.summary.scalar('training/batch_mean_logloss_min/', tf.reduce_min(ph_loglosses),  collections=['training_aggregate'])
-            tf.summary.scalar('training/batch_mean_logloss_max/', tf.reduce_max(ph_loglosses),  collections=['training_aggregate'])
-            tf.summary.scalar('training/ctc_loss/', tf.reduce_mean(ph_ctc_losses), collections=['training_aggregate'])
-            tf.summary.scalar('training/ctc_loss_min/', tf.reduce_min(ph_ctc_losses),  collections=['training_aggregate'])
-            tf.summary.scalar('training/ctc_loss_max/', tf.reduce_max(ph_ctc_losses),  collections=['training_aggregate'])
+            tf.summary.scalar('training/logloss_mean/', tf.reduce_mean(ph_loglosses), collections=['training_aggregate'])
+            min_logloss = tf.reduce_min(ph_loglosses)
+            tf.summary.scalar('training/logloss/', min_logloss,  collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_logloss_min/', min_logloss,  collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_logloss_max/', tf.reduce_max(ph_loglosses),  collections=['training_aggregate'])
+            tf.summary.scalar('training/ctc_loss_mean/', tf.reduce_mean(ph_ctc_losses), collections=['training_aggregate'])
+            min_ctc_loss = tf.reduce_min(ph_ctc_losses)
+            tf.summary.scalar('training/ctc_loss/', min_ctc_loss,  collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_ctc_loss_min/', min_ctc_loss,  collections=['training_aggregate'])
+            tf.summary.scalar('training/batch_ctc_loss_max/', tf.reduce_max(ph_ctc_losses),  collections=['training_aggregate'])
             tf.summary.scalar('training/alpha_penalty/', tf.reduce_mean(ph_alpha_penalties), collections=['training_aggregate'])
             tf.summary.scalar('training/total_cost/', tf.reduce_mean(ph_costs), collections=['training_aggregate'])
             tf.summary.scalar('training/mean_norm_ase/', tf.reduce_mean(ph_mean_norm_ases), collections=['training_aggregate'])
             tf.summary.histogram('training/mean_norm_ase_dist/', (ph_mean_norm_ases), collections=['training_aggregate'])
             tf.summary.scalar('training/pred_len_ratio_avg/', tf.reduce_mean(ph_pred_len_ratios), collections=['training_aggregate'])
             tf.summary.histogram('training/pred_len_ratio_dist/', ph_pred_len_ratios, collections=['training_aggregate'])
-            mean_hits = tf.reduce_mean(ph_num_hits)
+            mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
             tf.summary.scalar('training/num_hits/', mean_hits, collections=['training_aggregate'])
-            tf.summary.scalar('training/accuracy/', (mean_hits*1.0)/(hyper.num_gpus*hyper.B), collections=['training_aggregate'])
+            tf.summary.scalar('training/accuracy/', mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0), collections=['training_aggregate'])
             tf.summary.scalar('training/regLoss/', tf.reduce_mean(ph_reg_losses), collections=['training_aggregate'])
 
             tb_agg_logs = tf.summary.merge(tf.get_collection('training_aggregate'))
@@ -1002,7 +1008,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
             'y_s_list': gather('y_s'), # [(B,T),...]
             'y_ctc_list': gather('y_ctc'), # [(B,T),...]
             'ctc_len': concat('ctc_len'), # (num_gpus*B,)
-            'tb_logs':tb_logs, # summary string
+#            'tb_logs':tb_logs, # summary string
             'ph_train_time': ph_train_time, # scalar
             'ph_bleu_scores': ph_bleu_scores, # (num_steps*num_gpus*B,)
             'tb_agg_logs': tb_agg_logs, # summary string
@@ -1065,7 +1071,7 @@ def sync_testing_towers(hyper, tower_ops):
             ph_top1_seq_lens = tf.placeholder(hyper.int_type) # (num_batches,n*B,)
             ph_top1_len_ratio = tf.placeholder(hyper.dtype) # (num_batches,n*B,)
             ph_edit_distance = tf.placeholder(hyper.dtype) # (num_batches,)
-            ph_bleu = tf.placeholder(tf.float32, name="BLEU_placeholder")
+            ph_bleus = tf.placeholder(hyper.dtype) # (num_gpus*B,)
             ph_num_hits =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_valid_time =  tf.placeholder(hyper.dtype) # scalar
@@ -1081,12 +1087,15 @@ def sync_testing_towers(hyper, tower_ops):
 
             # tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
             tf.summary.histogram( 'top_1/top1_len_ratio', ph_top1_len_ratio, collections=['aggregate_top1'])
-            # tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
+            tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
             tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
             tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
             tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
             tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
             tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
+            tf.summary.histogram('top_1/bleu_dist', ph_bleus, collections=['aggregate_top1'])
+            tf.summary.scalar( 'top_1/bleu', tf.reduce_mean(ph_bleus), collections=['aggregate_top1'])
+
             tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
             tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
 
@@ -1107,6 +1116,8 @@ def sync_testing_towers(hyper, tower_ops):
             'top1_beta_list': gather('top1_beta'), # [(N, B, T), ...]
             'bok_ids_list': gather('bok_ids'),# ((B,T),...)
             'y_s_list': gather('y_s'), # ((B,T),...)
+            'y_ctc_list': gather('y_ctc'), # [(B,T),...]
+            'ctc_len': concat('ctc_len'), # (num_gpus*B,)
             'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)
             'output_ids_list': gather('output_ids'),
             'logs_top1': logs_top1,
@@ -1114,6 +1125,7 @@ def sync_testing_towers(hyper, tower_ops):
             'ph_top1_seq_lens': ph_top1_seq_lens,
             'ph_top1_len_ratio': ph_top1_len_ratio,
             'ph_edit_distance': ph_edit_distance,
+            'ph_bleus': ph_bleus,
             'ph_num_hits': ph_num_hits,
             'ph_accuracy': ph_accuracy,
             'ph_valid_time': ph_valid_time,

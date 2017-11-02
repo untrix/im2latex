@@ -751,7 +751,7 @@ class _anyok(_ParamValidator):
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
 
-def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, EOSToken=0):
+def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, EOSToken=0, silent=False):
     assert np_seq_batch.ndim == 2
     assert EOSToken == 0
     assert remove_val1 != EOSToken
@@ -763,10 +763,11 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None
         trunc = np_seq[:seq_len]
         if trunc[-1] != 0:
             trunc = np.append(trunc, [0])
-            logger.warn('No EOS tokens in sequence of length %d'%seq_len)
+            if not silent:
+                logger.warn('No EOS tokens in sequence of length %d'%seq_len)
         elif trunc[-2] == 0:
             trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
-            logger.warn('More than one EOS tokens in sequence of length %d'%seq_len)
+#            logger.warn('More than one EOS tokens in sequence of length %d'%seq_len)
 
         if remove_val1 is not None:
             trunc = trunc[trunc != remove_val1]
@@ -790,7 +791,7 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None
 #     return weights
 # BLEU_WEIGHTS = get_bleu_weights()
 
-def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None):
+def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None, silent=False):
     """
     Removes space-tokens from predicted_ids and then computes the bleu scores of a batch of
     sequences.
@@ -803,7 +804,7 @@ def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens,
         blank_token: (token-type) CTC Blank token to remove from predicted_ids
     """
     scores = []
-    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token)
+    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token, silent=silent)
     for i, predicted_seq in enumerate(squashed_ids):
         target_len = target_lens[i]
         target = target_ids[i][:target_len]
