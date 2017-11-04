@@ -298,8 +298,8 @@ def main(raw_data_folder,
                     logger.info('Starting training')
                     ops_accum = (
                             'train',
-                            'pred_squash_ids_list',
-                            'pred_squash_lens',
+                            'predicted_ids_list',
+                            'predicted_lens',
                             'y_ctc_list',
                             'ctc_len',
                             'ctc_ed',
@@ -332,9 +332,13 @@ def main(raw_data_folder,
                         ## Accumulate Metrics
                         accum.append(batch_ops)
                         train_time = time.time()-step_start_time
-                        bleu = bleu_scores(batch_ops.pred_squash_ids_list, batch_ops.pred_squash_lens, batch_ops.y_ctc_list, batch_ops.ctc_len, silent=True)
-                        accum.append({'train_time': train_time})
+                        bleu = sentence_bleu_scores(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
                         accum.extend({'bleu_scores': bleu})
+                        accum.extend({
+                            'sq_predicted_ids': squashed_seq_list(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens),
+                            'sq_y_ctc':         trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len)
+                        })
+                        accum.append({'train_time': train_time})
 
                         if doLog:
                             logger.info('Step %d',step)
@@ -343,6 +347,8 @@ def main(raw_data_folder,
                             if do_validate(step, args, train_it, valid_it)[0]:
                                 saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
 
+                            # bleu = sentence_bleu_scores(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens,
+                            #                             batch_ops.y_ctc_list, batch_ops.ctc_len)
                             with dtc.Storer(args, 'training', step) as storer:
                                 storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
                                 storer.write('y', batch_ops.y_s_list, np.int16)
@@ -376,6 +382,7 @@ def main(raw_data_folder,
                             tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
                                                                               train_ops.ph_train_time: train_time_per100,
                                                                               train_ops.ph_bleu_scores: accum.bleu_scores,
+                                                                              train_ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
                                                                               train_ops.ph_ctc_eds: accum.ctc_ed,
                                                                               train_ops.ph_loglosses: accum.log_likelihood,
                                                                               train_ops.ph_ctc_losses: accum.ctc_loss,
@@ -413,18 +420,82 @@ def main(raw_data_folder,
                 coord.request_stop()
                 coord.join(enqueue_threads)
 
-def bleu_scores(pred_ar_list, pred_lens, target_ar_list, target_lens, silent=False):
+def sentence_bleu_scores(hyper, pred_ar_list, pred_lens, target_ar_list, target_lens):
+    """
+    :param hyper:
+    :param pred_ar_list: list of np-array of predicted word/id-sequences. shape = [(B,T), ...]
+    :param pred_lens: np-array of integers representing lengths of the predicted sequences. shape = (num_gpus*B,)
+    :param target_ar_list: list of np-array of target word/id-sequences. shape = [(B,T), ...]
+    :param target_lens: np-array of integers representing lengths of the target sequences. shape = (num_gpus*B,)
+    :return:
+    """
     assert len(pred_ar_list) == len(target_ar_list)
-    bleu_scores = []
+    num = reduce(lambda b, ar: b+len(ar), pred_ar_list, 0)
+    assert num == len(pred_lens)
+    logger.debug('Computing sentence_bleu_scores for %d sentences', num)
+    bleus = []
     n = 0
     for i in range(len(pred_ar_list)):
         _n = len(pred_ar_list[i])
         assert len(target_ar_list[i]) == _n
         p_lens = pred_lens[n:n+_n]
         t_lens = target_lens[n:n+_n]
-        bleu_scores.append(dlc.squashed_bleu_scores(pred_ar_list[i], p_lens, target_ar_list[i], t_lens, silent=silent))
+        bleus.extend(dlc.sentence_bleu_scores(pred_ar_list[i], p_lens,
+                                                     target_ar_list[i], t_lens,
+                                                     space_token=hyper.SpaceTokenID,
+                                                     blank_token=hyper.NullTokenID,
+                                                     eos_token=hyper.NullTokenID))
         n += _n
-    return np.asarray(bleu_scores)
+    return np.asarray(bleus)
+
+def squash_and_concat(seq_batch_list, seq_len_batch, remove_val1=None, remove_val2=None, eos_token=None):
+    """
+    Gathers all word/id sequences into one list of size num_gpus*B. Optionally Squashes and trims the sequences.
+    :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :param remove_val1:
+    :param remove_val2:
+    :param eos_token:
+    :return: A list of word/id lists
+    """
+    num = reduce(lambda b, ar: b+len(ar), seq_batch_list, 0)
+    assert num == len(seq_len_batch)
+    seq_list = []
+    n = 0
+    for i, seq_batch in enumerate(seq_batch_list):
+        _n = len(seq_batch)
+        seq_lens = seq_len_batch[n:n+_n]
+        _seq_list = dlc.squashed_seq_list(seq_batch, seq_lens,
+                                          remove_val1=remove_val1,
+                                          remove_val2=remove_val2,
+                                          eos_token=eos_token)
+        seq_list.extend(_seq_list)
+        n += _n
+
+    return seq_list
+
+def squashed_seq_list(hyper, seq_batch_list, seq_len_batch):
+    """
+    Squashes and trims word/id sequences and puts them all into one list of size num_gpus*B
+    :param hyper: HyperParams
+    :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :return: a list of word/id lists
+    """
+    return squash_and_concat(seq_batch_list, seq_len_batch,
+                             remove_val1=hyper.SpaceTokenID,
+                             remove_val2=hyper.CTCBlankTokenID,
+                             eos_token=hyper.NullTokenID)
+
+def trimmed_seq_list(hyper, seq_batch_list, seq_len_batch):
+    """
+    Trims word/id sequences and puts them all into one list of size num_gpus*B
+    :param hyper: HyperParams
+    :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :return: a list of word/id lists
+    """
+    return squash_and_concat(seq_batch_list, seq_len_batch, eos_token=hyper.NullTokenID)
 
 def ids2str_list(target_ids, predicted_ids, hyper):
     """
@@ -476,13 +547,11 @@ def do_validate(step, args, train_it, valid_it):
         do_validate = (step % period == 0) or (step == train_it.max_steps)
 
     num_valid_batches = valid_it.epoch_size if do_validate else 0
-    logger.debug('do_validate returning %s at step %d', do_validate, step)
     return do_validate, num_valid_batches
 
 def do_log(step, args, train_it, valid_it):
     validate, _ = do_validate(step, args, train_it, valid_it)
     do_log = (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
-    logger.debug('do_log returning %s at step %d', do_log, step)
     return do_log
 
 def format_ids(predicted_ids, target_ids):
@@ -501,11 +570,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
         epoch_size = batch_it.epoch_size
         ## Print a batch randomly
         print_batch_num = np.random.randint(1, epoch_size+1) if args.print_batch else -1
-        eds = []
-        accuracies = []
-        lens = []
-        hits = []
-        bleus = []
+        accum = Accumulator()
         n = 0
         hyper.logger.info('validation cycle starting for %d steps', num_steps)
         while n < num_steps:
@@ -539,18 +604,21 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
                                     valid_ops.top1_ed
                                     ))
 
-            bleu = bleu_scores(top1_ids_list, top1_lens, y_ctc_list, ctc_len)
-            lens.append(l)
-            eds.append(ed)
-            accuracies.append(accuracy)
-            hits.append(num_hits)
-            bleus.append(bleu)
+            bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
+            accum.extend({'bleus': bleu})
+            accum.extend({'predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
+            accum.extend({'target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
+            accum.append({'lens': l})
+            accum.append({'eds': ed})
+            accum.append({'accuracies': accuracy})
+            accum.append({'hits': num_hits})
 
             if (n == print_batch_num):
                 logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
                 logger.info('prediction mean_ed=%f', ed)
                 logger.info('prediction accuracy=%f', accuracy)
                 logger.info('prediction hits=%d', num_hits)
+                # bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
 
                 with dtc.Storer(args, 'validation', step) as storer:
                     storer.write('predicted_ids', top1_ids_list, np.int16)
@@ -567,12 +635,13 @@ def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
         valid_time_per100 = (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
         logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
                                     feed_dict={
-                                        valid_ops.ph_top1_len_ratio: lens,
-                                        valid_ops.ph_edit_distance: eds,
-                                        valid_ops.ph_num_hits: hits,
-                                        valid_ops.ph_accuracy: accuracies,
-                                        valid_ops.ph_valid_time : valid_time_per100,
-                                        valid_ops.ph_bleus: bleus
+                                        valid_ops.ph_top1_len_ratio: accum.lens,
+                                        valid_ops.ph_edit_distance: accum.eds,
+                                        valid_ops.ph_num_hits: accum.hits,
+                                        valid_ops.ph_accuracy: accum.accuracies,
+                                        valid_ops.ph_valid_time: valid_time_per100,
+                                        valid_ops.ph_bleus: accum.bleus,
+                                        valid_ops.ph_bleu2: dlc.corpus_bleu_score(accum.predicted_ids, accum.target_ids)
                                     })
 
         tf_sw.add_summary(logs_agg_top1, log_step(step))

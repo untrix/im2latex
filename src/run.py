@@ -36,7 +36,7 @@ import hyper_params
 
 def main():
     _data_folder = '../data'
-    logger = dtc.makeLogger()
+    logger = dtc.makeLogger(set_global=True)
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,

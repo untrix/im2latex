@@ -68,7 +68,7 @@ def summarize_layer(weights, biases, activations, coll_name):
 class TensorboardParams(HyperParams):
     proto = (
         PD('tb_logdir',
-            'Top-level/Root logdir under which run-specific dirs are created', 
+            'Top-level/Root logdir under which run-specific dirs are created',
             instanceof(str),
             default="tb_metrics"
             ),
@@ -89,7 +89,7 @@ class TensorboardParams(HyperParams):
             ),
         PD('tb_activations',
             'Section name under which activation summaries show up on tensorboard',
-            None, 
+            None,
             default='Activations'
             )
         )
@@ -112,7 +112,8 @@ class DropoutParams(HyperParams):
               0.5),
         PD('seed',
               'Integer seed for the random number generator',
-              integerOrNone()
+              integerOrNone(),
+              None
               )
         )
     def __init__(self, initVals=None):
@@ -149,7 +150,7 @@ class CommonParams(HyperParams):
               ),
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
-              iscallableOrNone(), 
+              iscallableOrNone(),
               # tf.contrib.layers.l2_regularizer(scale, scope=None)
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
@@ -207,7 +208,7 @@ class FCLayerParams(HyperParams):
               ),
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
-              iscallable(), 
+              iscallable(),
               # tf.contrib.layers.l2_regularizer(scale, scope=None)
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
@@ -262,7 +263,7 @@ class FCLayer(object):
                     var_colls = {'biases':[coll_b], 'weights':[coll_w, "REGULARIZED_WEIGHTS"]}
                     # var_colls['weights'] = [coll_w, "REGULARIZED_WEIGHTS"] if (params.weights_regularizer is not None) else [coll_w]
                     assert params.weights_regularizer is not None
-                    
+
                     a = tf.contrib.layers.fully_connected(
                             inputs=inp,
                             num_outputs = params.num_units,
@@ -352,7 +353,7 @@ class MLPStack(object):
             with tf.name_scope(var_scope.original_name_scope):
                 for layer in self._layers:
                     layer.create_summary_ops(coll_name)
-                    
+
 class ConvLayerParams(HyperParams):
     proto = (
         PD('tb', "Tensorboard Params.",
@@ -379,7 +380,7 @@ class ConvLayerParams(HyperParams):
               ),
         PD('weights_regularizer',
               'L1 / L2 norm regularization',
-              iscallable(), 
+              iscallable(),
               # tf.contrib.layers.l2_regularizer(scale, scope=None)
               # tf.contrib.layers.l1_regularizer(scale, scope=None)
               ),
@@ -479,8 +480,8 @@ class ConvLayer(object):
                     assert params.weights_regularizer is not None
 
                     a = tf.contrib.layers.conv2d(inputs=inp,
-                                                num_outputs=params.output_channels, 
-                                                kernel_size=params.kernel_shape, 
+                                                num_outputs=params.output_channels,
+                                                kernel_size=params.kernel_shape,
                                                 stride=params.stride,
                                                 padding=params.padding,
                                                 activation_fn=params.activation_fn,
@@ -544,7 +545,7 @@ class MaxpoolLayer(object):
         #            coll_b = layer_name + '/' + params.tb.tb_biases
 
                     a = tf.contrib.layers.max_pool2d(inputs=inp,
-                                             kernel_size=params.kernel_shape, 
+                                             kernel_size=params.kernel_shape,
                                              stride=params.stride,
                                              padding=params.padding,
                                              data_format='NHWC')
@@ -879,7 +880,7 @@ def printVars(name, coll):
     logger.critical('Total number of variables = %d', total_n)
     return total_n
 
-def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None,  space_token=None):
+def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None,  space_token=None, eos_token=None):
     """Compute edit distance for matrix of shape (B,k,T) """
     with tf.name_scope('edit_distance3D'):
         p_shape = K.int_shape(predicted_ids)
@@ -890,18 +891,19 @@ def edit_distance3D(B, k, predicted_ids, predicted_lens, target_ids, target_lens
         assert len(t_shape) == 3
         assert t_shape[:2] == (B, k)
         assert K.int_shape(target_lens) == (B, k)
-        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token, space_token)
+        predicted_sparse = dense_to_sparse3D(B, predicted_ids, predicted_lens, blank_token, space_token, eos_token=eos_token)
         ## blank tokens should not be present in target_ids
-        target_sparse = dense_to_sparse3D(B, target_ids, target_lens)
+        target_sparse = dense_to_sparse3D(B, target_ids, target_lens, space_token=space_token, eos_token=eos_token)
 
         d = tf.edit_distance(predicted_sparse, target_sparse)
         # assert K.int_shape(d) == K.int_shape(predicted_lens)
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
-def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None, space_token=None):
+def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, blank_token=None, space_token=None, eos_token=None):
     """
-    Compute edit distance of predicted_ids (ignoring blank_tokens) with target_ids (which are assumed to have no blank tokens).
+    Compute edit distance of predicted_ids (optionally ignoring blank_tokens, space_tokens and eos_tokens) with target_ids
+    which are assumed to have no blank tokens but may have space tokens and eos_tokens.
     The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
     actually do that.
     Args:
@@ -920,19 +922,19 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         assert t_shape[0] == B
         assert K.int_shape(target_lens) == (B,)
 
-        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token, space_token)
-        
-        ## blank tokens should not be present in target_ids, therefore we won't squash it
-        target_sparse = dense_to_sparse2D(target_ids, target_lens)
-            
+        predicted_sparse = dense_to_sparse2D(predicted_ids, predicted_lens, blank_token, space_token, eos_token)
+
+        ## blank tokens should not be present in target_ids
+        target_sparse = dense_to_sparse2D(target_ids, target_lens, space_token=space_token, eos_token=eos_token)
+
         d = tf.edit_distance(predicted_sparse, target_sparse)
         # assert K.int_shape(d) == K.int_shape(predicted_lens)
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
-def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens):
+def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens, space_token=None, eos_token=None):
     """
-    Compute edit distance of predicted_ids (ignoring blank_tokens) with target_ids (which are assumed to have no blank tokens).
+    Compute edit distance of predicted_ids (ignoring blank and space tokens) with target_ids (which are assumed to have no blank tokens).
     The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
     actually do that.
     Args:
@@ -950,12 +952,80 @@ def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens):
         assert len(t_shape) == 2
         assert t_shape[0] == B
         assert K.int_shape(target_lens) == (B,)
-        
-        target_sparse = dense_to_sparse2D(target_ids, target_lens)
-            
+
+        target_sparse = dense_to_sparse2D(target_ids, target_lens, space_token=space_token, eos_token=eos_token)
+
         d = tf.edit_distance(predicted_sparse, target_sparse)
         d.set_shape(target_lens.shape) ## Reassert shape in case it got lost.
         return d
+
+def seqlens(m, eos_token=0, include_eos_token=True):
+    """
+    Takes in a tensor m, shaped (..., T) having '...' sequences of length T each optionally containing one or more eos_tokens.
+    Returns the length of each sequence upto the first eos_token. If a sequence didn't have a any eos_token
+    then it returns T for that sequence. If include_eos_token is True, one eos_token is counted towards the length otherwise
+    not.
+
+    Args:
+        m: input tensor containing the sequences whose lengths need to be computed. The tensor must have rank at least 2 - i.e.
+        rank(m) >= 2. The last dimension must be the time dimension. e.g. (B,T) where B is the batch dimension and T is the time
+        dimension. (B,W,T) where W is the beam-width dimension and so on. All dimensions but the time dimension (T) must be
+        fully specified.
+        eos_token: (integer or integer tensor) (optional) the eos_token. defaults to zero.
+        include_eos_token: (boolean) (optional) if True (default) one eos_token is counted towards the length otherwise not.
+            However, if no eos_token was found in the sequence then the max_length (T) is returned as its length.
+
+    Returns:
+        A tensor of shape m.shape[:-1] holding sequence-lengths - i.e. shape of input minus the last dimension. If the input
+        was shape (B,T), output will have shape (B,). If input is shape (B,W,T) output will have shape (B,W) and so on.
+    """
+    with tf.name_scope('seqlens'):
+        orig_shape = K.int_shape(m)
+        assert len(orig_shape) >= 2
+        T = tf.shape(m)[-1]
+        B = np.prod(orig_shape[:-1])
+        if len(orig_shape) > 2:
+            m = tf.reshape(m, (B, T))
+        assert B > 0
+        lens = []
+        for i in range(B):
+            m_i = m[i]
+            eos_bool = tf.equal(m_i, eos_token)
+            eos_indices = tf.where(eos_bool) ## indices sorted in row-major order, therefore the first occurence is at the beginning
+            has_eos = tf.reduce_any(eos_bool)
+            len_i = tf.cond(has_eos,
+                            true_fn=lambda: tf.cast(((eos_indices[0][0] + 1) if include_eos_token else eos_indices[0][0]), dtype=tf.int64),
+                            false_fn=lambda: tf.cast(T, dtype=tf.int64))
+#            len_i.set_shape( () )
+            lens.append(len_i)
+        tf_lens = tf.stack(lens)
+
+        return tf_lens if (len(orig_shape) == 2) else tf.reshape(tf_lens, orig_shape[:-1])
+
+#def seqlens_2d(B, m, eos_token=0):
+#    """
+#    Takes in a tensor m, shaped (B, T) having 'B' sequences of length T and optionally containing one or more eos_tokens.
+#    Returns the length of each sequences upto but not including the first eos_token. If a sequence didn't have a any eos_token
+#    then it returns T for that sequence.
+#
+#    Returns:
+#        A tensor of shape (B,) holding sequence-lengths.
+#    """
+#    with tf.name_scope('seqlens_2d'):
+#        assert len(K.int_shape(m)) == 2
+#        assert K.int_shape(m)[0] == B
+#        T = tf.shape(m)[1]
+#        lens = []
+#        for i in range(B):
+#            m_i = m[i]
+#            eos_bool = tf.equal(m_i, eos_token)
+#            eos_indices = tf.where(eos_bool, name='eos_indices')
+#            has_eos = tf.reduce_any(eos_bool)
+#            len_i = tf.cond(has_eos, true_fn=lambda: tf.cast(eos_indices[0][0], dtype=tf.int64), false_fn=lambda: tf.cast(T, dtype=tf.int64))
+##            len_i.set_shape( () )
+#            lens.append(len_i)
+#
+#        return tf.stack(lens)
 
 def squash_2d(B, m, lens, blank_token, padding_token=0):
     """
@@ -1000,29 +1070,32 @@ def squash_3d(B, k, m, lens, blank_token, padding_token=0):
             squashed_lens.append(s_l)
         return tf.stack(squashed), tf.stack(squashed_lens)
 
-def _dense_to_sparse(t, mask, blank_token=None, space_token=None):
+def _dense_to_sparse(t, mask, blank_token=None, space_token=None, eos_token=None):
         if blank_token is not None:
             mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
         if space_token is not None:
             mask = tf.logical_and(mask, tf.not_equal(t, space_token))
+        if eos_token is not None:
+            mask = tf.logical_and(mask, tf.not_equal(t, eos_token))
+
         idx = tf.where(mask)
         vals = tf.gather_nd(t, idx)
-        return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))    
+        return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))
 
-def dense_to_sparse2D(t, lens, blank_token=None, space_token=None):
+def dense_to_sparse2D(t, lens, blank_token=None, space_token=None, eos_token=None):
     with tf.name_scope('dense_to_sparse2D'):
         assert len(K.int_shape(t)) == 2
         assert len(K.int_shape(lens)) == 1
         mask = tf.sequence_mask(lens, maxlen=tf.shape(t)[1])
-        return _dense_to_sparse(t, mask, blank_token, space_token)
+        return _dense_to_sparse(t, mask, blank_token, space_token, eos_token)
 
-def dense_to_sparse3D(B, t, lens, blank_token=None, space_token=None):
+def dense_to_sparse3D(B, t, lens, blank_token=None, space_token=None, eos_token=None):
     with tf.name_scope('dense_to_sparse3D'):
         assert K.int_shape(t)[0] == B
         assert len(K.int_shape(t)) == 3
         assert len(K.int_shape(lens)) == 2
         mask = tf.stack([tf.sequence_mask(lens[i], maxlen=tf.shape(t)[2]) for i in range(B)])
-        return _dense_to_sparse(t, mask, blank_token, space_token)
+        return _dense_to_sparse(t, mask, blank_token, space_token, eos_token)
 
 def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
     # B = self.C.B
@@ -1063,7 +1136,7 @@ def batch_top_k_2D(t, k):
         t2, top_k_ids = tf.nn.top_k(t, k=k, sorted=True) # (B, k)
         # Convert ids returned by tf.nn.top_k to indices appropriate for tf.gather_nd.
         # Expand the id dimension from 1 to 2 while prefixing each id with the batch-index.
-        # Thus the indices will go from size (B,k,1) to (B, k, 2). These can then be used to 
+        # Thus the indices will go from size (B,k,1) to (B, k, 2). These can then be used to
         # create a new tensor from the original tensor on which top_k was invoked originally.
         # If that tensor was - for e.g. - of shape (B, W, T) then we'll now be able to slice
         # it into a tensor of shape (B,k,T) using the top_k_ids.

@@ -1,15 +1,20 @@
 #!/usr/bin/env python2
 
-import os
-import pandas as pd
+import tensorflow as tf
+import tf_commons as tfc
 import numpy as np
-import data_commons as dtc
-import dl_commons as dlc
-import hyper_params as hp
-import viz_commons as vc
-from viz_commons import VisualizeDir, DiffParams, VisualizeStep
 
-vd = VisualizeDir('/zpool_3TB/i2l/tb_metrics/2017-10-20 23-45-40 PDT reset_3.1LSTM_2init_3out_3attConv_1beta/snapshot-00078736/store_2')
-vs = VisualizeStep(vd, 'validation', 78736)
+b = []
+for i in range(11):
+    b.append([i]*11)
+    b[i][i] = 0
+b.append([11]*11)
+b = np.asarray(b)
 
-strs = vs.strs('predicted_ids', trim=True)
+tf_b = tf.constant(b)
+tf_lens1 = tfc.seqlens(tf.constant(b))
+tf_lens2 = tfc.seqlens(tf.constant(b.reshape((3,4,11)) ) )
+
+with tf.Session() as session:
+    print tf_lens1.eval()
+    print tf_lens2.eval()

@@ -40,12 +40,15 @@ def setLogLevel(logger_, level):
 def makeFormatter():
     return logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-def makeLogger(logging_level=3, name='default'):
+def makeLogger(logging_level=3, name='default', set_global=False):
+    global logger
     logger_ = logging.Logger(name)
     ch = logging.StreamHandler()
     ch.setFormatter(makeFormatter())
     logger_.addHandler(ch)
     setLogLevel(logger_, logging_level)
+    if set_global:
+        logger = logger_
     return logger_
 
 def initialize(data_dir, params):

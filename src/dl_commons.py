@@ -24,8 +24,8 @@ Tested on python 2.7
 import collections
 import pprint
 import numpy as np
-from data_commons import logger
 import nltk
+import data_commons as dtc
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -433,7 +433,7 @@ class Params(Properties):
                     # else do not insert key into dictionary
 
                 except:
-                    print('##### Error while processing property: \n', prop, '\n')
+                    dtc.logger.critical('##### Error while processing property: %s', prop)
                     raise
             else:
                 raise ParamsValueError('property %s has already been initialized with value %s'%(name,
@@ -451,7 +451,7 @@ class Params(Properties):
             except ParamsValueError:
                 raise
             except:
-                print('##### Error while processing property: \n', prop, '\n')
+                dtc.logger.critical('##### Error while processing property: %s', prop)
                 raise
 
         # Finally, seal the object so that no new properties may be added.
@@ -751,33 +751,27 @@ class _anyok(_ParamValidator):
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
 
-def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, EOSToken=0, silent=False):
+def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, eos_token=0):
     assert np_seq_batch.ndim == 2
-    assert EOSToken == 0
-    assert remove_val1 != EOSToken
-    assert remove_val2 != EOSToken
-    sq_batch = []
-
+    assert seq_lens.ndim == 1
+    assert np_seq_batch.shape[0] == seq_lens.shape[0]
+    assert eos_token == 0
+    sq_list = []
     for i, np_seq in enumerate(np_seq_batch):
         seq_len = seq_lens[i]
         trunc = np_seq[:seq_len]
-        if trunc[-1] != 0:
-            trunc = np.append(trunc, [0])
-            if not silent:
-                logger.warn('No EOS tokens in sequence of length %d'%seq_len)
-        elif trunc[-2] == 0:
-            trunc = np.append(np.trim_zeros(trunc, 'b'), [0])
-#            logger.warn('More than one EOS tokens in sequence of length %d'%seq_len)
-
+        if (seq_len>1) and (trunc[-2]==0):
+            trunc = np.trim_zeros(trunc, 'b')
+        elif (seq_len>0) and trunc[-1]==0:
+            trunc = trunc[:-1]
         if remove_val1 is not None:
             trunc = trunc[trunc != remove_val1]
         if remove_val2 is not None:
             trunc = trunc[trunc != remove_val2]
 
-        squashed = trunc
-        sq_batch.append(squashed.tolist())
-        # sq_batch.append(np.pad(squashed, (0, T-squashed.shape[0]), mode='constant', constant_values=0))
-    return sq_batch
+        sq_list.append(trunc.tolist())
+
+    return sq_list
 
 # def get_bleu_weights(max_len=200, frac=1.0):
 #     weights = [None]
@@ -791,34 +785,64 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None
 #     return weights
 # BLEU_WEIGHTS = get_bleu_weights()
 
-def squashed_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None, silent=False):
+def sentence_bleu_scores(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None, eos_token=None):
     """
     Removes space-tokens from predicted_ids and then computes the bleu scores of a batch of
     sequences.
     Args:
         predicted_ids: Numpy array of predicted sequence tokens - (B, T)
         predicted_lens: Numpy array of predicted sequence lengths - (B,)
-        target_ids: Numpy array of reference sequence tokens - (B, T')
+        target_ids: Numpy array of reference sequence tokens - (B, T'). All sequences are expected to have no blank or space tokens. Furthermore,
+            the target ID must be terminated with one (and only one) eos_token.
         target_lens: Numpy array of reference sequence lengths - (B,)
         space_token: (token-type) Space token to remove from predicted_ids
         blank_token: (token-type) CTC Blank token to remove from predicted_ids
     """
+    assert len(predicted_ids) == len(target_ids)
+    dtc.logger.debug("tfc.sentence_bleu_scores: computing sentence_bleu scores for %d sentences", len(predicted_ids))
     scores = []
-    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token, silent=silent)
+    squashed_ids = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token, eos_token=eos_token)
     for i, predicted_seq in enumerate(squashed_ids):
         target_len = target_lens[i]
-        target = target_ids[i][:target_len]
+        ## remove the eos_token from target sequence. All target sequences are expected to be squashed with a eos_token at the end.
+        target = target_ids[i][:target_len-1]
         score = nltk.translate.bleu_score.sentence_bleu([target],
                                                         predicted_seq)
                                                         # weights=BLEU_WEIGHTS[target_len])
         scores.append(score)
-        # print ('BLEU Score = %f'%score)
-        # print ('Target = %s'%target)
-        # print ('Predicted = %s'%predicted_seq)
-        # print ('BLEU Weights = %s'%BLEU_WEIGHTS[target_len])
 
     return scores
-# nltk.translate.bleu_score.sentence_bleu([range(100)],range(100), weights=[1/100.]*100)
+
+def corpus_bleu_score_sq(predicted_ids, predicted_lens, target_ids, target_lens, space_token=None, blank_token=None, eos_token=None):
+    """
+    Removes space-tokens from predicted_ids and then computes the bleu scores of a batch of
+    sequences.
+    Args:
+        predicted_ids: Numpy array of predicted sequence tokens - (B, T)
+        predicted_lens: Numpy array of predicted sequence lengths - (B,)
+        target_ids: Numpy array of reference sequence tokens - (B, T'). All sequences are expected to have no blank or space tokens. Furthermore,
+            the target ID must be terminated with one (and only one) eos_token.
+        target_lens: Numpy array of reference sequence lengths - (B,)
+        space_token: (token-type) Space token to remove from predicted_ids
+        blank_token: (token-type) CTC Blank token to remove from predicted_ids
+    """
+    assert len(predicted_ids) == len(target_ids)
+    dtc.logger.debug("tfc.corpus_bleu_score_sq: computing corpus_bleu for %d sentences", len(predicted_ids))
+    hypotheses = squashed_seq_list(predicted_ids, predicted_lens, space_token, blank_token, eos_token=eos_token)
+    targets = [[target[:(target_lens[i]-1)]] for i, target in enumerate(target_ids)]
+    return nltk.translate.bleu_score.corpus_bleu(targets, hypotheses) # weights=BLEU_WEIGHTS[target_len])
+
+def corpus_bleu_score(predicted_ids, target_ids):
+    """
+    Computes the bleu scores of a list of predicted sequences against a corresponding list of target sequences
+    Args:
+        predicted_ids: list of predicted word/id sequences - list(id_seq)
+        target_ids:    list of target word/id sequences -    list(id_seq)
+    """
+    assert len(predicted_ids) == len(target_ids)
+    dtc.logger.debug("tfc.corpus_bleu_score: computing corpus_bleu for %d sentences", len(predicted_ids))
+    targets = [[target] for target in target_ids]
+    return nltk.translate.bleu_score.corpus_bleu(targets, predicted_ids) # weights=BLEU_WEIGHTS[target_len])
 
 def diff_dict(left, right):
     """ Assymetric comparison of left with right """

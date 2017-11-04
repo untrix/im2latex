@@ -26,6 +26,7 @@ Tested on python 2.7
 import tensorflow as tf
 import tf_commons as tfc
 from tf_commons import K
+import numpy as np
 
 def flatten(h,l):
     B, k, T = K.int_shape(h)
@@ -98,6 +99,22 @@ with tf.device('/cpu:*'):
 
 # tf.reduce_mean(tf.to_float(tf.equal(top1_ed, 0)))
 
+## Test seqlens
+    b = []
+    for i in range(11):
+        b.append([i]*11)
+        b[i][i] = 0
+    b.append([11]*11)
+    b = np.asarray(b)
+
+    tf_b = tf.constant(b)
+    tf_lens1 = tfc.seqlens(tf.constant(b))
+    tf_lens2 = tfc.seqlens(tf.constant(b.reshape((3,4,11)) ) )
+    tf_lens1_2 = tfc.seqlens(tf.constant(b), include_eos_token=False)
+    tf_lens2_2 = tfc.seqlens(tf.constant(b.reshape((3,4,11))) ,include_eos_token=False)
+    len_1 = np.arange(1,13); len_1[11] = 11
+    len_2 = np.arange(12)
+
 with tf.Session():
     print 'ed1 = \n%s'%ed1.eval()
     assert mean1.eval() == 0.
@@ -126,5 +143,12 @@ with tf.Session():
     assert _sum2_s.eval() == 1.
     assert _acc2_s.eval() == 1./2.
 
-
+    print tf_lens1.eval()
+    print tf_lens1_2.eval()
+    assert np.all(tf_lens1.eval() == len_1 )
+    assert np.all(tf_lens1_2.eval() == len_2)
+    print tf_lens2.eval()
+    print tf_lens2_2.eval()
+    assert np.all(tf_lens2.eval() == len_1.reshape(3,4))
+    assert np.all(tf_lens2_2.eval() == len_2.reshape(3,4))
 print "Success !"
