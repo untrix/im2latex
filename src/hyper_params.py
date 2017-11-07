@@ -455,7 +455,9 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('outputMLP_skip_connections',
                '(boolean): Applicable only when output_reuse_embeddings==False. Setting this value to False will cause'
                'image context (z_t) and sequence input (Ex_t) to not be fed into the output MLP. If True (Default), the'
-               'output MLP receives a concatenation of Ex_t, h_t and z_t as input. If set to False, only h_t is input.'
+               'output MLP receives a concatenation of Ex_t, h_t and z_t as input. If set to False, only h_t is input.',
+               boolean,
+               True
                ),
             PD('output_first_layer', "Some params of first layer of output MLP if output_reuse_embeddings==True",
                instanceof(Properties)

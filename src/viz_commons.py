@@ -395,10 +395,10 @@ class VisualizeDir(object):
                 return 0
 
         epoch_steps = [get_step(f) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        epoch_steps = list(set(epoch_steps))
+        epoch_steps = sorted(list(set(epoch_steps)))
         print 'epoch_steps: %s'%epoch_steps
         if len(epoch_steps) <= save_epochs:
-            print('Only %d full epochs were found. Deleting nothing.'%epoch_steps)
+            print('Only %d full epochs were found. Deleting nothing.'%len(epoch_steps))
             return False
         else:
             epoch_steps.sort(reverse=True)
