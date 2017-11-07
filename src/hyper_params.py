@@ -170,8 +170,8 @@ class GlobalParams(dlc.HyperParams):
         PD('weights_regularizer',
               'L1 / L2 norm regularization. If this is non-None then dropout should be None.',
               iscallableOrNone(),
-              tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
-              # tf.contrib.layers.l1_regularizer(scale, scope=None)
+              # tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
+              # tf.contrib.layers.l1_regularizer(scale=1.0, scope="L1_Regularizer")
               ),
         PD('use_ctc_loss',
             "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
@@ -452,6 +452,11 @@ class Im2LatexModelParams(dlc.HyperParams):
                boolean,
                True
                ),
+            PD('outputMLP_skip_connections',
+               '(boolean): Applicable only when output_reuse_embeddings==False. Setting this value to False will cause'
+               'image context (z_t) and sequence input (Ex_t) to not be fed into the output MLP. If True (Default), the'
+               'output MLP receives a concatenation of Ex_t, h_t and z_t as input. If set to False, only h_t is input.'
+               ),
             PD('output_first_layer', "Some params of first layer of output MLP if output_reuse_embeddings==True",
                instanceof(Properties)
                ## Value set dynamically inside self._trickledown() iff output_reuse_embeddings==True
@@ -543,7 +548,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                     FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
-                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
 

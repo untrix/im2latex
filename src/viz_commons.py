@@ -355,9 +355,9 @@ class VisualizeDir(object):
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
         y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
         display(Math(predicted_ids))
-        display(predicted_ids)
+        print(predicted_ids)
         display(Math(y))
-        display(y)
+        print(y)
         
         image_details=[(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], maxpool_factor, pad_0, pad_1, expand_dims=False))]
         for t in xrange(T):

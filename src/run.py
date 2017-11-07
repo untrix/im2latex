@@ -27,6 +27,7 @@ Tested on python 2.7
 import sys
 import argparse
 import os
+import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
 import data_commons as dtc
@@ -185,7 +186,9 @@ def main():
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
-                                    'att_model': 'MLP_full' # '1x1_conv', 'MLP_shared', 'MLP_full'
+                                    'att_model': 'MLP_full', # '1x1_conv', 'MLP_shared', 'MLP_full'
+                                    'output_reuse_embeddings': False,
+                                    'weights_regularizer': tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
                                     })
 
     if args.batch_size is not None:
