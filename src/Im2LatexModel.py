@@ -176,10 +176,22 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def RuntimeBatchSize(self):
         return self.C.B * self.Seq2SeqBeamWidth
 
-#    def _set_beamwidth(self, beamwidth):
-#        self._beamsearch_width = beamwidth
-#        for calstm in self._calstms:
-#            calstm._set_beamwidth(beamwidth)
+    @property
+    def output_size(self):
+        return self.C.K
+
+    @property
+    def state_size(self):
+        return Im2LatexState(self._CALSTM_stack.state_size, self.C.K)
+
+    def zero_state(self, batch_size, dtype):
+        return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
+                             tf.zeros((batch_size, self.C.K), dtype=dtype, name='yProbs'))
+
+   # def _set_beamwidth(self, beamwidth):
+   #     self._beamsearch_width = beamwidth
+   #     for calstm in self._calstms:
+   #         calstm._set_beamwidth(beamwidth)
 
     def _output_layer(self, Ex_t, h_t, z_t):
         with tf.variable_scope(self._rnn_scope) as var_scope:
@@ -212,8 +224,12 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             # if CONF.output_first_layer.dropout is not None:
                             #     o_t = tfc.DropoutLayer(CONF.output_first_layer.dropout, batch_input_shape=(B,m))(o_t)
                     else: ## Use a straight MLP Stack
-                        o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
-                        dim = m+n+D
+                        if CONF.outputMLP_skip_connections:
+                            o_t = K.concatenate((Ex_t, h_t, z_t)) # (B, m+n+D)
+                            dim = m + n + D
+                        else:
+                            o_t = h_t
+                            dim = n
 
                     ## Regular MLP layers
                     assert CONF.output_layers.layers[-1].num_units == Kv
@@ -223,18 +239,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(logits_t) == (B, Kv)
                     yProbs = tf.identity(tf.nn.softmax(logits_t), name='yProbs')
                     return yProbs, logits_t
-
-    @property
-    def output_size(self):
-        return self.C.K
-
-    @property
-    def state_size(self):
-        return Im2LatexState(self._CALSTM_stack.state_size, self.C.K)
-
-    def zero_state(self, batch_size, dtype):
-        return Im2LatexState(self._CALSTM_stack.zero_state(batch_size, dtype),
-                             tf.zeros((batch_size, self.C.K), dtype=dtype, name='yProbs'))
 
     def _recur_init_FCLayers(self, zero_state, counter, params, inp):
         """
@@ -1024,7 +1028,8 @@ def sync_training_towers(hyper, tower_ops, global_step):
 #            'pred_squash_ids_list': gather('predicted_squashed_ids'), # [(B,T), ...]
 #            'pred_squash_lens': concat('pred_squash_lens'), # (num_gpus*B,)
             'y_s_list': gather('y_s'), # [(B,T),...]
-            'y_ctc_list': gather('y_ctc'), # [(B,T),...]
+            'y_ctc_list': gather('y_ctc'), # [(B,T),...]2017-11-06 09-42-24 PST reset_3.1LSTM_2init_3out_3MLPfull_1beta_L1
+
             'ctc_len': concat('ctc_len'), # (num_gpus*B,)
 #            'tb_logs':tb_logs, # summary string
             'ph_train_time': ph_train_time, # scalar

@@ -110,6 +110,7 @@ class VisualizeDir(object):
         self._generated_data_dir = gen_datadir = self._args['generated_data_dir']
         self._data_dir = self._args['data_dir']
         self._raw_data_dir = os.path.join(gen_datadir, 'training')
+        self._SCF = self._hyper.B * self._hyper.num_gpus * 1.0 / (64.0)  # conflation factor
 
         self._word2id = pd.read_pickle(os.path.join(gen_datadir, 'dict_vocab.pkl'))
         i2w = pd.read_pickle(os.path.join(gen_datadir, 'dict_id2word.pkl'))
@@ -150,7 +151,14 @@ class VisualizeDir(object):
     def max_steps(self):
         steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
         epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        return sorted(steps)[-1] if (len(steps) > 0) else None, sorted(epoch_steps)[-1] if (len(epoch_steps) > 0) else None
+        steps = sorted(steps)
+        epoch_steps = sorted(epoch_steps)
+        num_steps = len(steps)
+        num_epoch_steps = len(epoch_steps)
+        max_step = steps[-1] if num_steps > 0 else None
+        max_epoch_step = epoch_steps[-1] if num_epoch_steps > 0 else None
+        display('#Saved Steps = %d, Max Step = %d(conflated: %d), #Saved Epoch Steps = %d, Max Epoch Step = %d(conflated:%d)'%(num_steps, max_step, max_step*self._SCF, num_epoch_steps, max_epoch_step, max_epoch_step*self._SCF))
+        return max_step, max_epoch_step
         
     @property
     def args(self):
@@ -347,9 +355,9 @@ class VisualizeDir(object):
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
         y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
         display(Math(predicted_ids))
-        display(predicted_ids)
+        print(predicted_ids)
         display(Math(y))
-        display(y)
+        print(y)
         
         image_details=[(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], maxpool_factor, pad_0, pad_1, expand_dims=False))]
         for t in xrange(T):
@@ -376,26 +384,33 @@ class VisualizeDir(object):
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
+
         def get_step(f):
             return int(os.path.basename(f).split('_')[-1].split('.')[0])
-        
+
+        def get_sort_order(f):
+            if f.endswith('.h5'):
+                return get_step(f)
+            else:
+                return 0
+
         epoch_steps = [get_step(f) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        epoch_steps = list(set(epoch_steps))
+        epoch_steps = sorted(list(set(epoch_steps)))
         print 'epoch_steps: %s'%epoch_steps
         if len(epoch_steps) <= save_epochs:
-            print('Only %d full epochs were found. Deleting nothing.'%epoch_steps)
+            print('Only %d full epochs were found. Deleting nothing.'%len(epoch_steps))
             return False
         else:
             epoch_steps.sort(reverse=True)
             max_step = epoch_steps[save_epochs]
-            training_files = [f for f in os.listdir(self._storedir) if f.startswith('training')]
+            training_files = [f for f in os.listdir(self._storedir) if (f.startswith('training') and f.endswith('.h5'))]
             training_steps = set([get_step(f) for f in training_files])
             steps_to_remove = set(filter(lambda s: (s<max_step) and (s not in epoch_steps), training_steps))
             files_to_remove = set([f for f in training_files if (get_step(f) in steps_to_remove)])
             files_to_keep = set([f for f in os.listdir(self._storedir)]) - files_to_remove
             if dry_run:
-                print '%d files will be kept\n'%len(files_to_keep), pd.Series(sorted(list(files_to_keep), key=get_step))
-                print '%d files will be removed\n'%len(files_to_remove), pd.Series(sorted(list(files_to_remove), key=get_step))
+                print '%d files will be kept\n'%len(files_to_keep), pd.Series(sorted(list(files_to_keep), key=get_sort_order))
+                print '%d files will be removed\n'%len(files_to_remove), pd.Series(sorted(list(files_to_remove), key=get_sort_order))
             else:
                 for f in files_to_remove:
                     os.remove(os.path.join(self._storedir, f))
