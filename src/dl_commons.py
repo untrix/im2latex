@@ -982,7 +982,7 @@ def diff_table(dict_obj, other):
     def cullKey(k):
         v = d1[k] if (k in d1) else d2[k]
         v = repr(v) if not isinstance(v, str) else v
-        return  (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger'))
+        return  (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger') or ('logdir' in k))
 
 
     tail_keys = set(filter(cullKey, keys))

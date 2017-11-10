@@ -174,7 +174,7 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.005,
+                                    'pLambda': 0.0, # 0.005, .0005
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
@@ -188,8 +188,10 @@ def main():
                                     'squash_input_seq': args.squash_input_seq,
                                     'att_model': 'MLP_full', # '1x1_conv', 'MLP_shared', 'MLP_full'
                                     'weights_regularizer': tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer'),
-                                    'outputMLP_skip_connections': False,
-                                    'output_reuse_embeddings': False
+                                    # 'embeddings_regularizer': None,
+                                    # 'outputMLP_skip_connections': False,
+                                    'output_reuse_embeddings': False,
+                                    'REGROUP_IMAGE': (3,3)
                                     })
 
     if args.batch_size is not None:

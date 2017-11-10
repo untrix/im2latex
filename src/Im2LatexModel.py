@@ -116,7 +116,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## self._a = tf.placeholder(dtype=self.C.dtype, shape=(self.C.B, self.C.L, self.C.D), name='a')
                     self._a = tf.identity(inp_tup.im, name='a')
                     ## Set tensor shape because it gets forgotten in the queue
-                    self._a.set_shape((self.C.B, self.C.L, self.C.D))
+                    self._a.set_shape((self.C.B, self.C.L0, self.C.D0))
                 else:
                     ## self._im = tf.placeholder(dtype=self.C.dtype, shape=((self.C.B,)+self.C.image_shape), name='image')
                     self._im = tf.identity(inp_tup.im, name='im')
@@ -132,6 +132,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     self._a = build_vgg_context(params, self._im)
                 else:
                     raise AttributeError('build_image_context should be in the range [0,2]. Instead, it is %s'%self._params.build_image_context)
+
+            ## Regroup image features if needed
+            if self.C.REGROUP_IMAGE is not None:
+                with tf.variable_scope('FuseImageFeatures'):
+                    self._a = tf.reshape(self._a, [self.C.B, self.C.H0, self.C.W0, self.C.D0])
+                    self._a = tfc.group2D(self._a, self.C.REGROUP_IMAGE)
+                    assert K.int_shape(self._a) == (self.C.B, self.C.H, self.C.W, self.C.D)
+                    self._a = tf.reshape(self._a, [self.C.B, self.C.L, self.C.D], name='regrouped_im_feats')
 
             ## RNN portion of the model
             with tf.variable_scope('I2L_RNN') as scope:
@@ -377,12 +385,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def build_training_tower(self):
         """ Build the training graph of the model """
         B = self.C.B
-        Kv =self.C.K
-        L = self.C.L
         N = self._num_calstm_layers
-        H = self.C.H
-        W = self.C.W
         T = None
+        # H = self.C.H
+        # W = self.C.W
+        # Kv =self.C.K
+        # L = self.C.L
+
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## tf.scan requires time-dimension to be the first dimension
@@ -532,7 +541,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
                         normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
                         mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
-                        alpha_penalty = self.C.pLambda * mean_norm_ase # scalar
+                        if self.C.pLambda > 0:
+                            alpha_penalty = self.C.pLambda * mean_norm_ase # scalar
+                        else:
+                            alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
                         mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
                         # mean_sum_alpha_i = tf.reduce_mean(mean_sum_alpha_i)
                         # mean_sum_alpha_i2 = tf.reduce_mean(sum_over_t)

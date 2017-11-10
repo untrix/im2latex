@@ -32,8 +32,8 @@ import os
 import tensorflow as tf
 import dl_commons as dlc
 import tf_commons as tfc
-from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
-                        iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
+from dl_commons import (instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof, issequenceofOrNone,
+                        PD, iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
 from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams,
                         DropoutParams, TensorboardParams, RNNParams)
 
@@ -107,22 +107,53 @@ class GlobalParams(dlc.HyperParams):
            integer(1),
            64
            ),
-        PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None,
-            LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
+        PD('REGROUP_IMAGE',
+           """
+           Only applies when build_image_ctx==0. Specifies how the image feature vectors should be grouped together 
+           along Height and Width axes. For e.g. if the original dimension of the context feature map was (3,33,512) 
+           - i.e. original H=3, original W=33 and D=512- and if REGROUP_IMAGE was (3,3) then the new 
+           context-map would have shape (1, 11, 512*3*3) resulting in H=1, W=33, D=4608 and L=33.
+           A None value implies no regrouping.
+           """,
+           issequenceofOrNone(int),
+           None
            ),
-        PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None,
-            LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
-            ),
-        PD('L',
-           '(integer): number of pixels in an image feature-map = HxW (see paper or model description)',
+        PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, d: d['H'] * d['W'])
+           LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
            ),
-        PD('D',
+        PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
+           integer(1),
+           LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
+            ),
+        PD('L0',
+           '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
+           integer(1),
+           LambdaVal(lambda _, p: p.H0*p.W0)
+           ),
+        PD('D0',
            '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
            'See paper or model description.',
            integer(1),
            512),
+        PD('H', 'Height of feature-map produced fed to the decoder.',
+           integer(1),
+           LambdaVal(lambda _,p: p.H0 if (p.REGROUP_IMAGE is None) else p.H0/p.REGROUP_IMAGE[0])
+           ),
+        PD('W', 'Width of feature-map fed to the decoder.',
+           integer(1),
+           LambdaVal(lambda _,p: p.W0 if (p.REGROUP_IMAGE is None) else p.W0/p.REGROUP_IMAGE[1])
+            ),
+        PD('L',
+           '(integer): number of pixels in an image feature-map fed to the decoder = HxW (see paper or model description)',
+           integer(1),
+           LambdaVal(lambda _, p: p.H*p.W)
+           ),
+        PD('D',
+           '(integer): number of image-features fed to the decoder. Depth/channels of the last conv-net layer.'
+           'See paper or model description.',
+           integer(1),
+           LambdaVal(lambda _,p: p.D0 if (p.REGROUP_IMAGE is None) else p.D0*p.REGROUP_IMAGE[0]*p.REGROUP_IMAGE[1])),
         PD('tb', "Tensorboard Params.",
            instanceof(TensorboardParams),
            ),
@@ -288,8 +319,8 @@ class CALSTMParams(dlc.HyperParams):
             self.att_layers = MLPParams(self).updated({
                 'op_name': 'MLP_full',
                 'layers': (
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None,       'dropout': None}).freeze(),
                     )
                 }).freeze()
@@ -564,7 +595,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'layers': (
                     ## paper sets hidden activations=relu and final=tanh
                     ## The paper's source sets all hidden units to D
-                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': min(self.D, 512), 'activation_fn': tf.nn.relu}).freeze(),
                 )
                 }).freeze()
 

@@ -1170,3 +1170,39 @@ def batch_slice(t, indices):
         t_slice = tf.gather_nd(t, indices) # (B, k ,...)
         return t_slice
 
+def group2D(a, stride):
+    """
+    Flattens and concatenates rectangular blocks of a tensor (B, H, W, C) along dimensions H and W. The first dimension
+    B (batch dimension) is left untouched. Given a stride of (h,w), the operation scans the 2D shape (H,W)
+    in strides lengths of (h,w) and reshapes each (h,w,C) block to a shape of (1,1,C*h*w). The resulting output shape
+    thus is (B, H/h, W/w, C*h*w). H must be divisible by h and W by w.
+    The operation is a 2D pooling operation similar to max-pooling except that
+    all channels are concatenated instead of taking their max. Hence, the channel dimension gets expanded by the
+    block-size.
+    :param a: The input tensor. Must be of rank 3 or more and shape (B, H, W, ...).
+    :param stride: Shape - (h,w) - of blocks to be fused along dimensions H and W of the input.
+            Similar to specifying the shape of a convolution kernel.
+    :return: The reshaped tensor of shape (B, H/h, W/w, C*h*w)
+    """
+    shape = K.int_shape(a)
+    B = shape[0]
+    H = shape[1]
+    W = shape[2]
+    assert B is not None
+    assert H is not None
+    assert W is not None
+    h,w = stride
+    assert H%h == 0
+    assert W%w == 0
+
+    rows = []
+    for j in range(H/h):
+        row = []
+        for i in range(W/w):
+            block = a[:, j*h:(j+1)*h, i*w:(i+1)*w]  # (B, h, w, C)
+            block = tf.reshape(block, [B, -1])  # (B, h*w*C)
+            row.append(block)  # [(B, h*w*C), ...]
+        row = tf.stack(row, axis=1)  # (B, W/w, h*w*C)
+        rows.append(row)  # [(B, W/w, h*w*C), ...]
+
+    return tf.stack(rows, axis=1)  # [(B, H/h, W/w, h*w*C), ...]
