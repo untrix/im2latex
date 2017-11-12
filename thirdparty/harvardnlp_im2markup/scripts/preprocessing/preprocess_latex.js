@@ -59,7 +59,7 @@ rl.on('line', function(line){
         console.error(line);
         console.error(norm_str);
         console.error(e);
-        console.log("");
+        console.error("########--------");
     }
     global_str = ""
     norm_str = ""
@@ -76,7 +76,7 @@ groupTypes.mathord = function(group, options) {
     if (options.font == "mathrm"){
         for (i = 0; i < group.value.length; ++i ) {
             if (group.value[i] == " ") {
-                norm_str = norm_str + group.value[i] + "\; ";
+                norm_str = norm_str + group.value[i] + "\\; ";
             } else {
                 norm_str = norm_str + group.value[i] + " ";
             }
@@ -341,7 +341,7 @@ groupTypes.underline = function(group, options) {
 };
 
 groupTypes.rule = function(group) {
-    norm_str = norm_str + "\rule { "+group.value.width.number+" "+group.value.width.unit+"  } { "+group.value.height.number+" "+group.value.height.unit+ " } ";
+    norm_str = norm_str + "\\rule { "+group.value.width.number+" "+group.value.width.unit+"  } { "+group.value.height.number+" "+group.value.height.unit+ " } ";
 
 };
 

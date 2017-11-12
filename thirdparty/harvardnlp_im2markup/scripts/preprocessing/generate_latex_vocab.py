@@ -63,11 +63,13 @@ def main(args):
 
     vocab_sort = sorted(list(vocab.keys()))
     vocab_out = []
+    unk_tokens = []
     num_unknown = 0
     for word in vocab_sort:
         if vocab[word] > parameters.unk_threshold:
             vocab_out.append(word)
         else:
+            unk_tokens.append(word)
             num_unknown += 1
     #vocab = ["'"+word.replace('\\','\\\\').replace('\'', '\\\'')+"'" for word in vocab_out]
     vocab = [word for word in vocab_out]
@@ -75,6 +77,7 @@ def main(args):
     with open(parameters.output_file, 'w') as fout:
         fout.write('\n'.join(vocab))
     logging.info('#UNK\'s: %d'%num_unknown)
+    logging.info('UNK tokens:\n%s', unk_tokens)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
