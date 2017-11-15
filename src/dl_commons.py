@@ -26,6 +26,7 @@ import pprint
 import numpy as np
 import nltk
 import data_commons as dtc
+import traceback
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
@@ -143,31 +144,6 @@ class Properties(dict):
 
     def to_picklable_dict(self):
         return to_picklable_dict(self)
-
-#    def to_dict_old(self):
-#        """
-#        Returns a dictionary with all values resolved but not validated and functions converted to strings
-#        via 'repr'. Suitable for pickling but suitable for debugging and pretty printing only. Will not throw an exception
-#        if invalid/unset values are detected in order to be useful for debugging.
-#        All functions (isCallable types) are reduced to their printable string representation.
-#        """
-#        resolved = {}
-#        for key in self.keys():
-#            ## Resolve LambdaVals but do not validate them because we
-#            ## need this method to work for debugging purposes, therefore we need to
-#            ## see the state of the dictionary - especially the invalid values.
-#            val = self._get_unvalidated_val(key)
-#            if isinstance(val, Properties):
-#                resolved[key] = val.to_dict_old()
-#            elif issequence(val):
-#                resolved[key] = [(v.to_dict_old() if isinstance(v, Properties) else (v if not isFunction(v) else repr(v))) for v in val]
-#
-#            # elif isinstance(val, dict):
-#            #     resolved[key] = {k : (v.to_dict_old() if isinstance(v, Properties) else v) for k, v in val.iteritems()}
-#            else:
-#                resolved[key] = val if not isFunction(val) else repr(val)
-#
-#        return resolved
 
     def to_table(self, prefix=None):
         """
@@ -442,7 +418,7 @@ class Params(Properties):
         object.__setattr__(self, '_descr_dict', props.freeze())
 
         # Validation: Now insert the property values one by one. Doing so will invoke
-        # self._set_val_ which will validate their values against self._descr_dict.
+        # self._set_val_ which will validate the values.
         for prop in descriptors:
             try:
                 _name = prop.name
@@ -458,9 +434,11 @@ class Params(Properties):
         if seal:
             self.seal()
 
-
     def _set_val_(self, name, val):
-        """ Polymorphic override of _set_val_. Be careful of recursion. """
+        """
+        Actual _set_val_ implementation separated out so that internal and external invocations may be distinguished.
+        """
+        # Polymorphic override of _set_val_. Be mindful of recursion.
         protoD = self.protoD
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
@@ -559,7 +537,15 @@ class Params(Properties):
 
 class HyperParams(Params):
     """
-    Params class specialized for HyperParams. Adds the following semantic:
+    Params class specialized for Global HyperParams. Adds the following semantics:
+    1)
+        NOTE: This feature needs revision since it applies to old behaviour of the Params class.
+        In the new behaviour a 'None' value is considered a proper
+        value as far as the Params class is concerned. A unset property will not have
+        a key in the dictionary - different from the old behaviour wherein unset properties
+        received a value of None. Since the None value is not treated in a special way
+        anymore, this feature probably is not necessary.
+
         If a key has value None, then it is deemed absent from the dictionary. Calls
         to __contains__ and _get_val_ will beget a KeyError - as if the property was
         absent from the dictionary. This is necessary to catch cases wherein one
@@ -573,6 +559,10 @@ class HyperParams(Params):
         code may wish to initialize a property to None, and set it to a valid value
         later. Setting a property value to None tantamounts to unsetting / deleting
         the property.
+    2)  Disallows changing the value of a set parameter. HyperParam values are
+        expected to be global and hence setting the value twice may indicate an error/bug in the code.
+        If you want to lazily set the value of a hyper-parameter, then leave it unset at first (for e.g.
+        do not provide a default value in the parameter's prototype).
     """
 
     def __contains__(self, name):
@@ -595,6 +585,21 @@ class HyperParams(Params):
     def _get_unvalidated_val(self, name):
         """Return resolved but unvalidated value"""
         return Params._get_unvalidated_val(self, name)
+
+    def _set_val_(self, name, val):
+        """
+        This is a wrapper around super._set_val_. It is meant to warn the user if they set the same value twice.
+        This is expected to happen only by mistake because hyper parametes are usually expected to be set only
+        once.
+
+        """
+        if name in self and (val != self[name]):
+            raise Exception('%s._set_val_: Existing value of %s, %s is being overridden by %s' %
+                            (self.__class__.__name__, name, self[name], val))
+            # dtc.logger.warn('%s._set_val_: Existing value of %s, %s is being overridden by %s', self.__class__.__name__, name, self[name], val)
+            # traceback.print_stack()
+
+        return Params._set_val_(self, name, val)
 
 
 ## Abstract parameter validator class.
@@ -982,7 +987,7 @@ def diff_table(dict_obj, other):
     def cullKey(k):
         v = d1[k] if (k in d1) else d2[k]
         v = repr(v) if not isinstance(v, str) else v
-        return  (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger'))
+        return  (v.startswith('<function') or v.startswith('<tensorflow') or v.startswith('<logging.Logger') or ('logdir' in k))
 
 
     tail_keys = set(filter(cullKey, keys))

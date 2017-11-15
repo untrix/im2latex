@@ -30,68 +30,84 @@ import logging
 import numpy as np
 import os
 import tensorflow as tf
+import data_commons as dtc
 import dl_commons as dlc
-import tf_commons as tfc
-from dl_commons import (PD, instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof,
-                        iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
+from dl_commons import (instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof, issequenceofOrNone,
+                        PD, iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
 from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams,
                         DropoutParams, TensorboardParams, RNNParams)
 
 def pad_image_shape(shape, padding):
     return (shape[0] + 2*padding, shape[1] + 2*padding) + shape[2:]
 
-def get_image_shape(raw_data_dir_, num_channels, valid_padding):
-    standardized_size = np.load(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
-    return pad_image_shape( (standardized_size['height'], standardized_size['width'], num_channels), valid_padding )
+# def get_image_shape(raw_data_dir_, num_channels):
+#     standardized_size = np.load(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
+#     return (standardized_size['height'], standardized_size['width'], num_channels)
+#
+# def get_vocab_size(raw_data_dir):
+#     id2word = np.load(os.path.join(raw_data_dir, 'dict_id2word.pkl'))
+#     return max(id2word.keys()) + 1
+#
 
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
-        PD('build_image_context', '(boolean): Whether to include convnet as part of the model',
-            (0,1,2) ## 0=> do not build convnet, 1=> use vgg16 app from Keras, 2=> build my own
-            ),
+        PD('raw_data_dir', 'Filesystem path of raw_data_folder from where the pre-processed data is stored.',
+           dlc.instanceof(str)
+           ),
+        PD('build_image_context',
+           """
+           (enum): Type of decoder conv-net model to use:
+           0 => Do not build decoder conv-net. Use pre-generated image features instead.
+           1 => Use VGG16 Conv-Net model (imported from Keras).
+           2 => Use a custom conv-net (defined in make_hyper)
+           """,
+           (0,1,2)
+           ),
         PD('image_shape_unframed',
            'Shape of input images. Should be a python sequence.'
-           'This is superceded by image_shape which includes an extra padding frame around it',
+           'This is superseded by image_shape which optionally includes an extra padding frame around the input image'
+           'Value is loaded from the dataset and is not configurable.',
            issequenceof(int),
-           LambdaVal(lambda _,p: (120,1075,3) if (p.build_image_context != 2) else (120,1075,1))
-           ## = get_image_shape(raw_data_dir, num_channels, 0)
+           # Set dynamically based on dataset.
            ),
         PD('MaxSeqLen',
            "Max sequence length including the end-of-sequence marker token. Is used to "
-            "limit the number of decoding steps.",
-           integer(151,200),
-           151 #get_max_seq_len(data_folder)
+            "limit the number of decoding steps. Value is loaded from the dataset and is not configurable.",
+           integer(151, 200),
+           # Set dynamically based on dataset.
            ),
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing graphs/towers. '
            'NOTE: Batch-size for the data-reader is different and set under property "data_reader_B"',
            integer(1),
-           96
            ),
         PD('K',
-           'Vocabulary size including zero',
+           'Vocabulary size including zero. Value is loaded from the dataset and is not configurable.',
            xrange(500,1000),
-           LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
+           # Set dynamically based on dataset.
+           # LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
            ),
-        PD('CTCBlankTokenID', 'ID of the space/blank token',
+        PD('CTCBlankTokenID',
+           'ID of the space/blank token. By tf.nn.ctc requirement, blank token should be == K-1,' 
+           'Value is loaded from the dataset and is not configurable.',
            integerOrNone(),
-           ## By CTC requirement, blank token should be == K-1
-           LambdaVal(lambda _, p: (p.K-1) if p.use_ctc_loss else None)
+           # Set dynamically based on dataset.
            ),
-        PD('SpaceTokenID', 'Space Token ID',
+        PD('SpaceTokenID',
+           'Space Token ID if present in the dataset.',
            integer(),
-           556
+           # Set dynamically based on dataset.
            ),
         PD('NullTokenID',
-           'ID of the EOS token == Null Token',
+           'ID of the EOS token == Null Token. Must be zero. Its value is loaded from the dataset and is not configurable.',
            (0,),
-           0
+           # Set dynamically based on dataset.
            ),
         PD('StartTokenID',
-           'ID of the begin-sequence token. Equal to either 1 or Whitespace.',
-           (1, 556), ## 1 or space
-           1
+           'ID of the begin-sequence token. The value is loaded from the dataset and is not configurable.',
+           range(1,557),
+           # Set dynamically based on dataset.
            ),
         PD('n',
            "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
@@ -107,22 +123,53 @@ class GlobalParams(dlc.HyperParams):
            integer(1),
            64
            ),
-        PD('H', 'Height of feature-map produced by conv-net. Specific to the dataset image size.', None,
-            LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
+        PD('REGROUP_IMAGE',
+           """
+           Only applies when build_image_ctx==0. Specifies how the image feature vectors should be grouped together 
+           along Height and Width axes. For e.g. if the original dimension of the context feature map was (3,33,512) 
+           - i.e. original H=3, original W=33 and D=512- and if REGROUP_IMAGE was (3,3) then the new 
+           context-map would have shape (1, 11, 512*3*3) resulting in H=1, W=33, D=4608 and L=33.
+           A None value implies no regrouping.
+           """,
+           issequenceofOrNone(int),
+           None
            ),
-        PD('W', 'Width of feature-map produced by conv-net. Specific to the dataset image size.', None,
-            LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
-            ),
-        PD('L',
-           '(integer): number of pixels in an image feature-map = HxW (see paper or model description)',
+        PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, d: d['H'] * d['W'])
+           LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
            ),
-        PD('D',
+        PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
+           integer(1),
+           LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
+            ),
+        PD('L0',
+           '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
+           integer(1),
+           LambdaVal(lambda _, p: p.H0*p.W0)
+           ),
+        PD('D0',
            '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
            'See paper or model description.',
            integer(1),
            512),
+        PD('H', 'Height of feature-map produced fed to the decoder.',
+           integer(1),
+           LambdaVal(lambda _, p: p.H0 if (p.REGROUP_IMAGE is None) else p.H0/p.REGROUP_IMAGE[0])
+           ),
+        PD('W', 'Width of feature-map fed to the decoder.',
+           integer(1),
+           LambdaVal(lambda _, p: p.W0 if (p.REGROUP_IMAGE is None) else p.W0/p.REGROUP_IMAGE[1])
+            ),
+        PD('L',
+           '(integer): number of pixels in an image feature-map fed to the decoder = HxW (see paper or model description)',
+           integer(1),
+           LambdaVal(lambda _, p: p.H*p.W)
+           ),
+        PD('D',
+           '(integer): number of image-features fed to the decoder. Depth/channels of the last conv-net layer.'
+           'See paper or model description.',
+           integer(1),
+           LambdaVal(lambda _, p: p.D0 if (p.REGROUP_IMAGE is None) else p.D0*p.REGROUP_IMAGE[0]*p.REGROUP_IMAGE[1])),
         PD('tb', "Tensorboard Params.",
            instanceof(TensorboardParams),
            ),
@@ -147,7 +194,7 @@ class GlobalParams(dlc.HyperParams):
            tf.int32
            ),
         PD('int_type_np',
-           'inttype for the entire model.',
+           'numpy inttype for the entire model.',
            (np.int32, np.int64),
            np.int32
            ),
@@ -192,6 +239,32 @@ class GlobalParams(dlc.HyperParams):
         )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
+        self._trickledown()
+
+    def _trickledown(self):
+
+        data_props = np.load(os.path.join(self.raw_data_dir, 'data_props.pkl'))
+        assert 'image_shape_unframed' not in self
+        if self.build_image_context != 2:
+            self.image_shape_unframed = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'], 3)
+        else:
+            self.image_shape_unframed = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'],1)
+
+        self.MaxSeqLen = data_props['MaxSeqLen']
+        self.SpaceTokenID = data_props['SpaceTokenID']
+        self.NullTokenID = data_props['NullTokenID']
+        self.StartTokenID = data_props['StartTokenID']
+        if self.SpaceTokenID is not None:
+            if False: # self.use_ctc_loss:
+                self.K = data_props['K'] + 1
+                self.CTCBlankTokenID = self.K - 1
+            else:
+                self.K = data_props['K']
+                self.CTCBlankTokenID = None
+        else:
+            self.K = data_props['K'] + 1
+            self.CTCBlankTokenID = self.K - 1
+
     def __copy__(self):
         ## Shallow copy
         return self.__class__(self)
@@ -288,8 +361,8 @@ class CALSTMParams(dlc.HyperParams):
             self.att_layers = MLPParams(self).updated({
                 'op_name': 'MLP_full',
                 'layers': (
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None,       'dropout': None}).freeze(),
                     )
                 }).freeze()
@@ -387,9 +460,8 @@ class Im2LatexModelParams(dlc.HyperParams):
               ),
             PD('optimizer',
                'tensorflow optimizer function (e.g. AdamOptimizer).',
-               instanceof(tf.train.Optimizer),
-               ## Value set dynamically in self._trickledown
-               ## tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+               ('adam',),
+               'adam'
                ),
             PD('no_towers', 'Should be always set to False. Indicates code-switch to build without towers which will not work',
                (False,),
@@ -426,7 +498,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'This value should be equal to (kernel_size)//2 using kernel_size of the first convolution layer.'
                 ,
                 integer(),
-                LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0])//2 )
+                LambdaVal(lambda _, p: 0 if (p.build_image_context != 2) else (p.CONVNET.layers[0].kernel_shape[0])//2)
                 ## Dynamically set to = (kernel_size-1)/2 given kernel_size of first conv-net layer
                 ),
             PD('image_shape',
@@ -434,7 +506,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 '= image_shape_unpadded + image_frame_width around it',
                 issequenceof(int),
                 LambdaVal(lambda _, p: pad_image_shape(p.image_shape_unframed, p.image_frame_width))
-                ## = get_image_shape(raw_data_dir, num_channels, image_frame_width)
+                ## = get_image_shape(raw_data_folder, num_channels, image_frame_width)
                 ),
         ### Decoder CALSTM Params ###
             PD('CALSTM_STACK',
@@ -518,8 +590,6 @@ class Im2LatexModelParams(dlc.HyperParams):
         (For same level dependencies use LambdaFunctions instead.)
         Call at the end of __init__ and end of update.
         """
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.adam_alpha)
-
         ######## Output Model ########
         if self.output_reuse_embeddings:
             self.output_first_layer = FCLayerParams(self).updated({
@@ -564,7 +634,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'layers': (
                     ## paper sets hidden activations=relu and final=tanh
                     ## The paper's source sets all hidden units to D
-                    FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': min(self.D, 512), 'activation_fn': tf.nn.relu}).freeze(),
                 )
                 }).freeze()
 
@@ -586,9 +656,11 @@ def make_hyper(initVals={}, freeze=True):
     initVals = dlc.Properties(initVals)
     ## initVals.image_frame_width = 1
     globals = GlobalParams(initVals)
-    assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
+    initVals.update(globals)
 
-    CALSTM_1 = CALSTMParams(initVals.copy().updated({'m':globals.m})).freeze()
+    # assert (globals.rLambda == 0) or (globals.dropout is None), 'Both dropouts and weights_regularizer are non-None'
+
+    CALSTM_1 = CALSTMParams(initVals).freeze()
     # CALSTM_2 = CALSTM_1.copy({'m':CALSTM_1.decoder_lstm.layers_units[-1]}).freeze()
     # CALSTM_2 = CALSTMParams(initVals.copy().updated({'m':CALSTM_1.decoder_lstm.layers_units[-1]})).freeze()
 

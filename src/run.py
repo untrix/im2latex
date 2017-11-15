@@ -36,8 +36,8 @@ import logging
 import hyper_params
 
 def main():
-    _data_folder = '../data'
     logger = dtc.makeLogger(set_global=True)
+    _data_folder = '../data'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -156,6 +156,7 @@ def main():
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
 
     globalParams = dlc.Properties({
+                                    'raw_data_dir': raw_data_folder,
                                     'logger': logger,
                                     'tb': tb,
                                     'print_steps': args.print_steps,
@@ -174,22 +175,23 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.005,
+                                    'pLambda': 0.0, # 0.005, .0005
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
                                     'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
-                                    'StartTokenID': dlc.equalto('SpaceTokenID'),
                                     'beamsearch_length_penalty': 1.0,
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
                                     'squash_input_seq': args.squash_input_seq,
                                     'att_model': 'MLP_full', # '1x1_conv', 'MLP_shared', 'MLP_full'
                                     'weights_regularizer': tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer'),
-                                    'outputMLP_skip_connections': False,
-                                    'output_reuse_embeddings': False
+                                    # 'embeddings_regularizer': None,
+                                    # 'outputMLP_skip_connections': False,
+                                    'output_reuse_embeddings': False,
+                                    'REGROUP_IMAGE': (3,3)
                                     })
 
     if args.batch_size is not None:
@@ -204,6 +206,7 @@ def main():
         globalParams.rLambda = args.rLambda
 
     hyper = hyper_params.make_hyper(globalParams, freeze=False)
+
     if args.restore_logdir is not None:
         globalParams.logdir = args.restore_logdir
     else:

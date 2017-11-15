@@ -28,7 +28,7 @@ from six.moves import cPickle as pickle
 import tensorflow as tf
 from keras import backend as K
 from keras.preprocessing import image
-from Im2LatexModel import build_image_context
+from Im2LatexModel import build_vgg_context
 from data_reader import BatchImageIterator2, ImagenetProcessor
 import hyper_params
 from hyper_params import make_hyper
@@ -83,7 +83,7 @@ def run_convnet(params):
             
             tf_im = tf.placeholder(dtype=HYPER.dtype, shape=((HYPER.B,)+HYPER.image_shape), name='image')
             with tf.device('/gpu:0'):
-                tf_a_batch = build_image_context(HYPER, tf_im)
+                tf_a_batch = build_vgg_context(HYPER, tf_im)
                 tf_a_list = tf.unstack(tf_a_batch, axis=0)
         
             t_n = tfc.printVars('Trainable Variables', tf.trainable_variables())

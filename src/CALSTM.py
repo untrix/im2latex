@@ -29,7 +29,8 @@ import itertools
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
-from keras import backend as K
+# from keras import backend as K
+from tensorflow.contrib.keras import backend as K
 import collections
 from hyper_params import CALSTMParams
 
