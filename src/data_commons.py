@@ -56,11 +56,12 @@ def initialize(data_dir, params):
     # if logger is None:
     #     logger = params.logger
     if i2w_ufunc is None:
-        dict_id2word = load(data_dir, 'dict_id2word.pkl')
+        data_props = load(data_dir, 'training', 'data_props.pkl')
+        dict_id2word = data_props['id2word']
         K = len(dict_id2word.keys())
-        if params.CTCBlankTokenID is not None:
-            assert params.CTCBlankTokenID == K
-        dict_id2word[K] = u'<>' ## CTC Blank Token
+        CTCBlankTokenID = params.CTCBlankTokenID
+        if (CTCBlankTokenID is not None) and (CTCBlankTokenID >= K):
+            dict_id2word[CTCBlankTokenID] = u'<>' ## CTC Blank Token
         dict_id2word[-1] = u'<-1>' ## Catch -1s that beamsearch emits after EOS.
         def i2w(id):
             try:

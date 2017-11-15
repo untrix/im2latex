@@ -24,6 +24,7 @@ Created on Mon Jul 17 19:58:00 2017
 """
 import os
 import itertools
+import collections
 import pandas as pd
 import numpy as np
 import data_commons as dtc
@@ -127,6 +128,9 @@ class VisualizeDir(object):
 
         ## Image processor to load and preprocess images
         self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
+        self._maxpool_factor = 32
+        self._image_pool_factor = self.PoolFactor(self._maxpool_factor*self._hyper.H0/self._hyper.H, self._maxpool_factor*self._hyper.W0/self._hyper.W)
+
 
         ## Train/Test DataFrames
         self._df_train_image = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
@@ -149,15 +153,11 @@ class VisualizeDir(object):
     
     @property
     def max_steps(self):
-        steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
-        epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        steps = sorted(steps)
-        epoch_steps = sorted(epoch_steps)
+        steps, epoch_steps = self.get_steps()
         num_steps = len(steps)
         num_epoch_steps = len(epoch_steps)
         max_step = steps[-1] if num_steps > 0 else None
         max_epoch_step = epoch_steps[-1] if num_epoch_steps > 0 else None
-        display('#Saved Steps = %d, Max Step = %d(conflated: %d), #Saved Epoch Steps = %d, Max Epoch Step = %d(conflated:%d)'%(num_steps, max_step, max_step*self._SCF, num_epoch_steps, max_epoch_step, max_epoch_step*self._SCF))
         return max_step, max_epoch_step
         
     @property
@@ -167,7 +167,19 @@ class VisualizeDir(object):
     @property
     def hyper(self):
         return self._hyper
-    
+
+    def get_steps(self):
+        steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
+        epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
+        steps = sorted(steps)
+        epoch_steps = sorted(epoch_steps)
+        return steps, epoch_steps
+
+    def view_steps(self):
+        steps, epoch_steps = self.get_steps()
+        print('num_epoch_steps = %d'%len(epoch_steps))
+        print('epoch_steps = %s'%epoch_steps)
+
     def keys(self, graph, step):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
             return h5.keys()
@@ -304,25 +316,27 @@ class VisualizeDir(object):
     #         df = pd.DataFrame(data=data, index=index)
     #         return df
 
+    PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
     @staticmethod
-    def _project_alpha(alpha_t, maxpool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0):
-        pa = np.repeat(alpha_t, repeats=maxpool_factor, axis=0)
-        pa = np.repeat(pa, maxpool_factor, axis=1)
+    def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True):
+        pa = np.repeat(alpha_t, repeats=pool_factor.h, axis=0)
+        pa = np.repeat(pa, pool_factor.w, axis=1)
         pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
-        pa = 1.0 - pa
+        if invert:
+            pa = 1.0 - pa
         if expand_dims:
             pa = np.expand_dims(pa, axis=2) #(H,W,1)
         return pa
 
-    def _composit_image(self, image_data, alpha_t, maxpool_factor, pad_0, pad_1):
-        return np.concatenate((image_data, self._project_alpha(alpha_t, maxpool_factor, pad_0, pad_1)), axis=2)
+    def _composit_image(self, image_data, alpha_t, pool_factor, pad_0, pad_1, invert_alpha=True):
+        return np.concatenate((image_data, self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha)), axis=2)
 
     def test_alpha_viz(self):
         H = self._hyper.H
         W = self._hyper.W
-        maxpool_factor = 32
-        pad_0 = self._hyper.image_shape[0] - H*maxpool_factor
-        pad_1 = self._hyper.image_shape[1] - W*maxpool_factor
+        pool_factor = self._image_pool_factor
+        pad_0 = self._hyper.image_shape[0] - H*pool_factor.h
+        pad_1 = self._hyper.image_shape[1] - W*pool_factor.w
         print('test_alpha_viz: pad_0=%d, pad_1=%d'%(pad_0, pad_1))
         alphas = np.ones((H*W,H,W), dtype=float)*0.5
         image_details = []
@@ -330,12 +344,12 @@ class VisualizeDir(object):
             for w in range(W):
                 alpha = alphas[w+h*W]
                 alpha[h,w] = 1.0
-                pa = self._project_alpha(alpha, maxpool_factor, pad_0, pad_1, expand_dims=False, pad_value=0.25)
+                pa = self._project_alpha(alpha, pool_factor, pad_0, pad_1, expand_dims=False, pad_value=0.25)
                 image_details.append(('alpha[%d,%d]=1.0'%(h,w), pa))
 
         plotImages(image_details, dpi=200)
 
-    def alpha(self, graph, step, sample_num=0):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=True):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         sample_idx = df_all.iloc[sample_num].name ## Top index in sort order
         nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
@@ -348,9 +362,9 @@ class VisualizeDir(object):
         df = self._df_train_image
         image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
                                                    df.width.loc[image_name], self._padded_im_dim) #(H,W,C)
-        maxpool_factor = 32
-        pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*maxpool_factor
-        pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*maxpool_factor
+        pool_factor = self._image_pool_factor
+        pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*pool_factor.h
+        pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*pool_factor.w
 
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
         y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
@@ -359,10 +373,10 @@ class VisualizeDir(object):
         display(Math(y))
         print(y)
         
-        image_details=[(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], maxpool_factor, pad_0, pad_1, expand_dims=False))]
+        image_details = [(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1, expand_dims=False))]
         for t in xrange(T):
             ## Project alpha onto image
-            composit = self._composit_image(image_data, nd_alpha[:,:,t], maxpool_factor, pad_0, pad_1)
+            composit = self._composit_image(image_data, nd_alpha[:,:,t], pool_factor, pad_0, pad_1, invert_alpha=invert_alpha)
             image_details.append((nd_words[t], composit))
             if nd_ids[t] == 0:
                 break
@@ -381,6 +395,7 @@ class VisualizeDir(object):
         # spectral, spectral_r, spring, spring_r, summer, summer_r, terrain, terrain_r, viridis, viridis_r, winter, winter_r
         # plotImages(image_details, dpi=72, cmap='gray')
         plotImages(image_details, dpi=200)
+        return nd_alpha
 
     def prune_logs(self, save_epochs=1, dry_run=True):
         """Save the latest save_epochs logs and remove the rest."""
@@ -463,8 +478,8 @@ class VisualizeStep():
     def strs(self, key, key2=None, mingle=True, trim=False):
         return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim)
 
-    def alpha(self, sample_num=0):
-        return self._visualizer.alpha(self._graph, self._step, sample_num)
+    def alpha(self, sample_num=0, invert_alpha=True):
+        return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha)
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):
@@ -472,8 +487,13 @@ class DiffParams(object):
         self._dir2 = dir2
         
     def get(self, filename, to_str):
-        one = dtc.load(self._dir1, filename)
-        two = dtc.load(self._dir2, filename)
+        try:
+            one = dtc.load(self._dir1, 'store', filename)
+            two = dtc.load(self._dir2, 'store', filename)
+        except:
+            one = dtc.load(self._dir1, filename)
+            two = dtc.load(self._dir2, filename)
+
         if (to_str):
             one = dlc.to_dict(one)
             two = dlc.to_dict(two)
