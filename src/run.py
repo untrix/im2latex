@@ -36,8 +36,8 @@ import logging
 import hyper_params
 
 def main():
-    _data_folder = '../data'
     logger = dtc.makeLogger(set_global=True)
+    _data_folder = '../data'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -156,6 +156,7 @@ def main():
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
 
     globalParams = dlc.Properties({
+                                    'raw_data_dir': raw_data_folder,
                                     'logger': logger,
                                     'tb': tb,
                                     'print_steps': args.print_steps,
@@ -181,7 +182,6 @@ def main():
                                     'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
-                                    'StartTokenID': dlc.equalto('SpaceTokenID'),
                                     'beamsearch_length_penalty': 1.0,
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
@@ -206,6 +206,7 @@ def main():
         globalParams.rLambda = args.rLambda
 
     hyper = hyper_params.make_hyper(globalParams, freeze=False)
+
     if args.restore_logdir is not None:
         globalParams.logdir = args.restore_logdir
     else:

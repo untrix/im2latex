@@ -29,8 +29,8 @@ import itertools
 import dl_commons as dlc
 import tf_commons as tfc
 import tensorflow as tf
-from keras.applications.vgg16 import VGG16
-from keras import backend as K
+from tensorflow.contrib.keras import backend as K
+from tensorflow.contrib.keras import applications as K_apps
 from CALSTM import CALSTM, CALSTMState
 from hyper_params import Im2LatexModelParams
 from data_reader import InpTup
@@ -45,7 +45,7 @@ def build_vgg_context(params, image_batch):
     ################ Build VGG Net ################
     with tf.variable_scope('VGGNet'):
         K.set_image_data_format('channels_last')
-        convnet = VGG16(include_top=False, weights='imagenet', pooling=None,
+        convnet = K_apps.vgg16.VGG16(include_top=False, weights='imagenet', pooling=None,
                         input_shape=params.image_shape,
                         input_tensor = image_batch)
         convnet.trainable = False
@@ -85,7 +85,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, inp_q, seq2seq_beam_width=1, reuse=True):
+    def __init__(self, params, inp_q, opt=None, seq2seq_beam_width=1, reuse=True):
         """
         Args:
             params (Im2LatexModelParams)
@@ -94,6 +94,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
+        self._opt = opt
         with tf.variable_scope('I2L', reuse=reuse) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
@@ -591,58 +592,46 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
-                    yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
-                    ## ctc_beam_search_decoder sometimes produces ID values = -1
-                    ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
-                    decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
-                                                                          top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
-                    # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
+                    if (self.C.CTCBlankTokenID is not None) or (self.C.SpaceTokenID is not None):
+                        yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
+                        ## ctc_beam_search_decoder sometimes produces ID values = -1
+                        ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
+                        decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
+                                                                              top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
+                        # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
 
-                    ## Pad EOS_Tokens to the end of the sequences. (and convert to dense form).
-                    ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=self.C.NullTokenID) # (B, T)
-                    ctc_decoded_ids.set_shape((B,None))
-                    ## get seq-lengths including eos_token (as is the case with tf.dynamic_decode as well as our input sequences)
-                    ctc_decoded_lens = tfc.seqlens(ctc_decoded_ids)
-#                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
-#                                                                        ctc_decoded_ids,
-#                                                                        sequence_lengths,
-#                                                                        self.C.SpaceTokenID,
-#                                                                        padding_token=0) # ((B,T), (B,))
-#                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
-                    # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
-                    ctc_ed = tfc.edit_distance2D(B,
-                                                 ctc_decoded_ids, ctc_decoded_lens,
-                                                 tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
-                                                 self.C.CTCBlankTokenID, self.C.SpaceTokenID, self.C.NullTokenID)
-                    mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
-                    num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
-#                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
-                    pred_len_ratio = tf.divide( tf.cast(ctc_decoded_lens, self.C.dtype), tf.cast(ctc_len, self.C.dtype) )
-                    # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
-
-#                if self.C.no_towers: ## Old Code without towers
-#                    tf.summary.scalar('training/regLoss', reg_loss, collections=['training'])
-#                    tf.summary.scalar('training/logloss', log_likelihood, collections=['training'])
-#                    tf.summary.scalar('training/ctc_loss', ctc_loss, collections=['training'])
-#                    tf.summary.scalar('training/alpha_penalty', alpha_penalty, collections=['training'])
-#                    tf.summary.scalar('training/total_cost', cost, collections=['training'])
-#                    tf.summary.scalar('training/mean_norm_ase', mean_norm_ase, collections=['training'])
-#                    tf.summary.histogram('training/seq_len', sequence_lengths, collections=['training'])
-#                    tf.summary.histogram('training/predicted_len_ratio', pred_len_ratio, collections=['training'])
-#                    tf.summary.scalar('training/ctc_mean_ed', ctc_mean_ed)
-#                    tf.summary.histogram('training/ctc_ed', ctc_ed, collections=['training'])
+                        ## Pad EOS_Tokens to the end of the sequences. (and convert to dense form).
+                        ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=self.C.NullTokenID) # (B, T)
+                        ctc_decoded_ids.set_shape((B,None))
+                        ## get seq-lengths including eos_token (as is the case with tf.dynamic_decode as well as our input sequences)
+                        ctc_decoded_lens = tfc.seqlens(ctc_decoded_ids)
+    #                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
+    #                                                                        ctc_decoded_ids,
+    #                                                                        sequence_lengths,
+    #                                                                        self.C.SpaceTokenID,
+    #                                                                        padding_token=0) # ((B,T), (B,))
+    #                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
+                        # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
+                        ctc_ed = tfc.edit_distance2D(B,
+                                                     ctc_decoded_ids, ctc_decoded_lens,
+                                                     tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
+                                                     self.C.CTCBlankTokenID, self.C.SpaceTokenID, self.C.NullTokenID)
+                        mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
+                        num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
+    #                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
+                        pred_len_ratio = tf.divide( tf.cast(ctc_decoded_lens, self.C.dtype), tf.cast(ctc_len, self.C.dtype) )
+                        # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
+                    else:
+                        ctc_ed = None
+                        mean_ctc_ed = None
+                        pred_len_ratio = None
+                        num_hits = None
+                        ctc_decoded_ids = None
+                        ctc_decoded_lens = None
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
-#                    if self.C.no_towers: ## Old Code without towers
-#                        ## Old code without towers
-#                        global_step = tf.get_variable('global_step', dtype=self.C.int_type, trainable=False, initializer=0)
-#                        train = optimizer.minimize(cost, global_step=global_step)
-#                        ##tf_optimizer = tf.train.GradientDescentOptimizer(tf_rate).minimize(tf_loss, global_step=tf_step,
-#                        ##                                                               name="optimizer")
-#                    else:
-                    optimizer = self.C.optimizer #or tf.train.AdamOptimizer(learning_rate=self.C.adam_alpha)
-                    grads = optimizer.compute_gradients(cost)
+                    grads = self._opt.compute_gradients(cost)
 
                 return dlc.Properties({
                         'grads': grads,
@@ -703,9 +692,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(final_sequence_lengths) == (self.C.B, self.Seq2SeqBeamWidth)
                     tf_nest.assert_same_structure(final_states, final_state)
 
-                    self.C.logger.info('dynamic_decode final_states.shape=%s', tfc.nested_tf_shape(final_states))
-                    self.C.logger.info('dynamic_decode final_state.shape=%s', tfc.nested_tf_shape(final_state))
-                    self.C.logger.info('dynamic_decode final_outputs.shape=%s', tfc.nested_tf_shape(final_outputs))
+                    # self.C.logger.info('dynamic_decode final_states.shape=%s', tfc.nested_tf_shape(final_states))
+                    # self.C.logger.info('dynamic_decode final_state.shape=%s', tfc.nested_tf_shape(final_state))
+                    # self.C.logger.info('dynamic_decode final_outputs.shape=%s', tfc.nested_tf_shape(final_outputs))
 
                     return dlc.Properties({
                             'ids': final_outputs.predicted_ids, # (B, T, BW)
@@ -853,39 +842,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
                             tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
 
-                # if self.C.no_towers: ## Old Code without towers
-                #     logs_tr_acc_top1 = tf.summary.merge(tf.get_collection('top1'))
-                #     logs_tr_acc_topK = tf.summary.merge(tf.get_collection('top_k'))
-
-                #     ## Aggregate metrics injected into the graph from outside
-                #     with tf.name_scope('AggregateMetrics'):
-                #         ph_top1_seq_lens = tf.placeholder(self.C.int_type)
-                #         ph_edit_distance = tf.placeholder(self.C.dtype)
-                #         ph_num_hits =  tf.placeholder(self.C.dtype)
-                #         ph_accuracy =  tf.placeholder(self.C.dtype)
-                #         ph_valid_time =  tf.placeholder(self.C.dtype)
-
-                #         ph_BoK_distance =  tf.placeholder(self.C.int_type)
-                #         ph_BoK_accuracy =  tf.placeholder(self.C.dtype)
-
-                #         agg_num_hits = tf.reduce_sum(ph_num_hits)
-                #         agg_accuracy = tf.reduce_mean(ph_accuracy)
-                #         agg_ed = tf.reduce_mean(ph_edit_distance)
-                #         agg_bok_ed = tf.reduce_mean(ph_BoK_distance)
-                #         agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
-
-                #         tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
-                #         tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
-                #         tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
-                #         tf.summary.scalar( 'top_1/edit_distance', agg_ed, collections=['aggregate_top1'])
-                #         tf.summary.scalar( 'top_1/num_hits', agg_num_hits, collections=['aggregate_top1'])
-                #         tf.summary.scalar( 'top_1/accuracy', agg_accuracy, collections=['aggregate_top1'])
-                #         tf.summary.scalar( 'time_per100', ph_valid_time, collections=['aggregate_top1'])
-                #         tf.summary.scalar( 'bestof_%d/accuracy'%k, agg_bok_accuracy, collections=['aggregate_bok'])
-                #         tf.summary.scalar( 'bestof_%d/edit_distance'%k, agg_bok_ed, collections=['aggregate_bok'])
-
-                #         logs_agg_top1 = tf.summary.merge(tf.get_collection('aggregate_top1'))
-                #         logs_agg_bok = tf.summary.merge(tf.get_collection('aggregate_bok'))
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
@@ -929,7 +885,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-def sync_training_towers(hyper, tower_ops, global_step):
+def sync_training_towers(hyper, tower_ops, global_step, opt):
     with tf.variable_scope('SyncTowers') as var_scope:
         def gather(prop_name):
             return [o[prop_name] for o in tower_ops]
@@ -951,7 +907,7 @@ def sync_training_towers(hyper, tower_ops, global_step):
 
         grads = average_gradients(gather('grads'))
         with tf.variable_scope('optimizer'):
-            apply_grads = hyper.optimizer.apply_gradients(grads, global_step=global_step)
+            apply_grads = opt.apply_gradients(grads, global_step=global_step)
 
         with tf.variable_scope('Instrumentation'):
 #            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
@@ -1011,6 +967,20 @@ def sync_training_towers(hyper, tower_ops, global_step):
 
             tb_agg_logs = tf.summary.merge(tf.get_collection('training_aggregate'))
 
+            if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
+                ctc_ed = None
+                mean_ctc_ed = None
+                pred_len_ratio = None
+                num_hits = None
+                predicted_ids_list = None
+                predicted_lens = None
+            else:
+                ctc_ed = concat('ctc_ed') # (num_gpus*B,)
+                pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
+                num_hits = get_sum('num_hits') # scalar
+                predicted_ids_list = gather('predicted_ids') # [(B,T), ...]
+                predicted_lens = concat('predicted_lens') # (num_gpus*B,)
+
         return dlc.Properties({
             'image_name_list': gather('image_name'), # [(B,), ...]
             'alpha': concat('alpha', axis=1), # [(N, num_gpus*B, H, W, T), ...]
@@ -1024,18 +994,18 @@ def sync_training_towers(hyper, tower_ops, global_step):
             'ph_alpha_penalties': ph_alpha_penalties, # (num_steps,)
             'mean_norm_ase': get_mean('mean_norm_ase'), # scalar between 0. and 100.
             'ph_mean_norm_ases': ph_mean_norm_ases, # (num_steps,)
-            'num_hits': get_sum('num_hits'), # scalar
+            'num_hits': num_hits, # scalar
             'ph_num_hits': ph_num_hits, # (num_steps,)
             'reg_loss': reg_loss, # scalar
             'ph_reg_losses': ph_reg_losses, # (num_steps,)
             'cost': cost, # scalar
             'ph_costs': ph_costs, # (num_steps,)
             'train': apply_grads, # op
-            'ctc_ed': concat('ctc_ed'), # (num_gpus*B,)
+            'ctc_ed': ctc_ed, # (num_gpus*B,)
             'ph_ctc_eds': ph_ctc_eds, # (num_steps*num_gpus*B,)
-            'predicted_ids_list': gather('predicted_ids'), # [(B,T), ...]
-            'predicted_lens': concat('predicted_lens'), # (num_gpus*B,)
-            'pred_len_ratio': concat('pred_len_ratio'), # (num_gpus*B,)
+            'predicted_ids_list': predicted_ids_list, # [(B,T), ...]
+            'predicted_lens': predicted_lens, # (num_gpus*B,)
+            'pred_len_ratio': pred_len_ratio, # (num_gpus*B,)
             'ph_pred_len_ratios': ph_pred_len_ratios, # (num_steps*num_gpus*B,)
 #            'pred_squash_ids_list': gather('predicted_squashed_ids'), # [(B,T), ...]
 #            'pred_squash_lens': concat('pred_squash_lens'), # (num_gpus*B,)

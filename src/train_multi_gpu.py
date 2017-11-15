@@ -188,9 +188,13 @@ def main(raw_data_folder,
         train_tower_ops = []; train_ops = None
         with tf.name_scope('Training'):
             tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
-        if (args.doTrain):
+            if hyper.optimizer == 'adam':
+                opt = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+            else:
+                raise Exception('Unsupported optimizer - %s - configured.' % (hyper.optimizer,))
+
+        if args.doTrain:
             with tf.name_scope('Training'):
-                ## hyper.optimizer = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)hyper.data_reader_
                 with tf.variable_scope('InputQueue'):
                     train_q = tf.FIFOQueue(hyper.input_queue_capacity, train_it.out_tup_types)
                     tf_enqueue_train_queue = train_q.enqueue_many(train_it.get_pyfunc_with_split(hyper.num_gpus))
@@ -198,7 +202,7 @@ def main(raw_data_folder,
                 for i in range(args.num_gpus):
                     with tf.name_scope('gpu_%d'%i):
                         with tf.device('/gpu:%d'%i):
-                            model = Im2LatexModel(hyper, train_q, reuse=(False if i==0 else True))
+                            model = Im2LatexModel(hyper, train_q, opt=opt, reuse=(False if i==0 else True))
                             train_tower_ops.append( model.build_training_tower())
                             if i == 0:
                                 trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
@@ -207,7 +211,7 @@ def main(raw_data_folder,
                                 ## assert trainable_vars_n == 23261206 if hyper.build_image_context
                             else:
                                 assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
-                train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step)
+                train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step, opt)
             qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
             qrs.append(qr1)
 
@@ -225,7 +229,8 @@ def main(raw_data_folder,
                         with tf.device('/gpu:%d'%i):
                             reuse_vars = False if ((i==0) and not args.doTrain) else True
                             logger.info('reuse_vars = %s'%reuse_vars)
-                            model_predict = Im2LatexModel(hyper_predict, valid_q, hyper.seq2seq_beam_width, reuse=reuse_vars)
+                            model_predict = Im2LatexModel(hyper_predict, valid_q, opt=None,
+                                                          seq2seq_beam_width=hyper.seq2seq_beam_width, reuse=reuse_vars)
                             valid_tower_ops.append(model_predict.build_testing_tower())
                             if not reuse_vars:
                                 trainable_vars_n = num_trainable_vars()
