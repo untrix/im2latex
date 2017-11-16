@@ -111,7 +111,7 @@ class GlobalParams(dlc.HyperParams):
            (0, 1, 2)
            ),
         PD('build_scanning_RNN', '(boolean): Whether to build a regular RNN or a scanning RNN',
-            boolean(),
+            boolean,
             False
            ),
         PD('B',
@@ -443,7 +443,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 ),
             PD('MaxS', 'Applicable to Scanning LSTM only: Max value of S for the given data-set',
                 integer(1),
-                LambdaVal(lambda _, p: int(p.MaxSeqLen*p.ScanFactor))
+                LambdaVal(lambda _, p: int(p.MaxSeqLen*p.SFactor))
                 ),
             PD('no_ctc_merge_repeated',
                 "(boolean): Negated value of ctc_merge_repeated argubeamsearch_length_penatlyment for ctc operations",
