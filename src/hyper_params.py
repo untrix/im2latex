@@ -52,21 +52,13 @@ def pad_image_shape(shape, padding):
 class GlobalParams(dlc.HyperParams):
     """ Common Properties to trickle down. """
     proto = (
+        ## Data-set Properties ##
         PD('raw_data_dir', 'Filesystem path of raw_data_folder from where the pre-processed data is stored.',
            dlc.instanceof(str)
            ),
         PD('dataset', 'Dataset id, 2 or 3',
-           (2,3),
+           (2, 3),
            3
-           ),
-        PD('build_image_context',
-           """
-           (enum): Type of decoder conv-net model to use:
-           0 => Do not build decoder conv-net. Use pre-generated image features instead.
-           1 => Use VGG16 Conv-Net model (imported from Keras).
-           2 => Use a custom conv-net (defined in make_hyper)
-           """,
-           (0,1,2)
            ),
         PD('image_shape_unframed',
            'Shape of input images. Should be a python sequence.'
@@ -77,14 +69,9 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('MaxSeqLen',
            "Max sequence length including the end-of-sequence marker token. Is used to "
-            "limit the number of decoding steps. Value is loaded from the dataset and is not configurable.",
+           "limit the number of decoding steps. Value is loaded from the dataset and is not configurable.",
            integer(151, 200),
            # Set dynamically based on dataset.
-           ),
-        PD('B',
-           '(integer): Size of mini-batch for training, validation and testing graphs/towers. '
-           'NOTE: Batch-size for the data-reader is different and set under property "data_reader_B"',
-           integer(1),
            ),
         PD('K',
            'Vocabulary size including zero. Value is loaded from the dataset and is not configurable.',
@@ -93,7 +80,7 @@ class GlobalParams(dlc.HyperParams):
            # LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
            ),
         PD('CTCBlankTokenID',
-           'ID of the space/blank token. By tf.nn.ctc requirement, blank token should be == K-1,' 
+           'ID of the space/blank token. By tf.nn.ctc requirement, blank token should be == K-1,'
            'Value is loaded from the dataset and is not configurable.',
            integerOrNone(),
            # Set dynamically based on dataset.
@@ -110,14 +97,34 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('StartTokenID',
            'ID of the begin-sequence token. The value is loaded from the dataset and is not configurable.',
-           range(1,557),
+           range(1, 557),
            # Set dynamically based on dataset.
+           ),
+        ###############################
+        PD('build_image_context',
+           """
+           (enum): Type of decoder conv-net model to use:
+           0 => Do not build decoder conv-net. Use pre-generated image features instead.
+           1 => Use VGG16 Conv-Net model (imported from Keras).
+           2 => Use a custom conv-net (defined in make_hyper)
+           """,
+           (0, 1, 2)
+           ),
+        PD('build_scanning_RNN', '(boolean): Whether to build a regular RNN or a scanning RNN',
+            boolean(),
+            False
+           ),
+        PD('B',
+           '(integer): Size of mini-batch for training, validation and testing graphs/towers. '
+           'NOTE: Batch-size for the data-reader is different and set under property "data_reader_B"',
+           integer(1),
            ),
         PD('n',
            "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
            "The paper uses a value of 1000.",
            integer(),
-           1000),
+           1000
+           ),
         PD('m',
            '(integer): dimensionality of the embedded input vector (Ey / Ex).'
            "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
@@ -140,16 +147,16 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else (4 if p.dataset==3 else 3))
+           LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
            ),
         PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset==3 else 33))
+           LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
            ),
         PD('L0',
            '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
            integer(1),
-           LambdaVal(lambda _, p: p.H0*p.W0)
+           LambdaVal(lambda _, p: p.H0 * p.W0)
            ),
         PD('D0',
            '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
@@ -158,22 +165,23 @@ class GlobalParams(dlc.HyperParams):
            512),
         PD('H', 'Height of feature-map produced fed to the decoder.',
            integer(1),
-           LambdaVal(lambda _, p: p.H0 if (p.REGROUP_IMAGE is None) else p.H0/p.REGROUP_IMAGE[0])
+           LambdaVal(lambda _, p: p.H0 if (p.REGROUP_IMAGE is None) else p.H0 / p.REGROUP_IMAGE[0])
            ),
         PD('W', 'Width of feature-map fed to the decoder.',
            integer(1),
-           LambdaVal(lambda _, p: p.W0 if (p.REGROUP_IMAGE is None) else p.W0/p.REGROUP_IMAGE[1])
-            ),
+           LambdaVal(lambda _, p: p.W0 if (p.REGROUP_IMAGE is None) else p.W0 / p.REGROUP_IMAGE[1])
+           ),
         PD('L',
            '(integer): number of pixels in an image feature-map fed to the decoder = HxW (see paper or model description)',
            integer(1),
-           LambdaVal(lambda _, p: p.H*p.W)
+           LambdaVal(lambda _, p: p.H * p.W)
            ),
         PD('D',
            '(integer): number of image-features fed to the decoder. Depth/channels of the last conv-net layer.'
            'See paper or model description.',
            integer(1),
-           LambdaVal(lambda _, p: p.D0 if (p.REGROUP_IMAGE is None) else p.D0*p.REGROUP_IMAGE[0]*p.REGROUP_IMAGE[1])),
+           LambdaVal(
+               lambda _, p: p.D0 if (p.REGROUP_IMAGE is None) else p.D0 * p.REGROUP_IMAGE[0] * p.REGROUP_IMAGE[1])),
         PD('tb', "Tensorboard Params.",
            instanceof(TensorboardParams),
            ),
@@ -203,44 +211,44 @@ class GlobalParams(dlc.HyperParams):
            np.int32
            ),
         PD('weights_initializer',
-              'Tensorflow weights initializer function',
-              iscallable(),
-              tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32) ## = glorot_uniform
-              # tf.contrib.layers.variance_scaling_initializer()
-              ),
+           'Tensorflow weights initializer function',
+           iscallable(),
+           tf.contrib.layers.xavier_initializer(uniform=True, dtype=tf.float32)  ## = glorot_uniform
+           # tf.contrib.layers.variance_scaling_initializer()
+           ),
         PD('biases_initializer',
-              'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
-              iscallable(),
-              tf.zeros_initializer()
-              ),
+           'Tensorflow biases initializer function, e.g. tf.zeros_initializer(). ',
+           iscallable(),
+           tf.zeros_initializer()
+           ),
         PD('rLambda',
-            'Lambda value (scale) for regularizer.',
-            decimal(),
-            0.0005
-            ),
+           'Lambda value (scale) for regularizer.',
+           decimal(),
+           0.0005
+           ),
         PD('weights_regularizer',
-              'L1 / L2 norm regularization. If this is non-None then dropout should be None.',
-              iscallableOrNone(),
-              # tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
-              # tf.contrib.layers.l1_regularizer(scale=1.0, scope="L1_Regularizer")
-              ),
+           'L1 / L2 norm regularization. If this is non-None then dropout should be None.',
+           iscallableOrNone(),
+           # tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer')
+           # tf.contrib.layers.l1_regularizer(scale=1.0, scope="L1_Regularizer")
+           ),
         PD('use_ctc_loss',
-            "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
-            "ctc_loss will be logged.",
-            boolean,
-            False),
+           "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
+           "ctc_loss will be logged.",
+           boolean,
+           False),
         PD('biases_regularizer',
-              'L1 / L2 norm regularization',
-              iscallable(noneokay=True),
-              None),
+           'L1 / L2 norm regularization',
+           iscallable(noneokay=True),
+           None),
         PD('use_peephole',
-            '(boolean): whether to employ peephole connections in the decoder LSTM',
-            (True, False),
-            True),
+           '(boolean): whether to employ peephole connections in the decoder LSTM',
+           (True, False),
+           True),
         PD('logger', 'Python logger object for logging.',
-            instanceof(logging.Logger)
-            ),
-        )
+           instanceof(logging.Logger)
+           ),
+    )
     def __init__(self, initVals=None):
         dlc.HyperParams.__init__(self, self.proto, initVals)
         self._trickledown()
@@ -429,6 +437,14 @@ class Im2LatexModelParams(dlc.HyperParams):
                 integer(151),
                 LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
                 ),
+            PD('SFactor', 'Applicable to Scanning LSTM only: Multiplier to derive MaxS from MaxSeqLen',
+                decimal(1.0),
+                2.0
+                ),
+            PD('MaxS', 'Applicable to Scanning LSTM only: Max value of S for the given data-set',
+                integer(1),
+                LambdaVal(lambda _, p: int(p.MaxSeqLen*p.ScanFactor))
+                ),
             PD('no_ctc_merge_repeated',
                 "(boolean): Negated value of ctc_merge_repeated argubeamsearch_length_penatlyment for ctc operations",
                 boolean,
@@ -456,21 +472,21 @@ class Im2LatexModelParams(dlc.HyperParams):
                 False
                 ),
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
-               instanceof(float),
-               0.0001 # default in tf.train.AdamOptimizer is 0.001
-              ),
+                instanceof(float),
+                0.0001 # default in tf.train.AdamOptimizer is 0.001
+                ),
             PD('optimizer',
-               'tensorflow optimizer function (e.g. AdamOptimizer).',
-               ('adam',),
-               'adam'
-               ),
+                'tensorflow optimizer function (e.g. AdamOptimizer).',
+                ('adam',),
+                'adam'
+                ),
             PD('no_towers', 'Should be always set to False. Indicates code-switch to build without towers which will not work',
-               (False,),
-               False
-               ),
+                (False,),
+                False
+                ),
             PD('num_gpus', 'Number of GPUs employed in parallel',
-               integer(1)
-               ),
+                integer(1)
+                ),
             PD('data_reader_B', 'batch_size for the data_reader',
                integer(1),
                LambdaVal(lambda _, d: d.B * d.num_gpus)

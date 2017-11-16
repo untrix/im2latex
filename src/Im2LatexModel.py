@@ -383,6 +383,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         yLogits_t, state_t = self(Ex_t, out_t_1.state, scope=self._rnn_scope)
         return self.ScanOut(yLogits_t, state_t)
 
+    def _x_s(self, y_s):
+        ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
+        ## last token of y_s which is <eos> token (zero) will not appear in x_s
+        x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
+        assert K.int_shape(x_s) == (T, B)
+        return x_s
+
     def build_training_tower(self):
         """ Build the training graph of the model """
         B = self.C.B
@@ -400,11 +407,32 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
                 assert K.int_shape(y_s) == (T,B)
 
-                ################ Build x_s ################
-                ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
-                ## last token of y_s which is <eos> token (zero) will not appear in x_s
-                x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
-                assert K.int_shape(x_s) == (T,B)
+                if not self.C.build_scanning_RNN:
+                    ################ Build x_s for regular RNN ################
+                    ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
+                    ## last token of y_s which is <eos> token (zero) will not appear in x_s
+                    x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
+                    assert K.int_shape(x_s) == (T, B)
+                else:
+                    ################ Build x_s for the Scanning RNN ################
+                    # The allotted time period S for each batch is a function of its bin-length (e.g. 2*bin_length).
+                    # The model must learn to finish its job within this time period. The multiplier '2' above could
+                    # be modeled as a hyper-parameter to be discovered using cross-validation.
+                    #
+                    # The signal x_s is comprised of two parts:
+                    # 1) A linearly increasing signal - 'clock1' - from 1/S at t==1 to 1.0 at t=S. clock == t/S
+                    # 2) A linearly increasing signal - 'clock2' == t/max-S where max-S is the largest possible value
+                    #    of S given the data-set.
+                    # 3) A scalar 's' between 0.0 and 1.0 indicating the value of S for that batch. = S/max-S
+
+                    tf_S = tf.identity(y_s.shape[0]*self.C.SFactor, 'S')
+                    tf_MaxS = tf.identity(self.C.MaxS, 'MaxS')
+                    s = tf.divide(tf_S, tf_MaxS, 's')
+                    t = tf.range(tf_S) + 1
+                    clock1 = tf.divide(t, tf_S, 'clock1')
+                    clock2 = tf.divide(t, tf_MaxS, 'clock2')
+                    s = tf.expand_dims(s, axis=0)
+                    x_s = tf.concat([clock1, clock2, s], axis=1, name='x_s')
 
                 accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # The init-value is not used
                                      self._init_state_model)

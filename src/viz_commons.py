@@ -177,6 +177,15 @@ class VisualizeDir(object):
         epoch_steps = sorted(epoch_steps)
         return steps, epoch_steps
 
+    def get_snapshots(self):
+        epoch_steps = [int(os.path.basename(f).split('.')[0].split('snapshot-')[1]) for f in os.listdir(self._logdir) if f.endswith('.index') and f.startswith('snapshot-')]
+        epoch_steps = sorted(epoch_steps)
+        return epoch_steps
+
+    def view_snapshots(self):
+        epoch_steps = self.get_snapshots()
+        print('Num Snapshots: %d\n%s'%(len(epoch_steps), epoch_steps))
+
     def view_steps(self):
         steps, epoch_steps = self.get_steps()
         print('num_epoch_steps = %d'%len(epoch_steps))

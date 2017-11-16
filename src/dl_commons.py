@@ -536,7 +536,49 @@ class Params(Properties):
 
 class HyperParams(Params):
     """
-    Params class specialized for Global HyperParams. Adds the following semantics:
+    Params class specialized for Global HyperParams. Hyper Params are expected to be global and
+    set only in one place (in order to avoid mistakes). However, manually hard-coding all hyper-params in
+    one file is not practical because for one, parameters are in many cases dependant on one-another. Thus changing
+    one such param could result in a cascading affect causing one to manually change all the dependant params. Doing
+    so manually is not only cumbersome and laborious but also error-prone since one may not always remember all the
+    dependant params (you could have 200 params easily). Furthermore, it may be beneficial to organize hyper-params
+    in a containment hierarchy - to mimic the containment structure of a model's components. Secondly, the model
+    itself may change based on parameters for e.g. sections of a model may be added or removed based on params. Each
+    of these added or deleted sections may be governed by their own set of parameters which will need to be specified
+    or unspecified easily. Furthermore each section may have its own constraints regarding valid and invalid values
+    of the parameters for e.g. you may decide to allow dropouts only within certain sections of your model. There
+    can be a variety of constraints that you may want to impose on different sections of your model. All these
+    constraints can be expressed as constraints on the values of parameters. Also, different sections of a model
+    may share a lot of parameters (e.g. regularizer function across the entire model or reuse most of the parameters
+    across layers of a convolutional neural network.). It would be very convenient to specify the shared parameters
+    only once instead of having to make copies of them (manually). Also, many places in your code may dynamically
+    set parameters based on some other factors - e.g. data-set shape may be different for different data-sets causing
+    slight changes to the structure of your model (e.g. you may want a different number of hidden units if the vocabulary
+    of your normalized vs non-normalized text data-sets was different). Lastly, you may have various checks in your
+    code that verify the shape and size of various tensors - in order to validate the correctness of your model.
+    These checks/asserts will need to change if anything changes for any of the reasons mentioned above. Therefore
+    an advanced hyper-parameter module is required which has aspects of hierarchy, reuse/inheritance, is
+    declarative but at the same time can be constructed dynamically but that doesn't lose benefits of the simpler
+    manual method (i.e. hard-code everything in one file in one place). This class along with its superclasses
+    attempts to provide all these benefits. The superclasses (Params and Properties) provide a declarative yet dynamic
+    API (via. parameter-descriptors, validators and Lambda-Values), aspects of object-oriented architecture -
+    i.e. inheritance and containment via. parameter classes and a host of other utilities like pickling/unpickling
+    and visual differencing of parameter-sets (via Jupyter Notebook) and JavaScript style property accessor (dot accessor)
+    for all properties in addition to python-dict style (square brackets) accessor, and object freeze and seal similar
+    to JavaScript Objects.
+    On top the dynamic nature we add a few constraints in order to ensure the benefits of the simple hard-coded parameter
+    model - 1) it will allow you to set a variable only once. While you can choose to set it declaratively within the
+    parameter descriptor or dynamically within your code, you can only do that once. Attempting to do so a second time
+    will beget an exception from this class (though the super-classes will allow this behaviour so if you want that
+    behaviour then just use the super-class though I recommend its better to stay with the constraints if you are
+    using this class for global hyper-parameters). 2) It will prevent
+    you from inserting or reading properties that are not declared in the parameter descriptor (the Params superclass
+    enforces this behaviour) and 3) Trying to access a property with a None value will cause an exception to be
+    raised unless None was declared as a valid value of the property. Note that this behaviour may be depricated in
+    favor of treating None as a first-class value.
+
+    This class imposes the following semantics on top of its superclass (Params).
+
     1)
         NOTE: This feature needs revision since it applies to old behaviour of the Params class.
         In the new behaviour a 'None' value is considered a proper
