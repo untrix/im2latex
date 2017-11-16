@@ -26,7 +26,6 @@ import pprint
 import numpy as np
 import nltk
 import data_commons as dtc
-import traceback
 
 class AccessDeniedError(Exception):
     def __init__(self, msg):
