@@ -26,28 +26,37 @@ import os
 import time
 from six.moves import cPickle as pickle
 import tensorflow as tf
-from keras import backend as K
-from keras.preprocessing import image
+from tensorflow.contrib.keras import backend as K
 from Im2LatexModel import build_vgg_context
 from data_reader import BatchImageIterator2, ImagenetProcessor
-import hyper_params
 from hyper_params import make_hyper
 import tf_commons as tfc
 import argparse as arg
+import data_commons as dtc
 import dl_commons as dlc
 import pandas as pd
 
 def get_df(params):
-    image_features_folder = params.vgg16_folder
-    raw_data_folder = params.raw_data_folder
-    image_features_folder = params.vgg16_folder
-    image_list = [os.path.splitext(s)[0]+'.png' for s in filter(lambda s: s.endswith('.pkl'),os.listdir(image_features_folder))]
+    # image_features_folder = params.vgg16_folder
+    # raw_data_folder = params.raw_data_folder
+    # image_features_folder = params.vgg16_folder
+
+    # Join the two data-frames
     df_train = pd.read_pickle(os.path.join(params.raw_data_folder, 'df_train.pkl'))
     df_test = pd.read_pickle(os.path.join(params.raw_data_folder, 'df_test.pkl'))
     df = df_train.append(df_test)
 
+    # Remove images that have been processed already. But round-up to batch-size
+    image_list = [os.path.splitext(s)[0]+'.png' for s in filter(lambda s: s.endswith('.pkl'), os.listdir(params.vgg16_folder))]
     df = df[~df.image.isin(image_list)]
-    print 'Dataframe Shape = %s'%(df.shape,)
+    if (df.shape[0] % params.B) != 0:
+        shortfall = params.B - (df.shape[0] % params.B)
+        df_remove = df[df.image.isin(image_list)]
+        df = df.append(df_remove.sample(n=shortfall), verify_integrity=True)
+
+    dtc.logger.info('Working with %d images', df.shape[0])
+
+    # Set all bin_len to max to ensure only one bin
     df.bin_len = df.bin_len.max()
     return df
 
@@ -56,8 +65,14 @@ def run_convnet(params):
     image_folder = params.image_folder
     raw_data_folder = params.raw_data_folder
     image_features_folder = params.vgg16_folder
-
     logger = HYPER.logger
+
+    df = get_df(params)
+    if df.shape[0] == 0:
+        logger.info('No images remaining to process. All done.')
+    else:
+        logger.info('Processing %d images.', df.shape[0])
+
     logger.info('\n#################### Args: ####################\n%s', params.pformat())
     logger.info('##################################################################\n')
     logger.info( '\n#########################  HYPER Params: #########################\n%s', HYPER.pformat())
@@ -68,7 +83,7 @@ def run_convnet(params):
                         image_folder, 
                         HYPER, 
                         image_processor=ImagenetProcessor(HYPER),
-                        df=get_df(params),
+                        df=df,
                         num_steps=params.num_steps,
                         num_epochs=params.num_epochs)
 
@@ -82,7 +97,7 @@ def run_convnet(params):
             K.set_session(tf_session)
             
             tf_im = tf.placeholder(dtype=HYPER.dtype, shape=((HYPER.B,)+HYPER.image_shape), name='image')
-            with tf.device('/gpu:0'):
+            with tf.device('/gpu:1'): # change this to gpu:0 if you only have one gpu
                 tf_a_batch = build_vgg_context(HYPER, tf_im)
                 tf_a_list = tf.unstack(tf_a_batch, axis=0)
         
@@ -104,7 +119,7 @@ def run_convnet(params):
             for step, b in enumerate(b_it, start=1):
                 # if b.epoch > 1 or (params.num_steps >= 0 and step > params.num_steps):
                 #     break
-                feed_dict = {tf_im:b.im, K.learning_phase(): 0}
+                feed_dict = {tf_im: b.im, K.learning_phase(): 0}
                 a_list = tf_session.run(tf_a_list, feed_dict = feed_dict)
                 assert len(a_list) == len(b.image_name)
                 for i, a in enumerate(a_list):
@@ -118,7 +133,7 @@ def run_convnet(params):
             print 'done'
               
 def main():
-    _data_folder = '../data'
+    _data_folder = '../data/dataset3'
 
     parser = arg.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -137,13 +152,13 @@ def main():
                         help="Data folder. If unspecified, defaults to " + _data_folder,
                         default=_data_folder)
     parser.add_argument("--raw-data-folder", dest="raw_data_folder", type=str,
-                        help="Raw data folder. If unspecified, defaults to data_folder/generated2/training",
+                        help="Raw data folder. If unspecified, defaults to data_folder/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features_2",
+                        help="vgg16 data folder. If unspecified, defaults to data_folder/vgg16_features",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
-                        help="image folder. If unspecified, defaults to data_folder/formula_images_2",
+                        help="image folder. If unspecified, defaults to data_folder/formula_images",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
                         help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
@@ -157,28 +172,35 @@ def main():
     params = dlc.Properties({'num_steps': args.num_steps, 
                              'print_steps':args.print_steps,
                              'num_epochs': args.num_epochs,
-                             'image_shape': (120,1075,3),
-                             'logger': hyper_params.makeLogger(args.logging_level)})
+                             'logger': dtc.makeLogger(args.logging_level, set_global=True),
+                             'build_image_context': 1,
+                             'weights_regularizer': None,
+                             'num_gpus': 1,
+                             'tb': tfc.TensorboardParams({'tb_logdir': 'tb_metrics_convnet'}).freeze()
+                             })
     if args.image_folder:
         params.image_folder = args.image_folder
     else:
-        params.image_folder = os.path.join(data_folder,'formula_images_2')
+        params.image_folder = os.path.join(data_folder,'formula_images')
 
     if args.raw_data_folder:
         params.raw_data_folder = args.raw_data_folder
     else:
-        params.raw_data_folder = os.path.join(data_folder, 'generated2', 'training')
+        params.raw_data_folder = os.path.join(data_folder, 'training')
+    params.raw_data_dir = params.raw_data_folder
 
     if args.vgg16_folder:
         params.vgg16_folder = args.vgg16_folder
     else:
-        params.vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
+        params.vgg16_folder = os.path.join(data_folder, 'vgg16_features')
     
     if args.batch_size is not None:
         params.B = args.batch_size
     if args.partial_batch:
         params.assert_whole_batch = False
-    
+
+    data_props = dtc.load(params.raw_data_folder, 'data_props.pkl')
+    params.image_shape = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'], 3)
     run_convnet(params)
 
 main()

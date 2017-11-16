@@ -55,6 +55,10 @@ class GlobalParams(dlc.HyperParams):
         PD('raw_data_dir', 'Filesystem path of raw_data_folder from where the pre-processed data is stored.',
            dlc.instanceof(str)
            ),
+        PD('dataset', 'Dataset id, 2 or 3',
+           (2,3),
+           3
+           ),
         PD('build_image_context',
            """
            (enum): Type of decoder conv-net model to use:
@@ -84,7 +88,7 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('K',
            'Vocabulary size including zero. Value is loaded from the dataset and is not configurable.',
-           xrange(500,1000),
+           (358, 557),
            # Set dynamically based on dataset.
            # LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
            ),
@@ -96,7 +100,7 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('SpaceTokenID',
            'Space Token ID if present in the dataset.',
-           integer(),
+           integerOrNone(),
            # Set dynamically based on dataset.
            ),
         PD('NullTokenID',
@@ -136,12 +140,12 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else 3)
+           LambdaVal(lambda _,p: 8 if (p.build_image_context == 2) else (4 if p.dataset==3 else 3))
            ),
         PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _,p: 68 if (p.build_image_context == 2) else 33)
-            ),
+           LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset==3 else 33))
+           ),
         PD('L0',
            '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
            integer(1),
@@ -244,11 +248,8 @@ class GlobalParams(dlc.HyperParams):
     def _trickledown(self):
 
         data_props = np.load(os.path.join(self.raw_data_dir, 'data_props.pkl'))
-        assert 'image_shape_unframed' not in self
-        if self.build_image_context != 2:
-            self.image_shape_unframed = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'], 3)
-        else:
-            self.image_shape_unframed = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'],1)
+        num_channels = 1 if (self.build_image_context == 2) else 3
+        self.image_shape_unframed = (data_props['padded_image_dim']['height'], data_props['padded_image_dim']['width'], num_channels)
 
         self.MaxSeqLen = data_props['MaxSeqLen']
         self.SpaceTokenID = data_props['SpaceTokenID']
