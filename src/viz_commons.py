@@ -113,8 +113,10 @@ class VisualizeDir(object):
         self._raw_data_dir = os.path.join(gen_datadir, 'training')
         self._SCF = self._hyper.B * self._hyper.num_gpus * 1.0 / (64.0)  # conflation factor
 
-        self._word2id = pd.read_pickle(os.path.join(gen_datadir, 'dict_vocab.pkl'))
-        i2w = pd.read_pickle(os.path.join(gen_datadir, 'dict_id2word.pkl'))
+        self._data_props = pd.read_pickle(os.path.join(self._raw_data_dir, 'data_props.pkl'))
+        self._word2id = self._data_props['word2id']
+        i2w = self._data_props['id2word']
+
         for i in range(-1,-11,-1):
             i2w[i] = '%d'%i
         self._id2word = {}
@@ -124,7 +126,7 @@ class VisualizeDir(object):
               self._id2word[i] = w + " "  
             else:
                 self._id2word[i] = w 
-        self._id2word[self._word2id['id']['\\']] = '\\'
+        self._id2word[self._word2id['\\']] = '\\'
 
         ## Image processor to load and preprocess images
         self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
@@ -145,7 +147,7 @@ class VisualizeDir(object):
     
     @property
     def w2i(self):
-        return self._word2id['id']
+        return self._word2id
 
     @property
     def i2w(self):
@@ -174,6 +176,15 @@ class VisualizeDir(object):
         steps = sorted(steps)
         epoch_steps = sorted(epoch_steps)
         return steps, epoch_steps
+
+    def get_snapshots(self):
+        epoch_steps = [int(os.path.basename(f).split('.')[0].split('snapshot-')[1]) for f in os.listdir(self._logdir) if f.endswith('.index') and f.startswith('snapshot-')]
+        epoch_steps = sorted(epoch_steps)
+        return epoch_steps
+
+    def view_snapshots(self):
+        epoch_steps = self.get_snapshots()
+        print('Num Snapshots: %d\n%s'%(len(epoch_steps), epoch_steps))
 
     def view_steps(self):
         steps, epoch_steps = self.get_steps()
@@ -242,7 +253,7 @@ class VisualizeDir(object):
             d['words'].append(d2['words'])
             return d
 
-        ids_words = reduce(accumColTrim if trim else accumCol, df_ids.values, {'ids':[], 'words':[]})
+        ids_words = reduce(accumColTrim if trim else accumCol, df_ids.values, {'ids': [], 'words': []})
 
         ## return
         return pd.DataFrame({sortkey: sr_sortkey, 'ids': ids_words['ids'], 'words': ids_words['words']}, index=df_ids.index)

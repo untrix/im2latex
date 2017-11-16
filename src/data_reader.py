@@ -291,7 +291,7 @@ class BatchImageIterator1(ShuffleIterator):
                  image_processor,
                  df):
 
-        self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
+        self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'data_props.pkl'))['padded_image_dim']
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
         self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
@@ -328,7 +328,7 @@ class BatchImageIterator2(ShuffleIterator):
                 num_epochs=-1
                 ):
 
-        self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'padded_image_dim.pkl'))
+        self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'data_props.pkl'))['padded_image_dim']
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
         df = df ## pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))

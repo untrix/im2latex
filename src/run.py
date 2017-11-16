@@ -37,7 +37,7 @@ import hyper_params
 
 def main():
     logger = dtc.makeLogger(set_global=True)
-    _data_folder = '../data'
+    _data_folder = '../data/dataset3'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -74,10 +74,10 @@ def main():
                         help="Raw data folder. If unspecified, defaults to data_folder/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features_2",
+                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
-                        help="image folder. If unspecified, defaults to data_folder/formula_images_2",
+                        help="image folder. If unspecified, defaults to data_folder/formula_images",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
                         help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
@@ -131,17 +131,17 @@ def main():
     if args.image_folder:
         image_folder = args.image_folder
     else:
-        image_folder = os.path.join(data_folder,'formula_images_2')
+        image_folder = os.path.join(data_folder,'formula_images')
 
     if args.raw_data_folder:
         raw_data_folder = args.raw_data_folder
     else:
-        raw_data_folder = os.path.join(data_folder, 'generated2', 'training')
+        raw_data_folder = os.path.join(data_folder, 'training')
 
     if args.vgg16_folder:
         vgg16_folder = args.vgg16_folder
     else:
-        vgg16_folder = os.path.join(data_folder, 'vgg16_features_2')
+        vgg16_folder = os.path.join(data_folder, 'vgg16_features')
 
     if args.restore_logdir is not None:
         assert args.logdir is None, 'Only one of --restore-logdir and --logdir can be specified.'
@@ -164,7 +164,7 @@ def main():
                                     'num_epochs': args.num_epochs,
                                     'num_snapshots': args.num_snapshots,
                                     'data_dir': data_folder,
-                                    'generated_data_dir': os.path.join(data_folder, 'generated2'),
+                                    'generated_data_dir': data_folder,
                                     'image_dir': image_folder,
                                     'ctc_beam_width': args.ctc_beam_width,
                                     'seq2seq_beam_width': args.seq2seq_beam_width,
@@ -191,7 +191,7 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': (3,3)
+                                    'REGROUP_IMAGE': (4, 2)
                                     })
 
     if args.batch_size is not None:
