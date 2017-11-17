@@ -500,9 +500,12 @@ class DiffParams(object):
     def get(self, filename, to_str):
         try:
             one = dtc.load(self._dir1, 'store', filename)
-            two = dtc.load(self._dir2, 'store', filename)
         except:
             one = dtc.load(self._dir1, filename)
+
+        try:
+            two = dtc.load(self._dir2, 'store', filename)
+        except:
             two = dtc.load(self._dir2, filename)
 
         if (to_str):

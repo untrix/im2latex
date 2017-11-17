@@ -126,13 +126,13 @@ class GlobalParams(dlc.HyperParams):
            1000
            ),
         PD('m',
-           '(integer): dimensionality of the embedded input vector (Ey / Ex).'
+           '(integer): dimensionality of the embedded input vector (Ex).'
            "Note: For a stacked CALSTM, the upper layers will be fed output of the previous CALSTM, "
            "therefore their input dimensionality will not be equal to the embedding dimensionality, rather "
            " it will be equal to output_size of the previous CALSTM. That's why this value needs to be "
            "appropriately adjusted for upper CALSTM layers.",
-           integer(1),
-           64
+           (64, 3),
+           LambdaVal(lambda _, p: 64 if p.build_scanning_RNN else 3)
            ),
         PD('REGROUP_IMAGE',
            """
@@ -439,14 +439,14 @@ class Im2LatexModelParams(dlc.HyperParams):
                 ),
             PD('SFactor', 'Applicable to Scanning LSTM only: Multiplier to derive MaxS from MaxSeqLen',
                 decimal(1.0),
-                2.0
+                LambdaVal(lambda _, p: 2.0 if p.build_scanning_RNN else None)
                 ),
             PD('MaxS', 'Applicable to Scanning LSTM only: Max value of S for the given data-set',
                 integer(1),
-                LambdaVal(lambda _, p: int(p.MaxSeqLen*p.SFactor))
+                LambdaVal(lambda _, p: int(p.MaxSeqLen*p.SFactor) if p.build_scanning_RNN else None)
                 ),
             PD('no_ctc_merge_repeated',
-                "(boolean): Negated value of ctc_merge_repeated argubeamsearch_length_penatlyment for ctc operations",
+                "(boolean): Negated value of ctc_merge_repeated beamsearch_length_penalty for ctc operations",
                 boolean,
                 True),
             PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
