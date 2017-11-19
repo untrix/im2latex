@@ -385,12 +385,12 @@ class Params(Properties):
 
         object.__setattr__(self, '_desc_list', tuple(descriptors) )
 
-        def assert_immutable(v):
+        def assert_immutable(val, name):
             ## warn if doing shallow-copy of a dictionary
-            if isMutable(v):
-                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s'%(pformat(v),))
+            if isMutable(val):
+                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s =\n%s'%(name, pformat(val)))
 
-            return v
+            return val
 
         for prop in descriptors:
             name = prop.name
@@ -400,11 +400,11 @@ class Params(Properties):
                     val_init = vals_init_._rvn(name)
                     val_param = vals_params_._rvn(name)
                     if name in vals_init_:
-                        _vals[name] = assert_immutable(val_init)
+                        _vals[name] = assert_immutable(val_init, name)
                     elif name in vals_params_:
-                        _vals[name] = assert_immutable(val_param)
+                        _vals[name] = assert_immutable(val_param, name)
                     elif prop.defaultIsSet():
-                        _vals[name] = assert_immutable(prop.default)
+                        _vals[name] = assert_immutable(prop.default, name)
                     # else do not insert key into dictionary
 
                 except:

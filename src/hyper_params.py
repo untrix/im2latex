@@ -147,11 +147,13 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
+           LambdaVal(lambda _, p: 4 if (p.dataset == 3) else 3)
+           # LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
            ),
         PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
+           LambdaVal(lambda _, p: 34 if (p.dataset == 3) else 33)
+           # LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
            ),
         PD('L0',
            '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
@@ -473,7 +475,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 ),
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
                 instanceof(float),
-                0.0001 # default in tf.train.AdamOptimizer is 0.001
+                # 0.0001 # default in tf.train.AdamOptimizer is 0.001
                 ),
             PD('optimizer',
                 'tensorflow optimizer function (e.g. AdamOptimizer).',
@@ -590,7 +592,7 @@ class Im2LatexModelParams(dlc.HyperParams):
               boolean,
               True),
             PD('pLambda', 'Lambda value for alpha penalty',
-               decimal(0),
+               decimal(),
                0.0005), # default in the paper is 00001
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),
@@ -684,41 +686,75 @@ def make_hyper(initVals={}, freeze=True):
     if globals.build_image_context != 2:
         CONVNET = None
     else:
-        ## Conv and Maxpool architecture lifted from VGG16
-        CONVNET = ConvStackParams({
-            'op_name': 'Convnet',
-            'tb': globals.tb,
-            'activation_fn': tf.nn.relu,
+        convnet_common = {
             'weights_initializer': globals.weights_initializer,
             'biases_initializer': globals.biases_initializer,
             'weights_regularizer': globals.weights_regularizer,
             'biases_regularizer': globals.biases_regularizer,
+            'activation_fn': tf.nn.relu,
             'padding': 'SAME',
+        }
+
+        CONVNET = ConvStackParams({
+            'op_name': 'Convnet',
+            'tb': globals.tb,
             'layers': (
-                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
-                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
 
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
             )
-        })
+        }).freeze()
+
+    # else: ## VGG16 architecture
+    #     convnet_common = {
+    #         'weights_initializer': globals.weights_initializer,
+    #         'biases_initializer': globals.biases_initializer,
+    #         'weights_regularizer': globals.weights_regularizer,
+    #         'biases_regularizer': globals.biases_regularizer,
+    #         'activation_fn': tf.nn.relu,
+    #         'padding': 'SAME',
+    #     }
+    #     ## Conv and Maxpool architecture lifted from VGG16
+    #     CONVNET = ConvStackParams({
+    #         'op_name': 'Convnet',
+    #         'tb': globals.tb,
+    #         'layers': (
+    #             ConvLayerParams(convnet_common).updated({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #         )
+    #     }).freeze()
 
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),

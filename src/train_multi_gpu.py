@@ -313,6 +313,9 @@ def main(raw_data_folder,
                             'alpha_penalty',
                             'cost',
                             'mean_norm_ase',
+                            'mean_norm_aae',
+                            'beta_mean',
+                            'beta_std_dev',
                             'pred_len_ratio',
                             'num_hits',
                             'reg_loss',
@@ -325,7 +328,7 @@ def main(raw_data_folder,
                         if not doLog:
                             batch_ops = TFOpNames(ops_accum, None)
                         else:
-                            batch_ops = TFOpNames( ops_accum + (
+                            batch_ops = TFOpNames(ops_accum + (
                                     'y_s_list',
                                     'predicted_ids_list',
                                     'alpha',
@@ -346,7 +349,7 @@ def main(raw_data_folder,
                         accum.append({'train_time': train_time})
 
                         if doLog:
-                            logger.info('Step %d',step)
+                            logger.info('Step %d', step)
                             train_time_per100 = np.mean(train_time) * 100. / (hyper.data_reader_B)
 
                             if do_validate(step, args, train_it, valid_it)[0]:
@@ -385,19 +388,22 @@ def main(raw_data_folder,
 
                             ## Run aggregated metrics logs
                             tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
-                                                                              train_ops.ph_train_time: train_time_per100,
-                                                                              train_ops.ph_bleu_scores: accum.bleu_scores,
-                                                                              train_ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
-                                                                              train_ops.ph_ctc_eds: accum.ctc_ed,
-                                                                              train_ops.ph_loglosses: accum.log_likelihood,
-                                                                              train_ops.ph_ctc_losses: accum.ctc_loss,
-                                                                              train_ops.ph_alpha_penalties: accum.alpha_penalty,
-                                                                              train_ops.ph_costs: accum.cost,
-                                                                              train_ops.ph_mean_norm_ases: accum.mean_norm_ase,
-                                                                              train_ops.ph_pred_len_ratios: accum.pred_len_ratio,
-                                                                              train_ops.ph_num_hits: accum.num_hits,
-                                                                              train_ops.ph_reg_losses: accum.reg_loss
-                                                                              })
+                                train_ops.ph_train_time: train_time_per100,
+                                train_ops.ph_bleu_scores: accum.bleu_scores,
+                                train_ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
+                                train_ops.ph_ctc_eds: accum.ctc_ed,
+                                train_ops.ph_loglosses: accum.log_likelihood,
+                                train_ops.ph_ctc_losses: accum.ctc_loss,
+                                train_ops.ph_alpha_penalties: accum.alpha_penalty,
+                                train_ops.ph_costs: accum.cost,
+                                train_ops.ph_mean_norm_ases: accum.mean_norm_ase,
+                                train_ops.ph_mean_norm_aaes: accum.mean_norm_aae,
+                                train_ops.ph_beta_mean: accum.beta_mean,
+                                train_ops.ph_beta_std_dev: accum.beta_std_dev,
+                                train_ops.ph_pred_len_ratios: accum.pred_len_ratio,
+                                train_ops.ph_num_hits: accum.num_hits,
+                                train_ops.ph_reg_losses: accum.reg_loss
+                            })
                             tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
                             tf_sw.flush()
                             ## Reset Metrics

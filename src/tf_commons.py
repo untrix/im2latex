@@ -409,20 +409,21 @@ class ConvLayerParams(HyperParams):
 
 ConvLayerParamsProto = ConvLayerParams().protoD
 
+
 class ConvStackParams(HyperParams):
     proto = (
         PD('tb', "Tensorboard Params.",
            instanceofOrNone(TensorboardParams)),
         PD('op_name',
-            'Name of the stack; will show up in tensorboard visualization',
-            None,
-            'ConvStack'
-        ),
+           'Name of the stack; will show up in tensorboard visualization',
+           None,
+           'ConvStack'
+           ),
         PD('layers',
-            '(sequence of *Params): Sequence of layer params. Each value should be either of type ConvLayerParams '
-            'or MaxpoolParams. ',
-            instanceof(tuple)
-        ),
+           '(sequence of *Params): Sequence of layer params. Each value should be either of type ConvLayerParams '
+           'or MaxpoolParams. ',
+           instanceof(tuple)
+           ),
     )
 
     def __init__(self, initVals=None):

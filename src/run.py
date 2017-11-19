@@ -22,7 +22,7 @@ Created on Tue Jul 25 13:41:32 2017
 
 @author: Sumeet S Singh
 
-Tested on python 2.7
+Works on python 2.7
 """
 import sys
 import argparse
@@ -63,7 +63,7 @@ def main():
                         default=0.5)
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
-                        default=None)
+                        default=0.0001)
     parser.add_argument("--r-lambda", "-r", dest="rLambda", type=float,
                         help="Sets value of rLambda - lambda value used for regularization. Defaults to 00005.",
                         default=0.00005)
@@ -122,8 +122,8 @@ def main():
                         help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
                         default=False)
     parser.add_argument("--num-snapshots", dest="num_snapshots", type=int,
-                        help="Number of latest snapshots to save. Defaults to 50 if unspecified",
-                        default=50)
+                        help="Number of latest snapshots to save. Defaults to 100 if unspecified",
+                        default=100)
 
 
     args = parser.parse_args()
@@ -175,11 +175,11 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.0, # 0.005, .0005
+                                    'pLambda': 0.0005,  # 0.0, 0.005, .0005, .0001
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
-                                    'tf_session_allow_growth': False,
+                                    'tf_session_allow_growth': True,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
                                     'beamsearch_length_penalty': 1.0,
@@ -191,7 +191,7 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': (4, 2)
+                                    'REGROUP_IMAGE': (4, 1) # None  # (4,2)
                                     })
 
     if args.batch_size is not None:
