@@ -60,7 +60,7 @@ class VGGnetProcessor(ImagenetProcessor):
     def get_array(self):
         raise NotImplementedError()
 
-    def whiten(self, image_batch):validation
+    def whiten(self, image_batch):
         raise NotImplementedError()
 
 
@@ -73,7 +73,7 @@ class CustomConvnetImageProcessor(ImageProcessor3_BW):
         """Get image-array padded and aligned as it was done to extract vgg16 features using convnet.py."""
         image_data = ImageProcessor3_BW.get_array(self, image_name_, height_, width_, padded_dim_)
         normalized = self.normalize(np.asarray([image_data]))
-        return normalized[0]validation
+        return normalized[0]
 
     def normalize(self, image_batch):
         """

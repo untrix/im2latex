@@ -65,7 +65,7 @@ def main():
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=0.0001)
     parser.add_argument("--r-lambda", "-r", dest="rLambda", type=float,
-                        help="Sets value of rLambda - lambda value used for regularization. Defaults to 00005.",
+                        help="Sets value of rLambda - lambda value used for regularization. Defaults to 0.00005.",
                         default=0.00005)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
@@ -176,6 +176,7 @@ def main():
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
                                     'pLambda': 0.0005,  # 0.0, 0.005, .0005, .0001
+                                    'rLambda': args.rLambda,  # 0.0005, 0.00005
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
@@ -191,7 +192,8 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': (4, 1) # None  # (4,2)
+                                    'REGROUP_IMAGE': (4, 1), # None  # (4,2)
+                                    'build_att_modulator': False  # turn off beta-MLP
                                     })
 
     if args.batch_size is not None:
@@ -202,8 +204,6 @@ def main():
         globalParams.input_queue_capacity = args.queue_capacity
     if args.alpha is not None:
         globalParams.adam_alpha = args.alpha
-    if args.rLambda is not None:
-        globalParams.rLambda = args.rLambda
 
     hyper = hyper_params.make_hyper(globalParams, freeze=False)
 

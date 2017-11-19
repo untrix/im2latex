@@ -67,14 +67,12 @@ def summarize_layer(weights, biases, activations, coll_name):
 class TensorboardParams(HyperParams):
     proto = (
         PD('tb_logdir',
-            'Top-level/Root logdir under which run-specific dirs are created',
+            'Top-level/Root logdir under which run-specific dirs are created. e.g. ./tb_metrics',
             instanceof(str),
-            default="tb_metrics"
             ),
         PD('logdir_tag',
             'Extra tag-name to attach to the run-specific  logdir name (after the date portion).',
             instanceofOrNone(str),
-            default=None
             ),
         PD('tb_weights',
             'Section name under which weight summaries show up on tensorboard',
@@ -303,7 +301,7 @@ class MLPParams(HyperParams):
             PD('op_name',
                'Name of the layer; will show up in tensorboard visualization',
                None,
-               'MLP'
+               # 'MLPStack'
               ),
             PD('layers',
                "Sequence of FCLayerParams.",
@@ -339,7 +337,7 @@ class MLPStack(object):
 
                 a = inp
                 self._layers = []
-                with tf.variable_scope(params.op_name):
+                with tf.variable_scope(params.op_name if 'op_name' in params else 'MLPStack'):
                     # for i in xrange(len(self._params.layers_units)):
                     for i, layerParams in enumerate(params.layers):
                         layer = FCLayer(layerParams)
@@ -417,7 +415,6 @@ class ConvStackParams(HyperParams):
         PD('op_name',
            'Name of the stack; will show up in tensorboard visualization',
            None,
-           'ConvStack'
            ),
         PD('layers',
            '(sequence of *Params): Sequence of layer params. Each value should be either of type ConvLayerParams '
@@ -446,7 +443,7 @@ class ConvStack(object):
                 params = self._params
 
                 a = inp
-                with tf.variable_scope(params.op_name):
+                with tf.variable_scope(params.op_name if 'op_name' in params else 'ConvStack'):
                     for i, layerParams in enumerate(params.layers):
                         if isinstance(layerParams, ConvLayerParams):
                             a = ConvLayer(layerParams)(a, i)

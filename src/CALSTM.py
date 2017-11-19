@@ -192,10 +192,12 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     assert K.int_shape(alpha) == (B, L)
 
                     ## Attention Modulator: Beta
-                    if CONF.att_modulator is not None:
+                    if CONF.build_att_modulator:
                         beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
                         beta = tf.identity(beta, name='beta')
-                        assert K.int_shape(beta) == (B,1)
+                    else:
+                        beta = tf.constant(1., shape=(B, 1), dtype=CONF.dtype)
+                    assert K.int_shape(beta) == (B, 1)
 
                     return alpha, beta
 

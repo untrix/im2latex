@@ -607,11 +607,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         alpha_mask  # (B, T, 1)
                         beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
                         seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
-                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens)  # (N, B)
+                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
                         beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1,1,T_t])  # (N, B, T)
                         beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
                         beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
-                        beta_std_dev = tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens # (N, B)
+                        beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
 
 
                     ################ Build CTC Cost Function ################

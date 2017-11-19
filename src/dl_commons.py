@@ -77,6 +77,13 @@ class Properties(dict):
         """
         return self._get_val_(name)
 
+    def _rv(self, key):
+        """
+        For internal use only - needed by Params.__init__.
+        returns the dictionary value
+        """
+        return self._get_val_(key)
+
     def _rvn(self, key):
         """
         For internal use only - needed by Params.__init__.
@@ -297,6 +304,9 @@ PDL = PDTuple
 class ParamsValueError(ValueError):
     pass
 
+class OneValError(Exception):
+    pass
+
 class Params(Properties):
     """
     Prototyped Properties class. The prototype is passed into the constructor and
@@ -307,7 +317,7 @@ class Params(Properties):
     from class Properties.
     """
 
-    def __init__(self, prototype, initVals=None, seal=False):
+    def __init__(self, prototype, initVals=None, seal=False, assert_one_val=False):
         """
         Takes property descriptors and their values. After initialization, no new params
         may be created - i.e. the object is sealed (see class Properties). The
@@ -331,6 +341,9 @@ class Params(Properties):
         @param seal (bool): seals the object after initialization. Not really needed for
             this class since the keys are already fixed by the prototype. Will get
             depricated soon.
+
+        @param assert_one_val: (bool) Turns on one_val behaviour (see documentation for HyperParams).
+            By default the behaviour is turned off.
 
         If a value (even default value) is a callable (i.e. function-like) but is
         expected to be a non-callable (i.e. validator does not derive from _iscallable)
@@ -370,8 +383,10 @@ class Params(Properties):
             initializes with val from vals if available otherwise with default from o1.protoS
         """
         Properties.__init__(self)
+        object.__setattr__(self, '_do_assert_one_val', assert_one_val)
+
         descriptors = prototype
-        props = Properties()
+        descrs = Properties()
         vals_init_ = Properties()
         vals_params_ = Properties()
         _vals = {}
@@ -383,55 +398,94 @@ class Params(Properties):
             descriptors = prototype.protoS
             vals_params_ = prototype
 
-        object.__setattr__(self, '_desc_list', tuple(descriptors) )
+        object.__setattr__(self, '_descr_list', tuple(descriptors))
 
-        def assert_immutable(val, name):
-            ## warn if doing shallow-copy of a dictionary
-            if isMutable(val):
-                raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s =\n%s'%(name, pformat(val)))
-
-            return val
-
-        for prop in descriptors:
-            name = prop.name
-            if name not in props:
+        for desc in descriptors:
+            name = desc.name
+            if name not in descrs:
                 try:
-                    props[name] = prop
-                    val_init = vals_init_._rvn(name)
-                    val_param = vals_params_._rvn(name)
-                    if name in vals_init_:
-                        _vals[name] = assert_immutable(val_init, name)
-                    elif name in vals_params_:
-                        _vals[name] = assert_immutable(val_param, name)
-                    elif prop.defaultIsSet():
-                        _vals[name] = assert_immutable(prop.default, name)
-                    # else do not insert key into dictionary
+                    descrs[name] = desc
+
+                    if self._do_assert_one_val:
+                        vals = self._assert_one_val(name, [vals_init_, vals_params_], desc)
+                        if len(vals) > 0:
+                            _vals[name] = self._assert_immutable(vals[0], name)
+                        # else do not insert key into dictionary
+                    else:
+                        if name in vals_init_:
+                            _vals[name] = self._assert_immutable(vals_init_._rv(name), name)
+                        elif name in vals_params_:
+                            _vals[name] = self._assert_immutable(vals_params_._rv(name), name)
+                        elif desc.defaultIsSet():
+                            _vals[name] = self._assert_immutable(desc.default, name)
+                        # else do not insert key into dictionary
 
                 except:
-                    dtc.logger.critical('##### Error while processing property: %s', prop)
+                    dtc.logger.critical('##### Error while processing property: %s\n', desc)
                     raise
             else:
-                raise ParamsValueError('property %s has already been initialized with value %s'%(name,
-                                                                                                 _vals[name]))
+                raise ParamsValueError('property %s has already been initialized with value %s'%(name, _vals[name]))
 
-        object.__setattr__(self, '_descr_dict', props.freeze())
+        object.__setattr__(self, '_descr_dict', descrs.freeze())
 
         # Validation: Now insert the property values one by one. Doing so will invoke
         # self._set_val_ which will validate the values.
-        for prop in descriptors:
+        for desc in descriptors:
             try:
-                _name = prop.name
+                _name = desc.name
                 if _name in _vals:
                     self[_name] = _vals[_name]
             except ParamsValueError:
                 raise
             except:
-                dtc.logger.critical('##### Error while processing property: %s', prop)
+                dtc.logger.critical('##### Error while processing property: %s\n', desc)
                 raise
 
         # Finally, seal the object so that no new properties may be added.
         if seal:
             self.seal()
+
+    @staticmethod
+    def _assert_immutable(val, name):
+        ## warn if doing shallow-copy of a dictionary
+        if isMutable(val):
+            raise ParamsValueError('Shallow initializing mutable object is not allowed. Freeze object before initializing: %s =\n%s'%(name, pformat(val)))
+        return val
+
+    @staticmethod
+    def _assert_one_val(name, prop_list, desc):
+        num_set = 0
+        vals = []
+        for p in prop_list:
+            if name in p:
+                if (num_set == 0) or (p._rv(name) not in vals):
+                    num_set += 1
+                    vals.append(p._rv(name))
+
+        if desc.defaultIsSet() and (desc.default not in vals):
+            num_set += 1
+            vals.append(desc.default)
+
+        if num_set > 1:
+            raise OneValError('%s has different value set. vals =\n%s'%(name, vals))
+        else:
+            return vals
+
+    # def _set_val_(self, name, val):
+    #     """
+    #     This is a wrapper around super._set_val_. It is meant to warn the user if they set the same value twice.
+    #     This is expected to happen only by mistake because hyper parametes are usually expected to be set only
+    #     once.
+    #
+    #     """
+    #     if name in self and (val != self[name]):
+    #         raise Exception('%s._set_val_: Existing value of %s, %s is being overridden by %s' %
+    #                         (self.__class__.__name__, name, self[name], val))
+    #         # dtc.logger.warn('%s._set_val_: Existing value of %s, %s is being overridden by %s', self.__class__.__name__, name, self[name], val)
+    #         # traceback.print_stack()
+    #
+    #     return Params._set_val_(self, name, val)
+
 
     def _set_val_(self, name, val):
         """
@@ -439,12 +493,14 @@ class Params(Properties):
         """
         # Polymorphic override of _set_val_. Be mindful of recursion.
         protoD = self.protoD
+
         if not self.isValidName(name):
             raise KeyError('%s is not an allowed property name'%(name,))
-        # As a special case, we allow setting None values even if that's not an
-        # allowed value. This is so because the code may want to set the
-        # property value in the future based on some dynamic decision.
-        elif (val is not None) and (not isinstance(val, LambdaVal)) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
+        elif self._do_assert_one_val and (name in self) and (val != self[name]):
+            raise OneValError('%s._set_val_: Attempt to change the existing value of %s\nOld Value=\n%s\nNew Value=\n%s' %
+                            (self.__class__.__name__, name, self[name], val))
+        # elif (val is not None) and (not isinstance(val, LambdaVal)) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
+        elif (not isinstance(val, LambdaVal)) and (protoD[name].validator is not None) and (val not in protoD[name].validator):
             raise ParamsValueError('%s is not a valid value of property %s'%(val, name))
         else:
             return Properties._set_val_(self, name, val)
@@ -472,12 +528,18 @@ class Params(Properties):
 
         return vals
 
+    def _rv(self, name):
+        """
+        Return raw-value - i.e. unresolved Lambda Values.
+        """
+        return Properties._get_val_(self, name)
+
     def _rvn(self, name):
         """
         Return raw-value if key exists else return None.
         """
         try:
-            return Properties._get_val_(self, name)
+            return self._rv(name)
         except KeyError:
             return None
 
@@ -524,9 +586,9 @@ class Params(Properties):
 
     @property
     def protoS(self):
-        # self._desc_list won't recursively call _get_val_ because __getattribute__ will return successfully
-        #return self._desc_list
-        return object.__getattribute__(self, '_desc_list')
+        # self._descr_list won't recursively call _get_val_ because __getattribute__ will return successfully
+        #return self._descr_list
+        return object.__getattribute__(self, '_descr_list')
 
     @property
     def protoD(self):
@@ -567,11 +629,12 @@ class HyperParams(Params):
     for all properties in addition to python-dict style (square brackets) accessor, and object freeze and seal similar
     to JavaScript Objects.
     On top the dynamic nature we add a few constraints in order to ensure the benefits of the simple hard-coded parameter
-    model - 1) it will allow you to set a variable only once. While you can choose to set it declaratively within the
-    parameter descriptor or dynamically within your code, you can only do that once. Attempting to do so a second time
-    will beget an exception from this class (though the super-classes will allow this behaviour so if you want that
-    behaviour then just use the super-class though I recommend its better to stay with the constraints if you are
-    using this class for global hyper-parameters). 2) It will prevent
+    model - 1) assert_one_val: It will not allow you to change the value of a property once set. While you can choose to set it
+    declaratively within the parameter descriptor or dynamically within your code, you can not change the value once set.
+    Attempting to do so will beget an exception from this class (though the super-classes will allow this
+    behaviour so if you want that behaviour then just use the super-class though I recommend its better to stay with
+    all the constraints if you are using this class for global hyper-parameters especially when the number of params
+    is in the hundreds). 2) It will prevent
     you from inserting or reading properties that are not declared in the parameter descriptor (the Params superclass
     enforces this behaviour) and 3) Trying to access a property with a None value will cause an exception to be
     raised unless None was declared as a valid value of the property. Note that this behaviour may be depricated in
@@ -600,11 +663,14 @@ class HyperParams(Params):
         code may wish to initialize a property to None, and set it to a valid value
         later. Setting a property value to None tantamounts to unsetting / deleting
         the property.
-    2)  Disallows changing the value of a set parameter. HyperParam values are
-        expected to be global and hence setting the value twice may indicate an error/bug in the code.
+    2)  assert_one_val: Disallows changing the value of a set parameter. HyperParam values are
+        expected to be global and hence setting two different values for a property may indicate an error/bug in the code.
         If you want to lazily set the value of a hyper-parameter, then leave it unset at first (for e.g.
-        do not provide a default value in the parameter's prototype).
+        do not provide a value in the parameter's prototype).
     """
+
+    def __init__(self, prototype, initVals=None, seal=False, assert_one_val=False):
+        Params.__init__(self, prototype, initVals, seal, assert_one_val=True)
 
     def __contains__(self, name):
         """ Handles None values in a special way as stated above. """
@@ -615,7 +681,8 @@ class HyperParams(Params):
             return False
 
     def _get_val_(self, name):
-        """ Polymorphic override of _get_val_. Be careful of recursion. """
+        """ Polymorphic override of _get_val_ """
+        # Be mindful of recursion.
         val = Params._get_val_(self, name)
         validator = self.protoD[name].validator
         if (val == None) and ((validator is None) or (None not in validator)):
@@ -626,22 +693,6 @@ class HyperParams(Params):
     def _get_unvalidated_val(self, name):
         """Return resolved but unvalidated value"""
         return Params._get_unvalidated_val(self, name)
-
-    def _set_val_(self, name, val):
-        """
-        This is a wrapper around super._set_val_. It is meant to warn the user if they set the same value twice.
-        This is expected to happen only by mistake because hyper parametes are usually expected to be set only
-        once.
-
-        """
-        if name in self and (val != self[name]):
-            raise Exception('%s._set_val_: Existing value of %s, %s is being overridden by %s' %
-                            (self.__class__.__name__, name, self[name], val))
-            # dtc.logger.warn('%s._set_val_: Existing value of %s, %s is being overridden by %s', self.__class__.__name__, name, self[name], val)
-            # traceback.print_stack()
-
-        return Params._set_val_(self, name, val)
-
 
 ## Abstract parameter validator class.
 class _ParamValidator(object):
