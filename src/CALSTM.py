@@ -233,8 +233,8 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 ## State
                 htop_1 = state.lstm_state.h if self._LSTM_stack.num_layers == 1 else state.lstm_state[-1].h
                 lstm_states_t_1 = state.lstm_state   # shape = ((B,n), (B,n)) = (c_t_1, h_t_1)
-                unused_alpha_t_1 = state.alpha            # shape = (B, L)
-                unused_beta_t_1 = state.beta # (B,1)
+                unused_alpha_t_1 = state.alpha       # shape = (B, L)
+                unused_beta_t_1 = state.beta         # (B,1)
                 a = self._a
                 ## Broadcast context from size B to B*BeamWidth, because that's what BeamSearchDecoder does
                 ## to the input batch.
