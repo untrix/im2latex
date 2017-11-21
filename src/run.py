@@ -56,8 +56,8 @@ def main():
                         help="CTC Beamwidth. If unspecified, defaults to 10",
                         default=10)
     parser.add_argument("--print-steps", "-s", dest="print_steps", type=int,
-                        help="Number of training steps after which to log results. Defaults to 50 if unspecified",
-                        default=50)
+                        help="Number of training steps after which to log results. Defaults to 100 if unspecified",
+                        default=100)
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.5",
                         default=0.5)
