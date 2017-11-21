@@ -71,11 +71,11 @@ def build_convnet(params, image_batch, reuse_vars=True):
     with tf.variable_scope('Convnet', reuse=reuse_vars):
         convnet = tfc.ConvStack(params.CONVNET, (params.B,)+params.image_shape)
         a = convnet(image_batch)
-        assert K.int_shape(a)[1:] == (params.H, params.W, params.D), 'Expected shape %s, got %s'%((params.H, params.W, params.D), K.int_shape(a)[1:])
+        assert K.int_shape(a)[1:] == (params.H0, params.W0, params.D0), 'Expected shape %s, got %s'%((params.H0, params.W0, params.D0), K.int_shape(a)[1:])
 
         ## Combine HxW into a single dimension L
-        a = tf.reshape(a, shape=(params.B or -1, params.L, params.D))
-        assert K.int_shape(a) == (params.B, params.L, params.D)
+        a = tf.reshape(a, shape=(params.B or -1, params.L0, params.D0))
+        assert K.int_shape(a) == (params.B, params.L0, params.D0)
 
     return a
 
@@ -469,7 +469,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q,
                                               'image_name': self._image_name,
-                                              'beta': beta_out, # (N, B, 1, T)
+                                              'beta': beta_out,  # (N, B, T)
                                               'y_s': self._y_s, # (B,T)
                                               'y_ctc': self._y_ctc # ((B,T),)
                                               })
@@ -493,6 +493,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert K.int_shape(sequence_lengths) == (B,)
                 assert K.int_shape(y_ctc) == (B, None) # (B, T)
                 assert K.int_shape(ctc_len) == (B,)
+                T_t = tf.shape(y_s)[1]
 
                 ################ Loss Calculations ################
                 with tf.variable_scope('Loss_Calculations'):
@@ -506,8 +507,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                     ################ Build LogLoss ################
                     with tf.variable_scope('LogLoss'):
-                        sequence_mask = tf.sequence_mask(sequence_lengths, maxlen=tf.shape(y_s)[1],
-                                                         dtype=self.C.dtype, name='sequence_mask') # (B, T)
+                        sequence_mask = tf.sequence_mask(sequence_lengths,
+                                                         maxlen=T_t,
+                                                         dtype=self.C.dtype,
+                                                         name='sequence_mask')  # (B, T)
                         assert K.int_shape(sequence_mask) == (B,None) # (B,T)
 
                         ## Masked negative log-likelihood of the sequence.
@@ -543,41 +546,66 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ################   Calculate the alpha penalty:   ################
                     #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
                     with tf.variable_scope('AlphaPenalty'):
-                        alpha_mask =  tf.expand_dims(sequence_mask, axis=2) # (B, T, 1)
+                        alpha_mask = tf.expand_dims(sequence_mask, axis=2)  # (B, T, 1)
                         if self.C.MeanSumAlphaEquals1:
-                            mean_sum_over_t = 1.0
-                        else:  # mean_ of sum of alpha_i over t = C/L
-                            mean_sum_over_t = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
-                            mean_sum_over_t = tf.expand_dims(mean_sum_over_t, axis=1) # (B, 1)
+                            mean_sum_alpha_over_t = 1.0
+                        else:
+                            mean_sum_alpha_over_t = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
+                            mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1) # (B, 1)
 
                         #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
-                        #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_over_t) # (B, L)
+                        #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
                         #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                         sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
-                        squared_diff = tf.squared_difference(sum_over_t, mean_sum_over_t) # (N, B, L)
-                        alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False) # (N, B)
+                        squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
+                        abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
+
+                        alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
+                        alpha_abs_error = tf.reduce_sum(abs_diff,  axis=2, keep_dims=False)  # (N, B)
                         # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                         # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
+
                         ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
                         ase_max = tf.constant((L-1.0) / L*1.0) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype))  # (B,)
                         assert K.int_shape(ase_max) == (B,)
-                        ase_max = tf.expand_dims(ase_max, axis=0) # (1,B) ~C^2 who's average value is 5000 for our dataset
+                        ase_max = tf.expand_dims(ase_max, axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
+
+                        # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
+                        aae_max = tf.constant(2. * (L-1.0) / (L*1.0)) * tf.cast(sequence_lengths, dtype=self.C.dtype)  # (B,)
+                        assert K.int_shape(aae_max) == (B,)
+                        aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
+
                         normalized_ase = alpha_squared_error * 100. / ase_max # (N, B) all values lie between 0. and 100.
                         mean_norm_ase = tf.reduce_mean(normalized_ase) # scalar between 0. and 100.0
+
+                        normalized_aae = alpha_abs_error * 100. / aae_max # (N, B) all values lie between 0. and 100.
+                        mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
+
                         if self.C.pLambda > 0:
-                            alpha_penalty = self.C.pLambda * mean_norm_ase # scalar
+                            alpha_penalty = self.C.pLambda * mean_norm_ase  # scalar
                         else:
                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
+
                         mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
-                        # mean_sum_over_t = tf.reduce_mean(mean_sum_over_t)
-                        # mean_sum_over_t2 = tf.reduce_mean(sum_over_t)
+                        # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
+                        # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
                         assert K.int_shape(alpha_penalty) == tuple()
-                        ## Reshape alpha for debugging output
-                        self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha))
+
+                        # Reshape alpha for debugging output
                         alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
-                        self.C.logger.info('alpha.shape=%s', tfc.nested_tf_shape(alpha_out))
                         alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2), name='alpha_out') # (N, B, T, H, W)->(N, B, H, W, T)
                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
+
+                        # Beta metrics for logging
+                        beta  # (N, B, T, 1)
+                        alpha_mask  # (B, T, 1)
+                        beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
+                        seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
+                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
+                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1,1,T_t])  # (N, B, T)
+                        beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
+                        beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
+                        beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
 
 
                     ################ Build CTC Cost Function ################
@@ -615,7 +643,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
                     if (self.C.CTCBlankTokenID is not None) or (self.C.SpaceTokenID is not None):
-                        yLogits_s = K.permute_dimensions(yLogits, [1,0,2]) # (T, B, K)
+                        yLogits_s = K.permute_dimensions(yLogits, [1,0,2])  # (T, B, K)
                         ## ctc_beam_search_decoder sometimes produces ID values = -1
                         ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
                         decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
@@ -658,6 +686,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 return dlc.Properties({
                         'grads': grads,
                         'alpha':  alpha_out, #(N, B, H, W, T)
+                        'beta_mean': beta_mean,  # (N, B)
+                        'beta_std_dev': beta_std_dev,  # (N, B)
                         # 'train': train,
                         # 'global_step':global_step, # scalar
                         'log_likelihood': log_likelihood, # scalar
@@ -674,8 +704,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'pred_len_ratio': pred_len_ratio, # (B,)
                         'num_hits': num_hits,
                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
-                        # 'mean_sum_alpha_i': mean_sum_over_t,
-                        # 'mean_sum_alpha_i2': mean_sum_over_t2,
+                        'mean_norm_aae': mean_norm_aae, # scalar between 0. and 100.0
+                        # 'mean_sum_alpha_i': mean_sum_alpha_over_t,
+                        # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
                         'mean_seq_len': mean_seq_len, # scalar
                         'predicted_ids': ctc_decoded_ids, # (B,T)
                         'predicted_lens': ctc_decoded_lens, #(B,)
@@ -822,7 +853,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 #     ph_bleu = tf.placeholder(tf.float32, shape=(self.C.B,), name="BLEU_placeholder")
                 #     tf.summary.histogram( 'predicted/bleu', ph_bleu, collections=['bleu'])BW
                 #     tf.summary.scalar( 'predicted/bleuH', tf.reduce_mean(ph_bleu), collections=['bleu'])
-                #     logs_b = tf.summary.merge(tf.get_collection('bleu'))
+                #     logs_b = tf.summary.merge(tf.get_collection('bleu'))# (N, B)
 
                 ## Levenshtein Distance metric
                 with tf.name_scope('LevenshteinDistance'):
@@ -956,6 +987,9 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, eval_mode=False):
             ph_alpha_penalties = tf.placeholder(hyper.dtype)
             ph_costs = tf.placeholder(hyper.dtype)
             ph_mean_norm_ases = tf.placeholder(hyper.dtype)
+            ph_mean_norm_aaes = tf.placeholder(hyper.dtype)
+            ph_beta_mean = tf.placeholder(hyper.dtype)  # (num_steps, N, B*num_gpus)
+            ph_beta_std_dev = tf.placeholder(hyper.dtype)
             ph_pred_len_ratios = tf.placeholder(hyper.dtype)
             ph_num_hits = tf.placeholder(hyper.int_type)
             ph_reg_losses = tf.placeholder(hyper.dtype)
@@ -980,7 +1014,13 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, eval_mode=False):
             tf.summary.scalar('training/alpha_penalty/', tf.reduce_mean(ph_alpha_penalties), collections=['training_aggregate'])
             tf.summary.scalar('training/total_cost/', tf.reduce_mean(ph_costs), collections=['training_aggregate'])
             tf.summary.scalar('training/mean_norm_ase/', tf.reduce_mean(ph_mean_norm_ases), collections=['training_aggregate'])
-            tf.summary.histogram('training/mean_norm_ase_dist/', (ph_mean_norm_ases), collections=['training_aggregate'])
+            tf.summary.histogram('training/mean_norm_ase_dist/', ph_mean_norm_ases, collections=['training_aggregate'])
+            tf.summary.scalar('training/mean_norm_aae/', tf.reduce_mean(ph_mean_norm_aaes), collections=['training_aggregate'])
+            tf.summary.histogram('training/mean_norm_aae_dist/', ph_mean_norm_aaes, collections=['training_aggregate'])
+            tf.summary.scalar('training/beta_mean/', tf.reduce_mean(ph_beta_mean), collections=['training_aggregate'])
+            tf.summary.scalar('training/beta_std_dev/', tf.reduce_mean(ph_beta_std_dev), collections=['training_aggregate'])
+            tf.summary.histogram('training/beta_mean_dist/', ph_beta_mean, collections=['training_aggregate'])
+            tf.summary.histogram('training/beta_std_dev_dest/', ph_beta_std_dev, collections=['training_aggregate'])
             tf.summary.scalar('training/pred_len_ratio_avg/', tf.reduce_mean(ph_pred_len_ratios), collections=['training_aggregate'])
             tf.summary.histogram('training/pred_len_ratio_dist/', ph_pred_len_ratios, collections=['training_aggregate'])
             mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
@@ -1006,8 +1046,8 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, eval_mode=False):
 
         return dlc.Properties({
             'image_name_list': gather('image_name'), # [(B,), ...]
-            'alpha': concat('alpha', axis=1), # [(N, num_gpus*B, H, W, T), ...]
-            'beta': concat('beta', axis=1), # [(N, num_gpus*B,T), ...]
+            'alpha': concat('alpha', axis=1), # (N, num_gpus*B, H, W, T)
+            'beta': concat('beta', axis=1), # (N, num_gpus*B, T)
             'log_likelihood': log_likelihood, # scalara
             'ph_loglosses': ph_loglosses, # (num_steps,)
             'ctc_loss': ctc_loss, # scalar
@@ -1017,6 +1057,12 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, eval_mode=False):
             'ph_alpha_penalties': ph_alpha_penalties, # (num_steps,)
             'mean_norm_ase': get_mean('mean_norm_ase'), # scalar between 0. and 100.
             'ph_mean_norm_ases': ph_mean_norm_ases, # (num_steps,)
+            'mean_norm_aae': get_mean('mean_norm_aae'), # scalar between 0. and 100.
+            'ph_mean_norm_aaes': ph_mean_norm_aaes, # (num_steps,)
+            'beta_mean': concat('beta_mean', axis=1),  # (N, B*num_gpus)
+            'ph_beta_mean': ph_beta_mean,  # (num_steps, N, B*num_gpus)
+            'beta_std_dev': concat('beta_std_dev', axis=1),  # (N, B*num_gpus)
+            'ph_beta_std_dev': ph_beta_std_dev, # (num_steps, N, B*num_gpus)
             'num_hits': num_hits, # scalar
             'ph_num_hits': ph_num_hits, # (num_steps,)
             'reg_loss': reg_loss, # scalar
@@ -1105,6 +1151,7 @@ def sync_testing_towers(hyper, tower_ops):
             ph_num_hits =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_valid_time =  tf.placeholder(hyper.dtype) # scalar
+            ph_full_validation = tf.placeholder(dtype=tf.uint8)
 
             ph_BoK_distance =  tf.placeholder(hyper.int_type) # (num_batches,)
             ph_BoK_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
@@ -1116,6 +1163,7 @@ def sync_testing_towers(hyper, tower_ops):
             agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
             # tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+            tf.summary.scalar('full_validation', ph_full_validation, collections=['aggregate_top1'])
             tf.summary.histogram( 'top_1/top1_len_ratio', ph_top1_len_ratio, collections=['aggregate_top1'])
             tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
             tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
@@ -1164,5 +1212,6 @@ def sync_testing_towers(hyper, tower_ops):
             'ph_BoK_distance': ph_BoK_distance,
             'ph_BoK_accuracy': ph_BoK_accuracy,
             'logs_agg_top1': logs_agg_top1,
-            'logs_agg_bok': logs_agg_bok
+            'logs_agg_bok': logs_agg_bok,
+            'ph_full_validation': ph_full_validation
             })

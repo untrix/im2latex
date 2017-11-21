@@ -71,6 +71,7 @@ class ImageProcessor(object):
         MAX_PIXEL = 255.0
         return (image_ar - 127.5) / 255.0
 
+
 class ImagenetProcessor(ImageProcessor):
     def __init__(self, params):
         ImageProcessor.__init__(self, params)
@@ -88,8 +89,9 @@ class ImagenetProcessor(ImageProcessor):
         """
         return preprocess_input(image_ar, data_format='channels_last')
 
+
 class ImageProcessor3(object):
-    def __init__(self, params, image_dir_, grayscale=True):
+    def __init__(self, params, image_dir_, grayscale):
         self._params=params
         self._image_dir = image_dir_
         self._mode = 'L' if grayscale else 'RGB'
@@ -110,11 +112,9 @@ class ImageProcessor3(object):
         assert channels == self._channels, 'image channels = %d instead of %d'%(self._channels, channels)
         if (height < padded_height) or (width < padded_width):
             ar = np.full((padded_height, padded_width, channels), 255.0, dtype=self._params.dtype_np)
-            h = (padded_height - height)//2
-            ## BUG: Change to [h:h+height, self._params.image_frame_width:self._params.image_frame_width+width] = im_ar
-            ## as required by CONVNET when build_image_context==2. For all other cases the frame-width==0 and hence this
-            ## works.
-            ar[h:h+height, 0:width] = im_ar
+            h = (padded_height - height) // 2
+            w = (padded_width - width) // 2
+            ar[h:h+height, w:w+width] = im_ar
             im_ar = ar
         return im_ar
 
@@ -128,24 +128,21 @@ class ImageProcessor3(object):
         Arguments:
             image_batch: (ndarray) Batch of images or a single image. Shape doesn't matter.
         """
-        assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
+        assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, \
+            'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
         return (image_ar - 127.5) / 255.0
 
-class ImageProcessor3_RGB(ImageProcessor3):
+# class ImageProcessor3_RGB(ImageProcessor3):
+#     def __init__(self, params, image_dir_):
+#         ImageProcessor3.__init__(self, params, image_dir_, grayscale=False)
+
+
+class ImagenetProcessor3(ImageProcessor3):
     def __init__(self, params, image_dir_):
         ImageProcessor3.__init__(self, params, image_dir_, grayscale=False)
 
-class ImageProcessor3_BW(ImageProcessor3):
-    ## BUG: image_processor.get_array does not frame the x-axis as required by the CONVNET. The CONVNET requires a frame of 
-    ## width = hyper.image_frame_width to be padded around the image. While this is done implicitly for the y (height) axis,
-    ## it was overlooked for the x-axis.
-    def __init__(self, params, image_dir_):
-        ImageProcessor3.__init__(self, params, image_dir_, grayscale=True)
-
-
-class ImagenetProcessor3(ImageProcessor3_RGB):
-    def __init__(self, params, image_dir_):
-        ImageProcessor3_RGB.__init__(self, params, image_dir_)
+    # def __init__(self, params, image_dir_):
+    #     ImageProcessor3_RGB.__init__(self, params, image_dir_)
 
     def whiten(self, image_ar):
         """
@@ -159,6 +156,11 @@ class ImagenetProcessor3(ImageProcessor3_RGB):
         """
         assert image_ar.shape == (self._params.data_reader_B,) + self._params.image_shape, 'Got image shape %s instead of %s'%(image_ar.shape, (self._params.data_reader_B,) + self._params.image_shape)
         return preprocess_input(image_ar, data_format='channels_last')
+
+
+class ImageProcessor3_BW(ImageProcessor3):
+    def __init__(self, params, image_dir_):
+        ImageProcessor3.__init__(self, params, image_dir_, grayscale=True)
 
 class VGGProcessor(object):
     def __init__(self, vgg_dir_):
@@ -177,6 +179,7 @@ class VGGProcessor(object):
         """Is a No-Op. Returns image_ar as-is, right back."""
         return image_ar
 
+
 def make_batch_list(df_, batch_size_, assert_whole_batch=True):
     ## Shuffle the dataframe
     df_ = df_.sample(frac=1)
@@ -193,11 +196,16 @@ def make_batch_list(df_, batch_size_, assert_whole_batch=True):
         ## is a way of possibly catching data-corrupting bugs
         if assert_whole_batch:
             assert (bin_counts[i] % batch_size_) == 0, 'bin_counts[%d]=%d is not a whole multiple of batch_size=%d'%(i, bin_counts[i], batch_size_)
+        # elif (bin_counts[i] % batch_size_) != 0:
+        #     shortfall = batch_size_ - (bin_counts[i] % batch_size_)
+        #     dtc.logger.warn('Adding %d samples to bin %d. Final size = %d', shortfall, bin_, bin_counts[i]+shortfall)
+
         batch_list.extend([(bin_, j) for j in range(num_batches)])
 
     ## Shuffle the bin-batch list
     np.random.shuffle(batch_list)
     return batch_list
+
 
 class ShuffleIterator(object):
     def __init__(self, df_, hyper, num_steps, num_epochs, name='ShuffleIterator'):
@@ -454,12 +462,15 @@ class BatchContextIterator(BatchImageIterator3):
                  name='BatchContextIterator'):
         BatchImageIterator3.__init__(self, df, raw_data_dir_, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
 
+
 def restore_state(*paths):
     state = dtc.load(*paths)
     return state['props'], state['df_train_idx'], state['df_validation_idx']
 
+
 def store_state(props, df_train, df_validation, *paths):
     dtc.dump({'props':props, 'df_train_idx':df_train.index, 'df_validation_idx': df_validation.index if df_validation is not None else None}, *paths)
+
 
 def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, validation_frac=None, validation_size=None):
     if validation_frac is None and validation_size is None:
@@ -522,6 +533,7 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         store_state({'batch_size': batch_size_, 'num_val_batches': num_val_batches}, df_train, df_validation, args.logdir, 'split_state.pkl')
         return df_train, df_validation
 
+
 def create_context_iterators(raw_data_dir_,
                              image_feature_dir_,
                              hyper,
@@ -564,6 +576,7 @@ def create_context_iterators(raw_data_dir_,
 
     return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
 
+
 def create_imagenet_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
@@ -600,6 +613,7 @@ def create_imagenet_iterators(raw_data_dir_, hyper, args):
         batch_iterator_valid = None
     return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
 
+
 def create_BW_image_iterators(raw_data_dir_, hyper, args):
     df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
     df_train, df_valid = split_dataset(df, 
@@ -608,9 +622,7 @@ def create_BW_image_iterators(raw_data_dir_, hyper, args):
                                        args,
                                        hyper.assert_whole_batch,
                                        validation_frac=args.valid_frac)
-    ## BUG: image_processor.get_array does not frame the x-axis as required by the CONVNET. The CONVNET requires a frame of 
-    ## width = hyper.image_frame_width to be padded around the image. While this is done implicitly for the y (height) axis,
-    ## it was overlooked for the x-axis.
+
     image_processor = ImageProcessor3_BW(hyper, args.image_dir)
     batch_iterator_train = BatchImageIterator3(df_train,
                                                 raw_data_dir_,
