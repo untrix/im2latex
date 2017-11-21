@@ -442,31 +442,29 @@ class VisualizeDir(object):
                     os.remove(os.path.join(self._storedir, f))
                 print 'Removed %d files\n'%len(files_to_remove), pd.Series(sorted(list(files_to_remove), key=get_step))
 
-    def prune_snapshots(self, keep=10, dry_run=True):
+    def prune_snapshots(self, keep_first=None, keep_last=None, dry_run=True):
         """ Keep the latest 'save' snapshots. Delete the rest. """
         def get_step(f):
             return int(os.path.basename(f).split('.')[0].split('snapshot-')[1])
         
         files = [f for f in os.listdir(self._logdir) if f.startswith('snapshot-')]
         steps = list(set([get_step(f) for f in files]))
-        if len(steps) <= keep:
-            print 'Nothing to delete'
+        steps_to_keep = set(filter(lambda step: (keep_first <= step <= keep_last), steps))
+        steps_to_remove = set(steps) - steps_to_keep
+        if len(steps_to_remove) <= 0:
+            print 'Nothing to Delete'
             return
+        print 'steps to keep: ', sorted(list(steps_to_keep))
+        print 'steps to remove: ', sorted(list(steps_to_remove))
+        files_to_remove = [f for f in files if (get_step(f) not in steps_to_keep) ]
+        files_to_remove = sorted(files_to_remove, key=get_step)
+
+        if dry_run:
+            print '%d files will be removed\n'%len(files_to_remove), pd.Series(files_to_remove)
         else:
-            steps.sort(reverse=True)
-            steps_to_keep = set(steps[:keep])
-            steps_to_remove = set(steps) - steps_to_keep
-            print 'steps to keep: ', sorted(list(steps_to_keep))
-            print 'steps to remove: ', sorted(list(steps_to_remove))
-            files_to_remove = [f for f in files if (get_step(f) not in steps_to_keep) ]
-            files_to_remove = sorted(files_to_remove, key=get_step)
-            
-            if dry_run:
-                print '%d files will be removed\n'%len(files_to_remove), pd.Series(files_to_remove)
-            else:
-                for f in files_to_remove:
-                    os.remove(os.path.join(self._logdir, f))
-                print '%d files removed\n'%len(files_to_remove), pd.Series(files_to_remove)
+            for f in files_to_remove:
+                os.remove(os.path.join(self._logdir, f))
+            print '%d files removed\n'%len(files_to_remove), pd.Series(files_to_remove)
         
 class VisualizeStep():
     def __init__(self, visualizer, graph, step):
