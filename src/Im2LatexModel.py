@@ -375,20 +375,16 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
     ScanOut = collections.namedtuple('ScanOut', ('yLogits', 'state'))
     def _scan_step_training(self, out_t_1, x_t):
-        with tf.variable_scope('Ey'):
-            Ex_t = self._embedding_lookup(x_t)
+        if not self.C.build_scanning_RNN:
+            with tf.variable_scope('Ey'):
+                Ex_t = self._embedding_lookup(x_t)
+        else:
+            Ex_t = x_t
 
         ## RNN.__call__
         ## yLogits_t, state_t = self(Ex_t, out_t_1[1], scope=self._rnn_scope)
         yLogits_t, state_t = self(Ex_t, out_t_1.state, scope=self._rnn_scope)
         return self.ScanOut(yLogits_t, state_t)
-
-    def _x_s(self, y_s):
-        ## x_s is y_s time-delayed by 1 timestep. First token is 1 - the begin-sequence token.
-        ## last token of y_s which is <eos> token (zero) will not appear in x_s
-        x_s = K.concatenate((self._x_0, y_s[0:-1]), axis=0)
-        assert K.int_shape(x_s) == (T, B)
-        return x_s
 
     def build_training_tower(self):
         """ Build the training graph of the model """
@@ -425,14 +421,21 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     #    of S given the data-set.
                     # 3) A scalar 's' between 0.0 and 1.0 indicating the value of S for that batch. = S/max-S
 
-                    tf_S = tf.identity(y_s.shape[0]*self.C.SFactor, 'S')
-                    tf_MaxS = tf.identity(self.C.MaxS, 'MaxS')
-                    s = tf.divide(tf_S, tf_MaxS, 's')
-                    t = tf.range(tf_S) + 1
-                    clock1 = tf.divide(t, tf_S, 'clock1')
-                    clock2 = tf.divide(t, tf_MaxS, 'clock2')
-                    s = tf.expand_dims(s, axis=0)
-                    x_s = tf.concat([clock1, clock2, s], axis=1, name='x_s')
+                    batch_seq_len = y_s.shape[0]
+                    tf_S = tf.cast(tf.floor(batch_seq_len*self.C.SFactor), dtype=self.C.inttype, name='S')  # scalar
+                    tf_MaxS = tf.cast(tf.floor(tf.constant(self.C.MaxSeqLen*self.C.SFactor)), dtype=self.C.inttype, name='MaxS' )  # scalar
+                    s = tf.divide(tf_S, tf_MaxS, 's_scalar') # scalar
+                    t = tf.expand_dims((tf.range(tf_S) + 1), axis=1) # (T,1)
+                    t = tf.expand_dims(tf.tile(t, [1, B]), axis=2, name='t') # (T, B, 1)
+                    clock1 = tf.divide(t, tf_S, 'clock1')  # (T, B, 1)
+                    assert K.int_shape(clock1) == (T, B, 1)
+                    clock2 = tf.divide(t, tf_MaxS, 'clock2')  # (T,B,1)
+                    assert K.int_shape(clock2) == (T, B, 1)
+                    s = tf.tile(tf.expand_dims(s, axis=0), [batch_seq_len, B])  # (T, B)
+                    s = tf.expand_dims(s, axis=2, name='s_tensor')  # (T, B, 1)
+                    assert K.int_shape(s) == (T, B, 1)
+                    x_s = tf.concat([clock1, clock2, s], axis=2, name='x_s')  # (T, B, 3)
+                    assert K.int_shape(x_s) == (T, B, 3)
 
                 accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # The init-value is not used
                                      self._init_state_model)
@@ -462,15 +465,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                             self._seq_len,
                                             self._y_ctc,
                                             self._ctc_len)
-
-#                if self.C.no_towers: ## Old Code without towers
-#                    ## Summary Logs
-#                    tb_logs = tf.summary.merge(tf.get_collection('training'))
-#                    ## Placeholder for injecting training-time from outside
-#                    ph_train_time =  tf.placeholder(self.C.dtype)
-#
-#                    ## with tf.device(None): ## Override gpu device placement if any - otherwise Tensorflow balks
-#                    log_time = tf.summary.scalar('training/time_per100', ph_train_time, collections=['training_aggregate'])
 
                 return optimizer_ops.updated({
                                               'inp_q':self._inp_q,
@@ -944,7 +938,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-def sync_training_towers(hyper, tower_ops, global_step, opt):
+def sync_training_towers(hyper, tower_ops, global_step, opt, eval_mode=False):
     with tf.variable_scope('SyncTowers') as var_scope:
         def gather(prop_name):
             return [o[prop_name] for o in tower_ops]
@@ -965,8 +959,9 @@ def sync_training_towers(hyper, tower_ops, global_step, opt):
             cost = log_likelihood + alpha_penalty + reg_loss
 
         grads = average_gradients(gather('grads'))
-        with tf.variable_scope('optimizer'):
-            apply_grads = opt.apply_gradients(grads, global_step=global_step)
+        if not eval_mode:
+            with tf.variable_scope('optimizer'):
+                apply_grads = opt.apply_gradients(grads, global_step=global_step)
 
         with tf.variable_scope('Instrumentation'):
 #            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
