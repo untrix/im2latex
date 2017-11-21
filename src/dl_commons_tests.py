@@ -9,7 +9,7 @@ import dl_commons as dlc
 from dl_commons import PD, LambdaVal, integer, integerOrNone, instanceof, equalto
 #import tf_commons as tfc
 
-class Props(dlc.HyperParams):
+class Props(dlc.Params):
     proto = (
             PD('m', '',
                integer(),
@@ -19,9 +19,9 @@ class Props(dlc.HyperParams):
                512)
             )
     def __init__(self, initVals={}):
-        dlc.HyperParams.__init__(self, self.proto, initVals)
+        dlc.Params.__init__(self, self.proto, initVals)
 
-class Props2(dlc.HyperParams):
+class Props2(dlc.Params):
     def makeProto(self, GLOBAL):
         return Props.proto + (
             PD('i', '',
@@ -36,6 +36,7 @@ class Props2(dlc.HyperParams):
                equalto('D', GLOBAL)),
             PD('j', '',
                integerOrNone(),
+               None
                ),
             PD('k', '',
                integerOrNone(),
@@ -43,9 +44,9 @@ class Props2(dlc.HyperParams):
                ),
             )
     def __init__(self, initVals={}):
-        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
+        dlc.Params.__init__(self, self.makeProto(initVals), initVals)
 
-class Props3(dlc.HyperParams):
+class Props3(dlc.Params):
     def makeProto(self, GLOBAL):
         return Props.proto + (
             PD('i', '',
@@ -72,7 +73,7 @@ class Props3(dlc.HyperParams):
                ),
             )
     def __init__(self, initVals={}):
-        dlc.HyperParams.__init__(self, self.makeProto(initVals), initVals)
+        dlc.Params.__init__(self, self.makeProto(initVals), initVals)
 
 
 
@@ -143,7 +144,7 @@ class PropertiesTest(TestCaseBase):
                 dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
                 dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN'], 'LSTM'),
                 dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
-                dlc.ParamDesc('unset', 'Unset property', range(1,11), None)
+                dlc.ParamDesc('unset', 'Unset property', range(1,11))
                 )
             ).seal()
         frozen = dlc.Params(sealed, {'num_layers':10}).freeze()
@@ -161,14 +162,14 @@ class PropertiesTest(TestCaseBase):
 
 
     def test_bad_params(self):
-        sealed = dlc.Params((
+        proto = (
                 dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
                 dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN']),
                 dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
-                dlc.ParamDesc('unset', 'Unset property', range(1,11), None)
+                dlc.ParamDesc('unset', 'Unset property', range(1,11))
                 )
-            ).seal()
-        frozen = dlc.Params(sealed, {'num_layers':10}).freeze()
+        sealed = dlc.Params(proto).seal()
+        frozen = dlc.Params(proto, {'num_layers':10}).freeze()
         self.assertRaises(KeyError, setattr, sealed, "x", "MyNeuralNetwork")
         self.assertRaises(KeyError, self.dictSet, sealed, "x", "MyNeuralNetwork")
         self.assertRaises(KeyError, setattr, frozen, "name", "MyNeuralNetwork")
@@ -183,19 +184,17 @@ class PropertiesTest(TestCaseBase):
     def test_good_hyperparams(self):
         sealed = dlc.HyperParams((
                 dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN'], 'LSTM'),
+                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN'], 'MLP'),
                 dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
-                dlc.ParamDesc('unset', 'Unset property', range(1,11), None),
+                dlc.ParamDesc('unset', 'Unset property', range(1,11)),
                 dlc.ParamDesc('none', 'None property', (None,), None)
                 )
             ).seal()
         frozen = dlc.HyperParams(sealed, {'num_layers':10}).freeze()
-        sealed.layer_type = 'MLP'
+        self.assertRaises(dlc.OneValError, setattr, sealed, "model_name", "xyz")
+        self.assertRaises(dlc.OneValError, setattr, sealed, "layer_type", "xyz")
         self.assertEqual(sealed.layer_type, 'MLP')
         self.assertEqual(sealed['layer_type'], 'MLP')
-        sealed['layer_type'] = 'CNN'
-        self.assertEqual(sealed.layer_type, 'CNN')
-        self.assertEqual(sealed['layer_type'], 'CNN')
 
         self.assertEqual(frozen.model_name, 'im2latex')
         self.assertEqual(frozen['num_layers'], 10)
@@ -207,14 +206,13 @@ class PropertiesTest(TestCaseBase):
 
     def test_bad_hyperparams(self):
         sealed = dlc.HyperParams((
-                dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
-                dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN']),
-                dlc.ParamDesc('num_layers', 'Number of layers to create', range(1,11)),
-                dlc.ParamDesc('unset', 'Unset property', range(1,11), None),
-                dlc.ParamDesc('none', 'None property', (None,), None)
-                )
-            ).seal()
-        frozen = dlc.HyperParams(sealed, {'num_layers':10}).freeze()
+            dlc.ParamDesc('model_name', 'Name of Model', None, 'im2latex'),
+            dlc.ParamDesc('layer_type', 'Type of layers to be created', ['CNN', 'MLP', 'LSTM', 'RNN']),
+            dlc.ParamDesc('num_layers', 'Number of layers to create', range(1, 11)),
+            dlc.ParamDesc('unset', 'Unset property', range(1, 11)),
+            dlc.ParamDesc('none', 'None property', (None,), None)
+        )).seal()
+        frozen = dlc.HyperParams(sealed, {'num_layers': 10}).freeze()
         self.assertRaises(KeyError, setattr, sealed, "x", "MyNeuralNetwork")
         self.assertRaises(KeyError, self.dictSet, sealed, "x", "MyNeuralNetwork")
         self.assertRaises(KeyError, setattr, frozen, "name", "MyNeuralNetwork")

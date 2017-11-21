@@ -143,15 +143,16 @@ class GlobalParams(dlc.HyperParams):
            A None value implies no regrouping.
            """,
            issequenceofOrNone(int),
-           None
            ),
         PD('H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
+           LambdaVal(lambda _, p: 4 if (p.dataset == 3) else 3)
+           # LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
            ),
         PD('W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
            integer(1),
-           LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
+           LambdaVal(lambda _, p: 34 if (p.dataset == 3) else 33)
+           # LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
            ),
         PD('L0',
            '(integer): number of pixels in an image feature-map coming out of conv-net = H0xW0 (see paper or model description)',
@@ -224,7 +225,6 @@ class GlobalParams(dlc.HyperParams):
         PD('rLambda',
            'Lambda value (scale) for regularizer.',
            decimal(),
-           0.0005
            ),
         PD('weights_regularizer',
            'L1 / L2 norm regularization. If this is non-None then dropout should be None.',
@@ -297,14 +297,18 @@ class CALSTMParams(dlc.HyperParams):
                'in a vector size (L*D + n) and a weight matrix of size (L*D+n,att_1_n). That is, the kernel will receive input from all the "L" '
                "locations of image feature-map (in addition to h(t-1)) as against only one location in the MLP_shared or 1x1_conv cases.",
                ('MLP_shared','1x1_conv', 'MLP_full'),
-               'MLP_shared'),
+               ),
             PD('att_modulator',
                'A neural-network whose scalar output modulates the soft context signal "z_t" in comparison to the embedded-label signal fed into the decoder LSTM.'
                'Serves as an "equalizer knob" that either amplifies or attenuates the context input signal versus the embedded-label input signal to the LSTM.'
                'In the paper this scalar-value is called "beta" and in their code it is called the "selector". They implemented it as the output of a sigmoid and hence a value between 0 and 1.'
                "We'll use a generic MLP stack with either a sigmoid activation in the last layer or a relu (in wchich case the modulator can take values greater than 1). "
                "Input to this MLP is the h(t-1) - the previous LSTM output.",
-               instanceofOrNone(MLPParams),
+               instanceof(MLPParams),
+               ),
+            PD('build_att_modulator',
+               '(boolean): Turns on/off the att_modulator function.',
+               boolean
                ),
         ### Decoder LSTM Params ###
             PD('decoder_lstm', 'Decoder LSTM parameters. Multiple LSTM layers are supported.',
@@ -380,13 +384,14 @@ class CALSTMParams(dlc.HyperParams):
             assert self.att_layers.layers[-1].dropout == None ## No droput before/after softmax activation
 
         #### Attention Modulator ####
-        self.att_modulator = MLPParams(self).updated({
-            'op_name': 'beta_MLP',
-            ## paper's code uses 1 layer only. The last-layer must have only one neuron os that the output is scalar.
-            'layers': (
-                FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
-                )
-            }).freeze()
+        if self.build_att_modulator:
+            self.att_modulator = MLPParams(self).updated({
+                'op_name': 'beta_MLP',
+                ## paper's code uses 1 layer only. The last-layer must have only one neuron os that the output is scalar.
+                'layers': (
+                    FCLayerParams(self).updated({'num_units': 1, 'activation_fn': tf.nn.sigmoid, 'dropout': None}).freeze(),
+                    )
+                }).freeze()
 
         #### LSTM-Stack ####
         self.decoder_lstm = RNNParams(self).updated({
@@ -412,11 +417,9 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('assert_whole_batch', '(boolean): Disallow batch size that is not integral factor '
                 'of the bin-size',
                 boolean,
-                True
                 ),
             PD('squash_input_seq', '(boolean): Remove whitespace from target sequences',
                 boolean,
-                False
                 ),
             PD('input_queue_capacity', 'Capacity of input queue.',
                 integer(1),
@@ -446,7 +449,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 LambdaVal(lambda _, p: int(p.MaxSeqLen*p.SFactor) if p.build_scanning_RNN else None)
                 ),
             PD('no_ctc_merge_repeated',
-                "(boolean): Negated value of ctc_merge_repeated beamsearch_length_penalty for ctc operations",
+                "(boolean): Negated value of ctc_merge_repeated beamsearch_length_penatly for ctc operations",
                 boolean,
                 True),
             PD('ctc_beam_width', 'Beam Width to use for ctc_beamsearch_decoder, which is different from the seq2seq.BeamSearchDecoder',
@@ -459,7 +462,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'length_penalty_weight used by beamsearch decoder. Same as alpha value of length-penalty described in https://arxiv.org/pdf/1609.08144.pdf'
                 'In the paper they used a value of alpha in the range [0.6,0.7]. A value of 0 turns length-penalty off.',
                 decimal(0.,1.),
-                0.6
+                # 0.6
                 ),
             PD('swap_memory',
                'swap_memory option to tf.scan',
@@ -469,11 +472,11 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('tf_session_allow_growth',
                'tf ConfigProto.gpu_option_allow_growth. Setting this will allow the gpu memory to be allocated incrementally instead of all at once.',
                 boolean,
-                False
+                # False
                 ),
             PD('adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
                 instanceof(float),
-                0.0001 # default in tf.train.AdamOptimizer is 0.001
+                # 0.0001 # default in tf.train.AdamOptimizer is 0.001
                 ),
             PD('optimizer',
                 'tensorflow optimizer function (e.g. AdamOptimizer).',
@@ -539,7 +542,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                "a straight MLP will be used wherein all inputs (including Ey(t-1)) are first concatenated and fed into an MLP."
                "Including the softmax layer, the paper uses a minimum of 2 layers.",
                boolean,
-               True
+               # True
                ),
             PD('outputMLP_skip_connections',
                '(boolean): Applicable only when output_reuse_embeddings==False. Setting this value to False will cause'
@@ -579,7 +582,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                'calculation or whether to just sum up log-losses as in the paper. Defaults'
                'to True in conformance with the paper.',
                boolean,
-               True
+               # True
               ),
             PD('MeanSumAlphaEquals1',
               '(boolean): When calculating the alpha penalty, the paper uses the term: '
@@ -588,9 +591,10 @@ class Im2LatexModelParams(dlc.HyperParams):
                "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
                "The default value is True in conformance with the paper.",
               boolean,
-              True),
+              # True
+              ),
             PD('pLambda', 'Lambda value for alpha penalty',
-               decimal(0),
+               decimal(),
                0.0005), # default in the paper is 00001
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),
@@ -684,41 +688,75 @@ def make_hyper(initVals={}, freeze=True):
     if globals.build_image_context != 2:
         CONVNET = None
     else:
-        ## Conv and Maxpool architecture lifted from VGG16
-        CONVNET = ConvStackParams({
-            'op_name': 'Convnet',
-            'tb': globals.tb,
-            'activation_fn': tf.nn.relu,
+        convnet_common = {
             'weights_initializer': globals.weights_initializer,
             'biases_initializer': globals.biases_initializer,
             'weights_regularizer': globals.weights_regularizer,
             'biases_regularizer': globals.biases_regularizer,
+            'activation_fn': tf.nn.relu,
             'padding': 'SAME',
+        }
+
+        CONVNET = ConvStackParams({
+            'op_name': 'Convnet',
+            'tb': globals.tb,
             'layers': (
-                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}),
-                ConvLayerParams({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
 
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                ConvLayerParams({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}),
-                # MaxpoolParams({'kernel_shape':(2,2), 'stride':(2,2)}),
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
             )
-        })
+        }).freeze()
+
+    # else: ## VGG16 architecture
+    #     convnet_common = {
+    #         'weights_initializer': globals.weights_initializer,
+    #         'biases_initializer': globals.biases_initializer,
+    #         'weights_regularizer': globals.weights_regularizer,
+    #         'biases_regularizer': globals.biases_regularizer,
+    #         'activation_fn': tf.nn.relu,
+    #         'padding': 'SAME',
+    #     }
+    #     ## Conv and Maxpool architecture lifted from VGG16
+    #     CONVNET = ConvStackParams({
+    #         'op_name': 'Convnet',
+    #         'tb': globals.tb,
+    #         'layers': (
+    #             ConvLayerParams(convnet_common).updated({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+    #             MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+    #         )
+    #     }).freeze()
 
     HYPER = Im2LatexModelParams(initVals).updated({
         'CALSTM_STACK':(CALSTM_1,),

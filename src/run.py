@@ -22,7 +22,7 @@ Created on Tue Jul 25 13:41:32 2017
 
 @author: Sumeet S Singh
 
-Tested on python 2.7
+Works on python 2.7
 """
 import sys
 import argparse
@@ -63,9 +63,9 @@ def main():
                         default=0.5)
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
-                        default=None)
+                        default=0.0001)
     parser.add_argument("--r-lambda", "-r", dest="rLambda", type=float,
-                        help="Sets value of rLambda - lambda value used for regularization. Defaults to 00005.",
+                        help="Sets value of rLambda - lambda value used for regularization. Defaults to 0.00005.",
                         default=0.00005)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
                         help="Data folder. If unspecified, defaults to " + _data_folder,
@@ -74,13 +74,15 @@ def main():
                         help="Raw data folder. If unspecified, defaults to data_folder/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features",
+                        help="vgg16 data folder. If unspecified, defaults to data_folder/vgg16_features",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
                         help="image folder. If unspecified, defaults to data_folder/formula_images",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
-                        help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
+                        help="Sets assert_whole_batch hyper param to False. Default value for this option is False "
+                             " (i.e. assert_whole_batch=True)",
+                        default=False)
     parser.add_argument("--queue-capacity", "-q", dest="queue_capacity", type=int,
                         help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.",
                         default=None)
@@ -91,7 +93,10 @@ def main():
                         help="Fraction of samples to use for validation. Defaults to 0.05",
                         default=0.05)
     parser.add_argument("--validation-epochs", "-v", dest="valid_epochs", type=float,
-                        help="Number (or fraction) of epochs after which to run a full validation cycle. Defaults to 1.0",
+                        help="""Number (or fraction) of epochs after which to run a full validation cycle. For this
+                             behaviour, the number should be greater than 0. A value less <= 0 on the other hand,
+                             implies 'smart' validation - which will result in selectively 
+                             capturing snapshots around max_scoring peaks (based on training/bleu2).""",
                         default=1.0)
     parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
                         help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to True.",
@@ -122,8 +127,8 @@ def main():
                         help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
                         default=False)
     parser.add_argument("--num-snapshots", dest="num_snapshots", type=int,
-                        help="Number of latest snapshots to save. Defaults to 50 if unspecified",
-                        default=50)
+                        help="Number of latest snapshots to save. Defaults to 100 if unspecified",
+                        default=100)
 
 
     args = parser.parse_args()
@@ -157,6 +162,7 @@ def main():
 
     globalParams = dlc.Properties({
                                     'raw_data_dir': raw_data_folder,
+                                    'assert_whole_batch': not args.partial_batch,
                                     'logger': logger,
                                     'tb': tb,
                                     'print_steps': args.print_steps,
@@ -175,11 +181,12 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.0, # 0.005, .0005
+                                    'pLambda': 0.0005,  # 0.0, 0.005, .0005, .0001
+                                    'rLambda': args.rLambda,  # 0.0005, 0.00005
                                     'make_training_accuracy_graph': False,
                                     'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
-                                    'tf_session_allow_growth': False,
+                                    'tf_session_allow_growth': True,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
                                     'beamsearch_length_penalty': 1.0,
@@ -191,19 +198,17 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': (4, 2)
+                                    'REGROUP_IMAGE': (4, 1), # None  # (4,2)
+                                    'build_att_modulator': False  # turn off beta-MLP
                                     })
 
     if args.batch_size is not None:
         globalParams.B = args.batch_size
-    if args.partial_batch:
-        globalParams.assert_whole_batch = False
+
     if args.queue_capacity is not None:
         globalParams.input_queue_capacity = args.queue_capacity
     if args.alpha is not None:
         globalParams.adam_alpha = args.alpha
-    if args.rLambda is not None:
-        globalParams.rLambda = args.rLambda
 
     hyper = hyper_params.make_hyper(globalParams, freeze=False)
 

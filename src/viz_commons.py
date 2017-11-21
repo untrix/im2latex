@@ -31,7 +31,7 @@ import data_commons as dtc
 import dl_commons as dlc
 import h5py
 import matplotlib.pyplot as plt
-from data_reader import ImagenetProcessor
+from data_reader import ImagenetProcessor, ImageProcessor3_BW
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
 from IPython.display import Math, display
@@ -39,17 +39,15 @@ from IPython.display import Math, display
 class VGGnetProcessor(ImagenetProcessor):
     def __init__(self, params, image_dir_):
         ImagenetProcessor.__init__(self, params)
+        self._image_dir = image_dir_
 
     def get_one(self, image_name_, height_, width_, padded_dim_):
         """Get image-array padded and aligned as it was done to extract vgg16 features using convnet.py."""
-        image_data = ImagenetProcessor.get_array(self, image_name_, height_, width_, padded_dim_)
-        whitened =  self.whiten(np.asarray([image_data]))
-        return whitened[0]
+        image_data = ImagenetProcessor.get_array(self, os.path.join(self._image_dir, image_name_), height_, width_, padded_dim_)
+        normalized = self.normalize(np.asarray([image_data]))
+        return normalized[0]
 
-    def get_array(self):
-        raise NotImplementedError()
-
-    def whiten(self, image_batch):
+    def normalize(self, image_batch):
         """
         normalize values to lie between 0.0 and 1.0 as required by matplotlib.axes.Axes.imshow.
         We skip the preprocessing required by VGGnet since we are not going to pass this into VGGnet.
@@ -58,6 +56,46 @@ class VGGnetProcessor(ImagenetProcessor):
         """
         assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
         return image_batch / 255.0
+
+    def get_array(self):
+        raise NotImplementedError()
+
+    def whiten(self, image_batch):
+        raise NotImplementedError()
+
+
+class CustomConvnetImageProcessor(ImageProcessor3_BW):
+    # TODO: Deliver image_shape_unframed here instead of image_shape
+    def __init__(self, params, image_dir_):
+        ImageProcessor3_BW.__init__(self, params, image_dir_)
+
+    def get_one(self, image_name_, height_, width_, padded_dim_):
+        """Get image-array padded and aligned as it was done to extract vgg16 features using convnet.py."""
+        image_data = ImageProcessor3_BW.get_array(self, image_name_, height_, width_, padded_dim_)
+        normalized = self.normalize(np.asarray([image_data]))
+        return normalized[0]
+
+    def normalize(self, image_batch):
+        """
+        normalize values to lie between 0.0 and 1.0 as required by matplotlib.axes.Axes.imshow.
+        Arguments:
+            image_batch: (ndarray) Batch of images.
+        """
+        assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
+        print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape = %s'%(image_batch.shape, self._params.image_shape)
+        image_batch /= 255.0
+        num_channels = image_batch.shape[3]
+        if num_channels == 1: ## Need all three RGB channels so that we can layer on alpha channel to get RGBA
+            image_batch = np.repeat(image_batch, 3, axis=3)
+
+        return image_batch
+
+    def get_array(self):
+        raise NotImplementedError()
+
+    def whiten(self, image_batch):
+        raise NotImplementedError()
+
 
 def plotImage(image_detail, axes, cmap=None):
     path = image_detail[0]
@@ -129,7 +167,13 @@ class VisualizeDir(object):
         self._id2word[self._word2id['\\']] = '\\'
 
         ## Image processor to load and preprocess images
-        self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
+        if self._hyper.build_image_context == 0:
+            self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
+        elif self._hyper.build_image_context == 2:
+            self._image_processor = CustomConvnetImageProcessor(self._hyper, self._image_dir)
+        else:
+            raise Exception('No available ImageProcessor for this case (build_image_context=%s). You have not written one yet!'%self._hyper.build_image_context)
+
         self._maxpool_factor = 32
         self._image_pool_factor = self.PoolFactor(self._maxpool_factor*self._hyper.H0/self._hyper.H, self._maxpool_factor*self._hyper.W0/self._hyper.W)
 
@@ -183,13 +227,22 @@ class VisualizeDir(object):
         return epoch_steps
 
     def view_snapshots(self):
-        epoch_steps = self.get_snapshots()
-        print('Num Snapshots: %d\n%s'%(len(epoch_steps), epoch_steps))
+        snapshots = self.get_snapshots()
+        print('Num Snapshots: %d'%(len(snapshots),))
+        b = self._hyper['data_reader_B']*1.
+        print('Snapshots = %s'%[(step, b*step / 64.) for step in snapshots])
 
     def view_steps(self):
-        steps, epoch_steps = self.get_steps()
-        print('num_epoch_steps = %d'%len(epoch_steps))
-        print('epoch_steps = %s'%epoch_steps)
+        _, epoch_steps = self.get_steps()
+        print('num epoch_steps = %d'%len(epoch_steps))
+        b = self._hyper['data_reader_B']*1.
+        print('epoch_steps = %s'%[(step, b*step / 64.) for step in epoch_steps])
+
+    def standardize_step(self, step):
+        return (step * self._hyper['data_reader_B']*1.) / 64.
+
+    def unstandardize_step(self, step):
+        return (step * 64.) / (self._hyper['data_reader_B']*1.)
 
     def keys(self, graph, step):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
@@ -371,7 +424,7 @@ class VisualizeDir(object):
         T = len(nd_words)
         assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
         df = self._df_train_image
-        image_data = self._image_processor.get_one(os.path.join(self._image_dir, image_name), df.height.loc[image_name], 
+        image_data = self._image_processor.get_one(image_name, df.height.loc[image_name],
                                                    df.width.loc[image_name], self._padded_im_dim) #(H,W,C)
         pool_factor = self._image_pool_factor
         pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*pool_factor.h
@@ -507,8 +560,8 @@ class DiffParams(object):
             two = dtc.load(self._dir2, filename)
 
         if (to_str):
-            one = dlc.to_dict(one)
-            two = dlc.to_dict(two)
+            one = dlc.to_picklable_dict(one)
+            two = dlc.to_picklable_dict(two)
         return one, two
 
     def print_dict(self, filename, to_str):
