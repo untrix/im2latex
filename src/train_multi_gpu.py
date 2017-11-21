@@ -39,12 +39,14 @@ import data_commons as dtc
 
 logger = None
 
+
 def num_trainable_vars():
     total_n = 0
     for var in tf.trainable_variables():
         n = tfc.sizeofVar(var)
         total_n += n
     return total_n
+
 
 def printVars(logger):
     total_n = 0
@@ -110,6 +112,7 @@ def make_log_step(hyper):
     return log_step
 log_step = None
 
+
 class Accumulator(dlc.Properties):
     def __init__(self):
         dlc.Properties.__init__(self)
@@ -153,6 +156,7 @@ class TFOpNames(dlc.Properties):
         return tuple(l)
     def run_ops(self, session, op_dict):
         self.set_vals(session.run(self.op_tuple(op_dict)))
+
 
 def main(raw_data_folder,
           vgg16_folder,
@@ -267,6 +271,7 @@ def main(raw_data_folder,
             logger.info('Flushing graph to disk')
             tf_sw = tf.summary.FileWriter(args.logdir, graph=graph)
             # tf_params = tf.constant(value=hyper.to_table(), dtype=tf.string, name='hyper_params')
+
             # tf_text = tf.summary.text('hyper_params_logger', tf_params)
             # log_params = session.run(tf_text)
             # tf_sw.add_summary(log_params, global_step=None)
@@ -352,11 +357,6 @@ def main(raw_data_folder,
                             logger.info('Step %d', step)
                             train_time_per100 = np.mean(train_time) * 100. / (hyper.data_reader_B)
 
-                            if do_validate(step, args, train_it, valid_it)[0]:
-                                saver.save(session, args.logdir + '/snapshot', global_step=step, latest_filename='checkpoints_list')
-
-                            # bleu = sentence_bleu_scores(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens,
-                            #                             batch_ops.y_ctc_list, batch_ops.ctc_len)
                             with dtc.Storer(args, 'training', step) as storer:
                                 storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
                                 storer.write('y', batch_ops.y_s_list, np.int16)
@@ -366,27 +366,7 @@ def main(raw_data_folder,
                                 storer.write('ed', batch_ops.ctc_ed, np.float32)
                                 storer.write('bleu', bleu, np.float32)
 
-                            accuracy_res = evaluate(
-                                session,
-                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
-                                dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                                hyper,
-                                args,
-                                step,
-                                tf_sw)
-                            if accuracy_res:
-                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
-                                    step,
-                                    time.time()-start_time,
-                                    train_time_per100,
-                                    accuracy_res.valid_time_per100))
-                            else:
-                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
-                                    step,
-                                    time.time()-start_time,
-                                    train_time_per100))
-
-                            ## Run aggregated metrics logs
+                            # Calculate aggregated training metrics
                             tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
                                 train_ops.ph_train_time: train_time_per100,
                                 train_ops.ph_bleu_scores: accum.bleu_scores,
@@ -406,6 +386,34 @@ def main(raw_data_folder,
                             })
                             tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
                             tf_sw.flush()
+
+                            doValidate, num_validation_batches, do_save = do_validate(step, args, train_it, valid_it, (np.mean(accum.bleu_scores) if (args.valid_epochs <= 0) else None))
+                            if do_save:
+                                saver.save(session, args.logdir + '/snapshot', global_step=step,
+                                           latest_filename='checkpoints_list')
+                            if doValidate:
+                                accuracy_res = evaluate(
+                                    session,
+                                    dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
+                                    dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                                    hyper,
+                                    args,
+                                    step,
+                                    num_validation_batches,
+                                    tf_sw)
+
+                            if accuracy_res:
+                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
+                                    step,
+                                    time.time()-start_time,
+                                    train_time_per100,
+                                    accuracy_res.valid_time_per100))
+                            else:
+                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
+                                    step,
+                                    time.time()-start_time,
+                                    train_time_per100))
+
                             ## Reset Metrics
                             accum.reset()
 
@@ -419,6 +427,7 @@ def main(raw_data_folder,
                             hyper,
                             args,
                             step,
+                            valid_it.epoch_size,
                             tf_sw)
 
             except tf.errors.OutOfRangeError, StopIteration:
@@ -430,6 +439,7 @@ def main(raw_data_folder,
                 logger.info('Elapsed time for %d steps = %f'%(step, time.time()-start_time))
                 coord.request_stop()
                 coord.join(enqueue_threads)
+
 
 def sentence_bleu_scores(hyper, pred_ar_list, pred_lens, target_ar_list, target_lens):
     """
@@ -459,6 +469,7 @@ def sentence_bleu_scores(hyper, pred_ar_list, pred_lens, target_ar_list, target_
         n += _n
     return np.asarray(bleus)
 
+
 def squash_and_concat(seq_batch_list, seq_len_batch, remove_val1=None, remove_val2=None, eos_token=None):
     """
     Gathers all word/id sequences into one list of size num_gpus*B. Optionally Squashes and trims the sequences.
@@ -485,6 +496,7 @@ def squash_and_concat(seq_batch_list, seq_len_batch, remove_val1=None, remove_va
 
     return seq_list
 
+
 def squashed_seq_list(hyper, seq_batch_list, seq_len_batch):
     """
     Squashes and trims word/id sequences and puts them all into one list of size num_gpus*B
@@ -498,6 +510,7 @@ def squashed_seq_list(hyper, seq_batch_list, seq_len_batch):
                              remove_val2=hyper.CTCBlankTokenID,
                              eos_token=hyper.NullTokenID)
 
+
 def trimmed_seq_list(hyper, seq_batch_list, seq_len_batch):
     """
     Trims word/id sequences and puts them all into one list of size num_gpus*B
@@ -508,6 +521,7 @@ def trimmed_seq_list(hyper, seq_batch_list, seq_len_batch):
     """
     return squash_and_concat(seq_batch_list, seq_len_batch, eos_token=hyper.NullTokenID)
 
+
 def ids2str_list(target_ids, predicted_ids, hyper):
     """
     Same as id2str, except this works on multiple batches. The arguments are lists of numpy arrays
@@ -517,6 +531,7 @@ def ids2str_list(target_ids, predicted_ids, hyper):
     for i in range(len(target_ids)):
         l.append(ids2str(target_ids[i], predicted_ids[i], hyper))
     return l
+
 
 def ids2str(target_ids, predicted_ids, hyper):
     """
@@ -529,11 +544,13 @@ def ids2str(target_ids, predicted_ids, hyper):
     predicted_str = np.expand_dims(dtc.seq2str(predicted_ids, 'Prediction:', separator),axis=1)
     return np.concatenate((predicted_str, target_str), axis=1)
 
+
 def ids2str3D_list(ids_list, hyper):
     strs = []
     for i in range(len(ids_list)):
         strs.append(ids2str3D(ids_list[i], hyper))
     return strs
+
 
 def ids2str3D(ids, hyper):
     """
@@ -547,115 +564,164 @@ def ids2str3D(ids, hyper):
         strs.append(dtc.seq2str(ids[i], 'Sample %d:'%i, separator))
     return strs
 
-def do_validate(step, args, train_it, valid_it):
+
+@dlc.static_vars(max_score=0.7, full_validation_steps=[3000])
+def do_validate(step, args, train_it, valid_it, score=None):
     if valid_it is None:
-        do_validate = False
-    elif args.doValidate:
-        do_validate = True
+        doValidate = do_save = False
+        num_valid_batches = 0
+    elif args.doValidate:  # Validation-only run
+        doValidate = do_save = True
+        num_valid_batches = valid_it.epoch_size
+    elif (args.valid_epochs <= 0):  # smart validation
+        assert score is not None, 'score must be supplied if valid_epochs <= 0'
+        if score > do_validate.max_score:
+            do_validate.max_score = score
+            doValidate = True
+            do_validate.full_validation_steps.append(step)
+            if (step - do_validate.full_validation_steps[-1]) >= (0.5 * train_it.epoch_size):
+                num_valid_batches = valid_it.epoch_size
+                do_save = True
+            else:
+                num_valid_batches = 5
+                do_save = False
+        elif (score > (do_validate.max_score * 0.95)):
+            if (step - do_validate.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
+                doValidate = do_save = True
+                num_valid_batches = valid_it.epoch_size
+                do_validate.full_validation_steps.append(step)
+            else:
+                doValidate = True
+                do_save = False
+                num_valid_batches = 5
+        else:
+            doValidate = do_save = False
+            num_valid_batches = 0
     else:
         epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
         period = int(epoch_frac * train_it.epoch_size)
-        do_validate = (step % period == 0) or (step == train_it.max_steps)
+        doValidate = do_save = (step % period == 0) or (step == train_it.max_steps)
+        num_valid_batches = valid_it.epoch_size if doValidate else 0
 
-    num_valid_batches = valid_it.epoch_size if do_validate else 0
-    return do_validate, num_valid_batches
+    # if doValidate:
+    #     if args.valid_epochs > 0:
+    #         num_valid_batches = valid_it.epoch_size
+    #     else:  # smart validation
+    #         if len(do_validate.full_validation_steps) == 0:
+    #             num_valid_batches = valid_it.epoch_size
+    #             do_validate.full_validation_steps.append(step)
+    #         elif (step - do_validate.full_validation_steps[-1]) > (0.95 * train_it.epoch_size):
+    #             num_valid_batches = valid_it.epoch_size
+    #             do_validate.full_validation_steps.append(step)
+    #         else:
+    #             num_valid_batches = 5
+    # else:
+    #     num_valid_batches = 0
+
+    return doValidate, num_valid_batches, do_save
+
 
 def do_log(step, args, train_it, valid_it):
-    validate, _ = do_validate(step, args, train_it, valid_it)
-    do_log = (step % args.print_steps == 0) or (step == train_it.max_steps) or validate
-    return do_log
+    # validate, _ = do_validate(step, args, train_it, valid_it)
+    do_log = (step % args.print_steps == 0) or (step == train_it.max_steps)
+    if (args.valid_epochs <= 0 ):  # do_validate synchronizes with do_log
+        # score = np.mean(accum.bleu_scores) if (args.valid_epochs == 'smart') else None
+        return do_log
+    else:
+        validate, _ = do_validate(step, args, train_it, valid_it, None)
+        return do_log or validate
+
 
 def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
 
-def evaluate(session, ops, batch_its, hyper, args, step, tf_sw):
-    logger = hyper.logger
-    validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
+
+def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):
+    # validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
     valid_start_time = time.time()
-    if not validate:
-            return None
-    else: ## run a full validation cycle
-        valid_ops = ops.valid_ops
-        batch_it = batch_its.valid_it
-        batch_size = batch_it.batch_size
-        epoch_size = batch_it.epoch_size
-        ## Print a batch randomly
-        print_batch_num = np.random.randint(1, epoch_size+1) if args.print_batch else -1
-        accum = Accumulator()
-        n = 0
-        hyper.logger.info('validation cycle starting for %d steps', num_steps)
-        while n < num_steps:
-            n += 1
-            if (n != print_batch_num):
-                l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
-                                    valid_ops.top1_len_ratio,
-                                    valid_ops.top1_mean_ed,
-                                    valid_ops.top1_accuracy,
-                                    valid_ops.top1_num_hits,
-                                    valid_ops.top1_ids_list,
-                                    valid_ops.top1_lens,
-                                    valid_ops.y_ctc_list,
-                                    valid_ops.ctc_len
-                                    ))
-                y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
-            else:
-                l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
-                                    valid_ops.top1_len_ratio,
-                                    valid_ops.top1_mean_ed,
-                                    valid_ops.top1_accuracy,
-                                    valid_ops.top1_num_hits,
-                                    valid_ops.top1_ids_list,
-                                    valid_ops.top1_lens,
-                                    valid_ops.y_ctc_list,
-                                    valid_ops.ctc_len,
-                                    valid_ops.y_s_list,
-                                    valid_ops.top1_alpha_list,
-                                    valid_ops.top1_beta_list,
-                                    valid_ops.image_name_list,
-                                    valid_ops.top1_ed
-                                    ))
 
-            bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
-            accum.extend({'bleus': bleu})
-            accum.extend({'predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
-            accum.extend({'target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
-            accum.append({'lens': l})
-            accum.append({'eds': ed})
-            accum.append({'accuracies': accuracy})
-            accum.append({'hits': num_hits})
+    valid_ops = ops.valid_ops
+    batch_it = batch_its.valid_it
+    batch_size = batch_it.batch_size
+    epoch_size = batch_it.epoch_size
+    ## Print a batch randomly
+    print_batch_num = np.random.randint(1, num_steps+1) if args.print_batch else -1
+    accum = Accumulator()
+    n = 0
+    hyper.logger.info('validation cycle starting for %d steps', num_steps)
+    while n < num_steps:
+        n += 1
+        if (n != print_batch_num):
+            l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
+                                valid_ops.top1_len_ratio,
+                                valid_ops.top1_mean_ed,
+                                valid_ops.top1_accuracy,
+                                valid_ops.top1_num_hits,
+                                valid_ops.top1_ids_list,
+                                valid_ops.top1_lens,
+                                valid_ops.y_ctc_list,
+                                valid_ops.ctc_len
+                                ))
+            y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
+        else:
+            l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
+                                valid_ops.top1_len_ratio,
+                                valid_ops.top1_mean_ed,
+                                valid_ops.top1_accuracy,
+                                valid_ops.top1_num_hits,
+                                valid_ops.top1_ids_list,
+                                valid_ops.top1_lens,
+                                valid_ops.y_ctc_list,
+                                valid_ops.ctc_len,
+                                valid_ops.y_s_list,
+                                valid_ops.top1_alpha_list,
+                                valid_ops.top1_beta_list,
+                                valid_ops.image_name_list,
+                                valid_ops.top1_ed
+                                ))
 
-            if (n == print_batch_num):
-                logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
-                logger.info('prediction mean_ed=%f', ed)
-                logger.info('prediction accuracy=%f', accuracy)
-                logger.info('prediction hits=%d', num_hits)
-                # bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
+        bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
+        accum.extend({'bleus': bleu})
+        accum.extend({'predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
+        accum.extend({'target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
+        accum.append({'lens': l})
+        accum.append({'eds': ed})
+        accum.append({'accuracies': accuracy})
+        accum.append({'hits': num_hits})
 
-                with dtc.Storer(args, 'validation', step) as storer:
-                    storer.write('predicted_ids', top1_ids_list, np.int16)
-                    storer.write('y', y_s_list, np.int16)
-                    storer.write('alpha', top1_alpha_list, dtype=np.float32, batch_axis=1)
-                    storer.write('beta', top1_beta_list, dtype=np.float32, batch_axis=1)
-                    storer.write('image_name', image_name_list, dtype=np.unicode_)
-                    storer.write('ed', top1_ed, dtype=np.float32)
-                    storer.write('bleu', bleu, dtype=np.float32)
+        if n == print_batch_num:
+            # logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
+            # logger.info('prediction mean_ed=%f', ed)
+            # logger.info('prediction accuracy=%f', accuracy)
+            # logger.info('prediction hits=%d', num_hits)
+            # bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
 
-                logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
+            with dtc.Storer(args, 'validation', step) as storer:
+                storer.write('predicted_ids', top1_ids_list, np.int16)
+                storer.write('y', y_s_list, np.int16)
+                storer.write('alpha', top1_alpha_list, dtype=np.float32, batch_axis=1)
+                storer.write('beta', top1_beta_list, dtype=np.float32, batch_axis=1)
+                storer.write('image_name', image_name_list, dtype=np.unicode_)
+                storer.write('ed', top1_ed, dtype=np.float32)
+                storer.write('bleu', bleu, dtype=np.float32)
+
+            # logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
 
-        valid_time_per100 = (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
-        logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
-                                    feed_dict={
-                                        valid_ops.ph_top1_len_ratio: accum.lens,
-                                        valid_ops.ph_edit_distance: accum.eds,
-                                        valid_ops.ph_num_hits: accum.hits,
-                                        valid_ops.ph_accuracy: accum.accuracies,
-                                        valid_ops.ph_valid_time: valid_time_per100,
-                                        valid_ops.ph_bleus: accum.bleus,
-                                        valid_ops.ph_bleu2: dlc.corpus_bleu_score(accum.predicted_ids, accum.target_ids)
-                                    })
+    valid_time_per100 = (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
+    logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
+                                feed_dict={
+                                    valid_ops.ph_top1_len_ratio: accum.lens,
+                                    valid_ops.ph_edit_distance: accum.eds,
+                                    valid_ops.ph_num_hits: accum.hits,
+                                    valid_ops.ph_accuracy: accum.accuracies,
+                                    valid_ops.ph_valid_time: valid_time_per100,
+                                    valid_ops.ph_bleus: accum.bleus,
+                                    valid_ops.ph_bleu2: dlc.corpus_bleu_score(accum.predicted_ids, accum.target_ids),
+                                    valid_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
+                                })
 
-        tf_sw.add_summary(logs_agg_top1, log_step(step))
-        tf_sw.flush()
-        hyper.logger.info('validation cycle finished')
-        return dlc.Properties({'valid_time_per100': valid_time_per100})
+    tf_sw.add_summary(logs_agg_top1, log_step(step))
+    tf_sw.flush()
+    hyper.logger.info('validation cycle finished')
+    return dlc.Properties({'valid_time_per100': valid_time_per100})

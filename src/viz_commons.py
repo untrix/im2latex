@@ -227,13 +227,22 @@ class VisualizeDir(object):
         return epoch_steps
 
     def view_snapshots(self):
-        epoch_steps = self.get_snapshots()
-        print('Num Snapshots: %d\n%s'%(len(epoch_steps), epoch_steps))
+        snapshots = self.get_snapshots()
+        print('Num Snapshots: %d'%(len(snapshots),))
+        b = self._hyper['data_reader_B']*1.
+        print('Snapshots = %s'%[(step, b*step / 64.) for step in snapshots])
 
     def view_steps(self):
-        steps, epoch_steps = self.get_steps()
-        print('num_epoch_steps = %d'%len(epoch_steps))
-        print('epoch_steps = %s'%epoch_steps)
+        _, epoch_steps = self.get_steps()
+        print('num epoch_steps = %d'%len(epoch_steps))
+        b = self._hyper['data_reader_B']*1.
+        print('epoch_steps = %s'%[(step, b*step / 64.) for step in epoch_steps])
+
+    def standardize_step(self, step):
+        return (step * self._hyper['data_reader_B']*1.) / 64.
+
+    def unstandardize_step(self, step):
+        return (step * 64.) / (self._hyper['data_reader_B']*1.)
 
     def keys(self, graph, step):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
@@ -550,8 +559,8 @@ class DiffParams(object):
             two = dtc.load(self._dir2, filename)
 
         if (to_str):
-            one = dlc.to_dict(one)
-            two = dlc.to_dict(two)
+            one = dlc.to_picklable_dict(one)
+            two = dlc.to_picklable_dict(two)
         return one, two
 
     def print_dict(self, filename, to_str):

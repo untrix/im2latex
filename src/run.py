@@ -74,13 +74,15 @@ def main():
                         help="Raw data folder. If unspecified, defaults to data_folder/training",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
-                        help="vgg16 data folder. If unspecified, defaults to raw_data_folder/vgg16_features",
+                        help="vgg16 data folder. If unspecified, defaults to data_folder/vgg16_features",
                         default=None)
     parser.add_argument("--image-folder", dest="image_folder", type=str,
                         help="image folder. If unspecified, defaults to data_folder/formula_images",
                         default=None)
     parser.add_argument("--partial-batch", "-p",  dest="partial_batch", action='store_true',
-                        help="Sets assert_whole_batch hyper param to False. Default hyper_param value will be used if unspecified")
+                        help="Sets assert_whole_batch hyper param to False. Default value for this option is False "
+                             " (i.e. assert_whole_batch=True)",
+                        default=False)
     parser.add_argument("--queue-capacity", "-q", dest="queue_capacity", type=int,
                         help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.",
                         default=None)
@@ -91,7 +93,10 @@ def main():
                         help="Fraction of samples to use for validation. Defaults to 0.05",
                         default=0.05)
     parser.add_argument("--validation-epochs", "-v", dest="valid_epochs", type=float,
-                        help="Number (or fraction) of epochs after which to run a full validation cycle. Defaults to 1.0",
+                        help="""Number (or fraction) of epochs after which to run a full validation cycle. For this
+                             behaviour, the number should be greater than 0. A value less <= 0 on the other hand,
+                             implies 'smart' validation - which will result in selectively 
+                             capturing snapshots around max_scoring peaks (based on training/bleu2).""",
                         default=1.0)
     parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
                         help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to True.",
@@ -157,6 +162,7 @@ def main():
 
     globalParams = dlc.Properties({
                                     'raw_data_dir': raw_data_folder,
+                                    'assert_whole_batch': not args.partial_batch,
                                     'logger': logger,
                                     'tb': tb,
                                     'print_steps': args.print_steps,
@@ -198,8 +204,7 @@ def main():
 
     if args.batch_size is not None:
         globalParams.B = args.batch_size
-    if args.partial_batch:
-        globalParams.assert_whole_batch = False
+
     if args.queue_capacity is not None:
         globalParams.input_queue_capacity = args.queue_capacity
     if args.alpha is not None:

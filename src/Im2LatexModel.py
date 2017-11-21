@@ -1156,6 +1156,7 @@ def sync_testing_towers(hyper, tower_ops):
             ph_num_hits =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_valid_time =  tf.placeholder(hyper.dtype) # scalar
+            ph_full_validation = tf.placeholder(dtype=tf.uint8)
 
             ph_BoK_distance =  tf.placeholder(hyper.int_type) # (num_batches,)
             ph_BoK_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
@@ -1167,6 +1168,7 @@ def sync_testing_towers(hyper, tower_ops):
             agg_bok_accuracy = tf.reduce_mean(ph_BoK_accuracy)
 
             # tf.summary.histogram( 'top_1/seq_lens', ph_top1_seq_lens, collections=['aggregate_top1'])
+            tf.summary.scalar('full_validation', ph_full_validation, collections=['aggregate_top1'])
             tf.summary.histogram( 'top_1/top1_len_ratio', ph_top1_len_ratio, collections=['aggregate_top1'])
             tf.summary.histogram( 'top_1/edit_distances', ph_edit_distance, collections=['aggregate_top1'])
             tf.summary.histogram( 'bestof_%d/edit_distances'%k, ph_BoK_distance, collections=['aggregate_bok'])
@@ -1215,5 +1217,6 @@ def sync_testing_towers(hyper, tower_ops):
             'ph_BoK_distance': ph_BoK_distance,
             'ph_BoK_accuracy': ph_BoK_accuracy,
             'logs_agg_top1': logs_agg_top1,
-            'logs_agg_bok': logs_agg_bok
+            'logs_agg_bok': logs_agg_bok,
+            'ph_full_validation': ph_full_validation
             })
