@@ -595,7 +595,21 @@ class Im2LatexModelParams(dlc.HyperParams):
               ),
             PD('pLambda', 'Lambda value for alpha penalty',
                decimal(),
-               0.0005), # default in the paper is 00001
+               0.0005),  # default in the paper is 00001
+            PD('target_aae',
+               """
+               Target mean_norm_AAE value to shoot for. Varies with data-set. Value discovered by experimentation.
+               """,
+               (0., 51.42, 51.79),
+               51.42
+               ),
+            PD('target_ase',
+               """
+               Target mean_norm_ASE value to shoot for. Varies with data-set. Value discovered by experimentation.
+               """,
+               (0.0, 5.27, 5.35),
+               5.27
+               ),
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),
                5)

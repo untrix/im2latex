@@ -939,7 +939,7 @@ def corpus_bleu_score(predicted_ids, target_ids):
     assert len(predicted_ids) == len(target_ids)
     dtc.logger.debug("tfc.corpus_bleu_score: computing corpus_bleu for %d sentences", len(predicted_ids))
     targets = [[target] for target in target_ids]
-    return nltk.translate.bleu_score.corpus_bleu(targets, predicted_ids) # weights=BLEU_WEIGHTS[target_len])
+    return nltk.translate.bleu_score.corpus_bleu(targets, predicted_ids)  # weights=BLEU_WEIGHTS[target_len])
 
 def diff_dict(left, right):
     """ Assymetric comparison of left with right """
