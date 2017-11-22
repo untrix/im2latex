@@ -387,7 +387,7 @@ def main(raw_data_folder,
                             tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
                             tf_sw.flush()
 
-                            doValidate, num_validation_batches, do_save = do_validate(step, args, train_it, valid_it, (np.mean(accum.bleu_scores) if (args.valid_epochs <= 0) else None))
+                            doValidate, num_validation_batches, do_save = TrainingLogic.do_validate(step, args, train_it, valid_it, (np.mean(accum.bleu_scores) if (args.valid_epochs <= 0) else None))
                             if do_save:
                                 saver.save(session, args.logdir + '/snapshot', global_step=step,
                                            latest_filename='checkpoints_list')
@@ -401,18 +401,17 @@ def main(raw_data_folder,
                                     step,
                                     num_validation_batches,
                                     tf_sw)
-
-                            if accuracy_res:
-                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
-                                    step,
-                                    time.time()-start_time,
-                                    train_time_per100,
-                                    accuracy_res.valid_time_per100))
-                            else:
-                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
-                                    step,
-                                    time.time()-start_time,
-                                    train_time_per100))
+                                if accuracy_res:
+                                    logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
+                                        step,
+                                        time.time()-start_time,
+                                        train_time_per100,
+                                        accuracy_res.valid_time_per100))
+                                else:
+                                    logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
+                                        step,
+                                        time.time()-start_time,
+                                        train_time_per100))
 
                             ## Reset Metrics
                             accum.reset()
@@ -565,60 +564,61 @@ def ids2str3D(ids, hyper):
     return strs
 
 
-@dlc.static_vars(max_score=0.7, full_validation_steps=[3000])
-def do_validate(step, args, train_it, valid_it, score=None):
-    if valid_it is None:
-        doValidate = do_save = False
-        num_valid_batches = 0
-    elif args.doValidate:  # Validation-only run
-        doValidate = do_save = True
-        num_valid_batches = valid_it.epoch_size
-    elif (args.valid_epochs <= 0):  # smart validation
-        assert score is not None, 'score must be supplied if valid_epochs <= 0'
-        if score > do_validate.max_score:
-            do_validate.max_score = score
-            doValidate = True
-            do_validate.full_validation_steps.append(step)
-            if (step - do_validate.full_validation_steps[-1]) >= (0.5 * train_it.epoch_size):
-                num_valid_batches = valid_it.epoch_size
-                do_save = True
-            else:
-                num_valid_batches = 5
-                do_save = False
-        elif (score > (do_validate.max_score * 0.95)):
-            if (step - do_validate.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
-                doValidate = do_save = True
-                num_valid_batches = valid_it.epoch_size
-                do_validate.full_validation_steps.append(step)
-            else:
-                doValidate = True
-                do_save = False
-                num_valid_batches = 5
-        else:
+class TrainingLogic(object):
+    full_validation_steps = [3000]
+    fv_score = 0.75
+
+    @classmethod
+    def do_validate(cls, step, args, train_it, valid_it, score=None):
+        if valid_it is None:
             doValidate = do_save = False
             num_valid_batches = 0
-    else:
-        epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
-        period = int(epoch_frac * train_it.epoch_size)
-        doValidate = do_save = (step % period == 0) or (step == train_it.max_steps)
-        num_valid_batches = valid_it.epoch_size if doValidate else 0
+        elif args.doValidate:  # Validation-only run
+            doValidate = do_save = True
+            num_valid_batches = valid_it.epoch_size
+        elif (args.valid_epochs <= 0):  # smart validation
+            assert score is not None, 'score must be supplied if valid_epochs <= 0'
+            if (score - cls.fv_score) >= 0.01:
+                doValidate = True
+                num_valid_batches = valid_it.epoch_size
+                do_save = True
+                cls.full_validation_steps.append(step)
+                cls.fv_score = score
+                logger.info('TrainingLogic: fv_score set to %f'%score)
+            elif (score > (cls.fv_score * 0.95)):
+                if (step - cls.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
+                    doValidate = do_save = True
+                    num_valid_batches = valid_it.epoch_size
+                    cls.full_validation_steps.append(step)
+                else:
+                    doValidate = False
+                    do_save = False
+                    num_valid_batches = 0
+            else:
+                doValidate = do_save = False
+                num_valid_batches = 0
+        else:
+            epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
+            period = int(epoch_frac * train_it.epoch_size)
+            doValidate = do_save = (step % period == 0) or (step == train_it.max_steps)
+            num_valid_batches = valid_it.epoch_size if doValidate else 0
 
-    # if doValidate:
-    #     if args.valid_epochs > 0:
-    #         num_valid_batches = valid_it.epoch_size
-    #     else:  # smart validation
-    #         if len(do_validate.full_validation_steps) == 0:
-    #             num_valid_batches = valid_it.epoch_size
-    #             do_validate.full_validation_steps.append(step)
-    #         elif (step - do_validate.full_validation_steps[-1]) > (0.95 * train_it.epoch_size):
-    #             num_valid_batches = valid_it.epoch_size
-    #             do_validate.full_validation_steps.append(step)
-    #         else:
-    #             num_valid_batches = 5
-    # else:
-    #     num_valid_batches = 0
+        # if doValidate:
+        #     if args.valid_epochs > 0:
+        #         num_valid_batches = valid_it.epoch_size
+        #     else:  # smart validation
+        #         if len(cls.full_validation_steps) == 0:
+        #             num_valid_batches = valid_it.epoch_size
+        #             cls.full_validation_steps.append(step)
+        #         elif (step - cls.full_validation_steps[-1]) > (0.95 * train_it.epoch_size):
+        #             num_valid_batches = valid_it.epoch_size
+        #             cls.full_validation_steps.append(step)
+        #         else:
+        #             num_valid_batches = 5
+        # else:
+        #     num_valid_batches = 0
 
-    return doValidate, num_valid_batches, do_save
+        return doValidate, num_valid_batches, do_save
 
 
 def do_log(step, args, train_it, valid_it):
@@ -628,7 +628,7 @@ def do_log(step, args, train_it, valid_it):
         # score = np.mean(accum.bleu_scores) if (args.valid_epochs == 'smart') else None
         return do_log
     else:
-        validate, _ = do_validate(step, args, train_it, valid_it, None)
+        validate, _ = TrainingLogic.do_validate(step, args, train_it, valid_it, None)
         return do_log or validate
 
 

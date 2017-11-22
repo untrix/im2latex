@@ -155,7 +155,7 @@ def main():
     elif args.logdir is not None:
         tb = tfc.TensorboardParams({'tb_logdir': args.logdir, 'logdir_tag': args.logdir_tag}).freeze()
     else:
-        tb = tfc.TensorboardParams({'logdir_tag': args.logdir_tag}).freeze()
+        tb = tfc.TensorboardParams({'tb_logdir': './tb_metrics', 'logdir_tag': args.logdir_tag}).freeze()
 
     if args.doValidate:
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'

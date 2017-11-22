@@ -132,7 +132,7 @@ class GlobalParams(dlc.HyperParams):
            " it will be equal to output_size of the previous CALSTM. That's why this value needs to be "
            "appropriately adjusted for upper CALSTM layers.",
            (64, 3),
-           LambdaVal(lambda _, p: 64 if p.build_scanning_RNN else 3)
+           LambdaVal(lambda _, p: 3 if p.build_scanning_RNN else 64)
            ),
         PD('REGROUP_IMAGE',
            """

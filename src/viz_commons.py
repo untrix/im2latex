@@ -334,15 +334,15 @@ class VisualizeDir(object):
     def words(self, graph, step, key):
         return self._words(graph, step, key, _get_ids=False, _get_ed=False)
 
-    def strs(self, graph, step, key, key2=None, mingle=False, trim=False):
+    def strs(self, graph, step, key, key2=None, mingle=False, trim=True):
         df1 = self.df_ids(graph, step, key, trim=trim)
         df2 = self.df_ids(graph, step, key2, trim=trim) if (key2 is not None) else None
         
-        ## each token's string version - excepting backslash - has a space appended to it,
-        ## therefore the string output should be compile if the prediction was syntactically correct
+        # each token's string version - excepting backslash - has a space appended to it,
+        # therefore the string output should be compile if the prediction was syntactically correct
         ar1 = ["".join(row) for row in df1.words.values]
-        if key2 == None:
-            return pd.DataFrame({'edit_distance':df1.ed, key: ar1}, index=df1.index)
+        if key2 is None:
+            return pd.DataFrame({'edit_distance':df1.ed, key: ar1, '_id': range(df1.shape[0])}, index=df1.index)
         else:
             ar2 = ["".join(row) for row in df2.words.values]
             if mingle:
@@ -350,7 +350,7 @@ class VisualizeDir(object):
                 data = {'%s/%s'%(key, key2): d}
                 index = ['%s (%s)'%(i,l) for i in df1.index for l in ('k1', 'k2')]
             else:
-                data = {'edit_distance':df1.ed, key: ar1, key2: ar2}
+                data = {'edit_distance': df1.ed, key: ar1, key2: ar2}
                 index = df1.index
             df = pd.DataFrame(data=data, index=index)
             return df
