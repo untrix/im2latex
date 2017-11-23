@@ -147,7 +147,7 @@ class VisualizeDir(object):
             self._hyper = dtc.load(self._storedir, 'hyper.pkl')
             self._args = dtc.load(self._storedir, 'args.pkl')
             print('Loaded %s and %s' % (dtc.join(self._storedir, 'hyper.pkl'), dtc.join(self._storedir, 'args.pkl')))
-            
+
         self._image_dir = self._args['image_dir']
         self._data_dir = self._args['data_dir']
         self._raw_data_dir = self._args['raw_data_dir']

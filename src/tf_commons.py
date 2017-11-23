@@ -929,6 +929,7 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
         d.set_shape(predicted_lens.shape) ## Reassert shape in case it got lost.
         return d
 
+
 def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens, space_token=None, eos_token=None):
     """
     Compute edit distance of predicted_ids (ignoring blank and space tokens) with target_ids (which are assumed to have no blank tokens).
@@ -955,6 +956,7 @@ def edit_distance2D_sparse(B, predicted_sparse, target_ids, target_lens, space_t
         d = tf.edit_distance(predicted_sparse, target_sparse)
         d.set_shape(target_lens.shape) ## Reassert shape in case it got lost.
         return d
+
 
 def seqlens(m, eos_token=0, include_eos_token=True):
     """
@@ -999,6 +1001,7 @@ def seqlens(m, eos_token=0, include_eos_token=True):
 
         return tf_lens if (len(orig_shape) == 2) else tf.reshape(tf_lens, orig_shape[:-1])
 
+
 #def seqlens_2d(B, m, eos_token=0):
 #    """
 #    Takes in a tensor m, shaped (B, T) having 'B' sequences of length T and optionally containing one or more eos_tokens.
@@ -1023,6 +1026,7 @@ def seqlens(m, eos_token=0, include_eos_token=True):
 #            lens.append(len_i)
 #
 #        return tf.stack(lens)
+
 
 def squash_2d(B, m, lens, blank_token, padding_token=0):
     """
@@ -1049,6 +1053,7 @@ def squash_2d(B, m, lens, blank_token, padding_token=0):
             squashed_lens.append(len_i)
         return tf.stack(squashed), tf.stack(squashed_lens)
 
+
 def squash_3d(B, k, m, lens, blank_token, padding_token=0):
     """
     Takes in a tensor m, shaped (B, k, T), from each sequence of length T removes blank_tokens and appends
@@ -1067,6 +1072,7 @@ def squash_3d(B, k, m, lens, blank_token, padding_token=0):
             squashed_lens.append(s_l)
         return tf.stack(squashed), tf.stack(squashed_lens)
 
+
 def _dense_to_sparse(t, mask, blank_token=None, space_token=None, eos_token=None):
         if blank_token is not None:
             mask = tf.logical_and(mask, tf.not_equal(t, blank_token))
@@ -1079,12 +1085,14 @@ def _dense_to_sparse(t, mask, blank_token=None, space_token=None, eos_token=None
         vals = tf.gather_nd(t, idx)
         return tf.SparseTensor(idx, vals, tf.shape(t, out_type=tf.int64))
 
+
 def dense_to_sparse2D(t, lens, blank_token=None, space_token=None, eos_token=None):
     with tf.name_scope('dense_to_sparse2D'):
         assert len(K.int_shape(t)) == 2
         assert len(K.int_shape(lens)) == 1
         mask = tf.sequence_mask(lens, maxlen=tf.shape(t)[1])
         return _dense_to_sparse(t, mask, blank_token, space_token, eos_token)
+
 
 def dense_to_sparse3D(B, t, lens, blank_token=None, space_token=None, eos_token=None):
     with tf.name_scope('dense_to_sparse3D'):
@@ -1093,6 +1101,7 @@ def dense_to_sparse3D(B, t, lens, blank_token=None, space_token=None, eos_token=
         assert len(K.int_shape(lens)) == 2
         mask = tf.stack([tf.sequence_mask(lens[i], maxlen=tf.shape(t)[2]) for i in range(B)])
         return _dense_to_sparse(t, mask, blank_token, space_token, eos_token)
+
 
 def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
     # B = self.C.B
@@ -1115,9 +1124,11 @@ def ctc_loss(yLogits, logits_lens, y_ctc, ctc_len, B, Kv):
         assert K.int_shape(ctc_losses) == (B, )
         return ctc_losses
 
+
 def batch_bottom_k_2D(t, k):
     t2, indices = batch_top_k_2D(t * -1, k)
     return t2 * -1, indices
+
 
 def batch_top_k_2D(t, k):
     """
@@ -1145,6 +1156,7 @@ def batch_top_k_2D(t, k):
         assert K.int_shape(indices) == (B, k, 2)
         return t2, indices
 
+
 def batch_slice(t, indices):
     """
     Apply slice-indices returned by batch_top_k_2D (B, k, 2) to a tensor
@@ -1166,6 +1178,7 @@ def batch_slice(t, indices):
 
         t_slice = tf.gather_nd(t, indices) # (B, k ,...)
         return t_slice
+
 
 def group2D(a, stride):
     """
@@ -1203,3 +1216,10 @@ def group2D(a, stride):
         rows.append(row)  # [(B, W/w, h*w*C), ...]
 
     return tf.stack(rows, axis=1)  # [(B, H/h, W/w, h*w*C), ...]
+
+
+def add_to_collection(name, value):
+    if value in tf.get_collection(name):
+        logger.warn('tfc.add_to_collection: collection %s already has value %s'%(name, value))
+    else:
+        tf.add_to_collection(name, value)

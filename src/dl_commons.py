@@ -1100,3 +1100,7 @@ def static_vars(**kwargs):
             setattr(func, k, kwargs[k])
         return func
     return decorate
+
+
+def get_dupes(lst):
+    return set([item for item in lst if lst.count(item) > 1])

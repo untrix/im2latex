@@ -90,11 +90,11 @@ def printVars(logger):
             total_embedding += n
         else:
             assert False, 'unrecognized variable %s'%var
-        logger.info('%s %s num_params = %d'%(var.name, K.int_shape(var),n) )
+        logger.info('%s %s num_params = %d'%(var.name, K.int_shape(var), n) )
 
     logger.info( 'Total number of trainable params = %d'%total_n)
     logger.info( 'Vggnet: %d (%2.2f%%)'%(total_vggnet, total_vggnet*100./total_n))
-    logger.info( 'Convnet: %d (%2.2f%%)'%(total_convnet, total_vggnet*100./total_n))
+    logger.info( 'Convnet: %d (%2.2f%%)'%(total_convnet, total_convnet*100./total_n))
     logger.info( 'Initializer: %d (%2.2f%%)'%(total_init, total_init*100./total_n))
     logger.info( 'CALSTM_1: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
     logger.info( 'LSTM1_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
@@ -631,6 +631,11 @@ class TrainingLogic(object):
                     doValidate = False
                     do_save = False
                     num_valid_batches = 0
+            elif (step - cls.full_validation_steps[-1]) >= (2 * train_it.epoch_size):
+                doValidate = do_save = True
+                num_valid_batches = valid_it.epoch_size
+                cls.full_validation_steps.append(step)
+                logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
             else:
                 doValidate = do_save = False
                 num_valid_batches = 0
