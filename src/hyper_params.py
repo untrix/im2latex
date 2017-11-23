@@ -112,7 +112,6 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('build_scanning_RNN', '(boolean): Whether to build a regular RNN or a scanning RNN',
             boolean,
-            False
            ),
         PD('B',
            '(integer): Size of mini-batch for training, validation and testing graphs/towers. '

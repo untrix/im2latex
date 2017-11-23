@@ -228,7 +228,7 @@ def main(raw_data_folder,
                 for i in range(args.num_gpus):
                     with tf.name_scope('gpu_%d'%i):
                         with tf.device('/gpu:%d'%i):
-                            model = Im2LatexModel(hyper, train_q, opt=opt, reuse=(False if i==0 else True))
+                            model = Im2LatexModel(hyper, train_q, opt=opt, reuse=(False if (i == 0) else True))
                             train_tower_ops.append(model.build_training_tower())
                             if i == 0:
                                 trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
@@ -237,7 +237,7 @@ def main(raw_data_folder,
                                 ## assert trainable_vars_n == 23261206 if hyper.build_image_context
                             else:
                                 assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
-                train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step, opt)
+                train_ops = sync_training_towers(hyper, train_tower_ops, global_step=None, opt=None, run_mode='validation')
             qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
             qrs.append(qr1)
 
@@ -257,13 +257,11 @@ def main(raw_data_folder,
                             if hyper.build_scanning_RNN:
                                 model_predict = Im2LatexModel(hyper_predict,
                                                               valid_q,
-                                                              opt=opt,
                                                               reuse=reuse_vars)
                                 valid_tower_ops.append(model_predict.build_training_tower())
                             else:
                                 model_predict = Im2LatexModel(hyper_predict,
                                                               valid_q,
-                                                              opt=None,
                                                               seq2seq_beam_width=hyper.seq2seq_beam_width,
                                                               reuse=reuse_vars)
                                 valid_tower_ops.append(model_predict.build_testing_tower())

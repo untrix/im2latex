@@ -85,17 +85,18 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, inp_q, opt=None, seq2seq_beam_width=1, reuse=True, for_training=True):
+    def __init__(self, params, inp_q, opt=None, seq2seq_beam_width=1, reuse=True):
         """
         Args:
             params (Im2LatexModelParams)
+            opt: optimizer instance - e.g. tf.train.AdamOptimizer(...). A value of None will make the model switch
+                to evaluation mode. Otherwise it will build a training mode graph.
             seq2seq_beam_width (integer): Only used when inferencing with beamsearch. Otherwise set it to 1.
                 Will cause the batch_size in internal assert statements to get multiplied by beamwidth.
             reuse: Sets the variable_reuse setting for the entire object.
         """
         self._params = self.C = Im2LatexModelParams(params)
         self._opt = opt
-        self._for_training = for_training
         with tf.variable_scope('I2L', reuse=reuse) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
@@ -426,7 +427,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 3) A scalar 's' between 0.0 and 1.0 indicating the value of S for that batch. = S/max-S
 
                     batch_seq_len = y_s.shape[0]
-                    tf_S = tf.cast(tf.floor(batch_seq_len*self.C.SFactor), dtype=self.C.inttype, name='S')  # scalar
+                    tf_len = (batch_seq_len*self.C.SFactor)
+                    print 'tf_len = %s'%tf_len
+                    tf_S = tf.cast(tf_len, dtype=self.C.int_type, name='S')  # scalar
                     tf_MaxS = tf.cast(tf.floor(tf.constant(self.C.MaxSeqLen*self.C.SFactor)), dtype=self.C.inttype, name='MaxS' )  # scalar
                     s = tf.divide(tf_S, tf_MaxS, 's_scalar') # scalar
                     t = tf.expand_dims((tf.range(tf_S) + 1), axis=1) # (T,1)
@@ -684,11 +687,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         ctc_decoded_lens = None
 
                 ################ Optimizer ################
-                with tf.variable_scope('Optimizer'):
-                    if self._for_training:
+                if self._opt is not None:
+                    with tf.variable_scope('Optimizer'):
                         grads = self._opt.compute_gradients(cost)
-                    else:
-                        grads = tf.constant(0)
+                else:
+                    grads = tf.constant(0)
 
                 return dlc.Properties({
                         'grads': grads,
@@ -947,7 +950,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode):
+
+def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'):
     with tf.variable_scope('SyncTowers') as var_scope:
         def gather(prop_name):
             return [o[prop_name] for o in tower_ops]
@@ -967,9 +971,12 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode):
         else:
             cost = log_likelihood + alpha_penalty + reg_loss
 
-        grads = average_gradients(gather('grads'))
-        with tf.variable_scope('optimizer'):
-            apply_grads = opt.apply_gradients(grads, global_step=global_step)
+        if opt is not None:
+            grads = average_gradients(gather('grads'))
+            with tf.variable_scope('optimizer'):
+                apply_grads = opt.apply_gradients(grads, global_step=global_step)
+        else:
+            apply_grads = tf.constant(0.0)
 
         with tf.variable_scope('Instrumentation'):
 #            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
@@ -1037,19 +1044,20 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode):
 
             tb_agg_logs = tf.summary.merge(tf.get_collection('%s_aggregate'%run_mode))
 
-            # if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
-            #     ctc_ed = None
-            #     mean_ctc_ed = None
-            #     pred_len_ratio = None
-            #     num_hits = None
-            #     predicted_ids_list = None
-            #     predicted_lens = None
-            # else:
-            ctc_ed = concat('ctc_ed') # (num_gpus*B,)
-            pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
-            num_hits = get_sum('num_hits') # scalar
-            predicted_ids_list = gather('predicted_ids')  # [(B,T), ...]
-            predicted_lens = concat('predicted_lens')  # (num_gpus*B,)
+            if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
+                zero = tf.constant(0.0)
+                ctc_ed = zero
+                mean_ctc_ed = zero
+                pred_len_ratio = zero
+                num_hits = zero
+                predicted_ids_list = zero
+                predicted_lens = zero
+            else:
+                ctc_ed = concat('ctc_ed') # (num_gpus*B,)
+                pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
+                num_hits = get_sum('num_hits') # scalar
+                predicted_ids_list = gather('predicted_ids')  # [(B,T), ...]
+                predicted_lens = concat('predicted_lens')  # (num_gpus*B,)
 
         return dlc.Properties({
             'train': apply_grads,  # op
