@@ -85,7 +85,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     One timestep of the decoder model. The entire function can be seen as a complex RNN-cell
     that includes a LSTM stack and an attention model.
     """
-    def __init__(self, params, inp_q, opt=None, seq2seq_beam_width=1, reuse=True):
+    def __init__(self, params, inp_q, opt=None, seq2seq_beam_width=1, reuse=True, for_training=True):
         """
         Args:
             params (Im2LatexModelParams)
@@ -95,6 +95,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         """
         self._params = self.C = Im2LatexModelParams(params)
         self._opt = opt
+        self._for_training = for_training
         with tf.variable_scope('I2L', reuse=reuse) as outer_scope:
             self.outer_scope = outer_scope
             with tf.variable_scope('Inputs') as scope:
@@ -124,7 +125,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## Set tensor shape because it gets forgotten in the queue
                     self._im.set_shape((self.C.B,)+self.C.image_shape)
 
-            ## Build Convnet if needed
+            # Build Convnet if needed
             if self._params.build_image_context != 0:
                 ## Image features/context from the Conv-Net
                 if self._params.build_image_context == 2:
@@ -684,7 +685,10 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
                 ################ Optimizer ################
                 with tf.variable_scope('Optimizer'):
-                    grads = self._opt.compute_gradients(cost)
+                    if self._for_training:
+                        grads = self._opt.compute_gradients(cost)
+                    else:
+                        grads = tf.constant(0)
 
                 return dlc.Properties({
                         'grads': grads,
@@ -943,7 +947,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     # 'ph_num_hits': ph_num_hits
                     })
 
-def sync_training_towers(hyper, tower_ops, global_step, opt):
+def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode):
     with tf.variable_scope('SyncTowers') as var_scope:
         def gather(prop_name):
             return [o[prop_name] for o in tower_ops]
@@ -998,42 +1002,40 @@ def sync_training_towers(hyper, tower_ops, global_step, opt):
             ph_num_hits = tf.placeholder(hyper.int_type)
             ph_reg_losses = tf.placeholder(hyper.dtype)
 
-            tb_agg_logs = {}
-            for metrics_scope in ['training', 'validation'] if hyper.build_scanning_RNN else ['training']:
-                tf.summary.scalar('%s/time_per100/'%metrics_scope, ph_train_time, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/bleu_dist/'%metrics_scope, ph_bleu_scores, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/bleu/'%metrics_scope, tf.reduce_mean(ph_bleu_scores), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/bleu2/'%metrics_scope, ph_bleu_score2, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/ctc_ed_dist/'%metrics_scope, ph_ctc_eds, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/ctc_ed/'%metrics_scope, tf.reduce_mean(ph_ctc_eds), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/logloss_mean/'%metrics_scope, tf.reduce_mean(ph_loglosses), collections=['%s_aggregate'%metrics_scope])
-                min_logloss = tf.reduce_min(ph_loglosses)
-                tf.summary.scalar('%s/logloss/'%metrics_scope, min_logloss,  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/batch_logloss_min/'%metrics_scope, min_logloss,  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/batch_logloss_max/'%metrics_scope, tf.reduce_max(ph_loglosses),  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/ctc_loss_mean/'%metrics_scope, tf.reduce_mean(ph_ctc_losses), collections=['%s_aggregate'%metrics_scope])
-                min_ctc_loss = tf.reduce_min(ph_ctc_losses)
-                tf.summary.scalar('%s/ctc_loss/'%metrics_scope, min_ctc_loss,  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/batch_ctc_loss_min/'%metrics_scope, min_ctc_loss,  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/batch_ctc_loss_max/'%metrics_scope, tf.reduce_max(ph_ctc_losses),  collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/alpha_penalty/'%metrics_scope, tf.reduce_mean(ph_alpha_penalties), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/total_cost/'%metrics_scope, tf.reduce_mean(ph_costs), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/mean_norm_ase/'%metrics_scope, tf.reduce_mean(ph_mean_norm_ases), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/mean_norm_ase_dist/'%metrics_scope, ph_mean_norm_ases, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/mean_norm_aae/'%metrics_scope, tf.reduce_mean(ph_mean_norm_aaes), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/mean_norm_aae_dist/'%metrics_scope, ph_mean_norm_aaes, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/beta_mean/'%metrics_scope, tf.reduce_mean(ph_beta_mean), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/beta_std_dev/'%metrics_scope, tf.reduce_mean(ph_beta_std_dev), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/beta_mean_dist/'%metrics_scope, ph_beta_mean, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/beta_std_dev_dest/'%metrics_scope, ph_beta_std_dev, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/pred_len_ratio_avg/'%metrics_scope, tf.reduce_mean(ph_pred_len_ratios), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.histogram('%s/pred_len_ratio_dist/'%metrics_scope, ph_pred_len_ratios, collections=['%s_aggregate'%metrics_scope])
-                mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
-                tf.summary.scalar('%s/num_hits/'%metrics_scope, mean_hits, collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/accuracy/'%metrics_scope, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0), collections=['%s_aggregate'%metrics_scope])
-                tf.summary.scalar('%s/regLoss/'%metrics_scope, tf.reduce_mean(ph_reg_losses), collections=['%s_aggregate'%metrics_scope])
+            tf.summary.scalar('%s/time_per100/'%run_mode, ph_train_time, collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/bleu_dist/'%run_mode, ph_bleu_scores, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/bleu/'%run_mode, tf.reduce_mean(ph_bleu_scores), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/bleu2/'%run_mode, ph_bleu_score2, collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/ctc_ed_dist/'%run_mode, ph_ctc_eds, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/ctc_ed/'%run_mode, tf.reduce_mean(ph_ctc_eds), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/logloss_mean/'%run_mode, tf.reduce_mean(ph_loglosses), collections=['%s_aggregate'%run_mode])
+            min_logloss = tf.reduce_min(ph_loglosses)
+            tf.summary.scalar('%s/logloss/'%run_mode, min_logloss,  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/batch_logloss_min/'%run_mode, min_logloss,  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/batch_logloss_max/'%run_mode, tf.reduce_max(ph_loglosses),  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/ctc_loss_mean/'%run_mode, tf.reduce_mean(ph_ctc_losses), collections=['%s_aggregate'%run_mode])
+            min_ctc_loss = tf.reduce_min(ph_ctc_losses)
+            tf.summary.scalar('%s/ctc_loss/'%run_mode, min_ctc_loss,  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/batch_ctc_loss_min/'%run_mode, min_ctc_loss,  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/batch_ctc_loss_max/'%run_mode, tf.reduce_max(ph_ctc_losses),  collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/alpha_penalty/'%run_mode, tf.reduce_mean(ph_alpha_penalties), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/total_cost/'%run_mode, tf.reduce_mean(ph_costs), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/mean_norm_ase/'%run_mode, tf.reduce_mean(ph_mean_norm_ases), collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/mean_norm_ase_dist/'%run_mode, ph_mean_norm_ases, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/mean_norm_aae/'%run_mode, tf.reduce_mean(ph_mean_norm_aaes), collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/mean_norm_aae_dist/'%run_mode, ph_mean_norm_aaes, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/beta_mean/'%run_mode, tf.reduce_mean(ph_beta_mean), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/beta_std_dev/'%run_mode, tf.reduce_mean(ph_beta_std_dev), collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/beta_mean_dist/'%run_mode, ph_beta_mean, collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/beta_std_dev_dest/'%run_mode, ph_beta_std_dev, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/pred_len_ratio_avg/'%run_mode, tf.reduce_mean(ph_pred_len_ratios), collections=['%s_aggregate'%run_mode])
+            tf.summary.histogram('%s/pred_len_ratio_dist/'%run_mode, ph_pred_len_ratios, collections=['%s_aggregate'%run_mode])
+            mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
+            tf.summary.scalar('%s/num_hits/'%run_mode, mean_hits, collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/accuracy/'%run_mode, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0), collections=['%s_aggregate'%run_mode])
+            tf.summary.scalar('%s/regLoss/'%run_mode, tf.reduce_mean(ph_reg_losses), collections=['%s_aggregate'%run_mode])
 
-                tb_agg_logs[metrics_scope] = tf.summary.merge(tf.get_collection('%s_aggregate'%metrics_scope))
+            tb_agg_logs = tf.summary.merge(tf.get_collection('%s_aggregate'%run_mode))
 
             # if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
             #     ctc_ed = None
@@ -1090,8 +1092,7 @@ def sync_training_towers(hyper, tower_ops, global_step, opt):
             'ph_train_time': ph_train_time,  # scalar
             'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_gpus*B,)
             'ph_bleu_score2': ph_bleu_score2,  # scalar
-            'tb_agg_logs': tb_agg_logs['training'],  # summary string
-            'tb_agg_logs_validation': tb_agg_logs['validation'] if hyper.build_scanning_RNN else None  # summary string
+            'tb_agg_logs_%s'%run_mode: tb_agg_logs  # summary string
         })
 
 def sync_testing_towers(hyper, tower_ops):

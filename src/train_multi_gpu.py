@@ -133,29 +133,51 @@ class Accumulator(dlc.Properties):
 
 
 class TFOpNames(dlc.Properties):
-    def __init__(self, props, val):
+    def __init__(self, keys, val):
         dlc.Properties.__init__(self)
-        self._props = props
-        self.reset_vals(val)
+        object.__setattr__(self, '_keys_tuple', tuple(keys))
+        self._reset_vals(val)
         self.seal()
 
-    @property
-    def props(self):
-        return self._props
-    def reset_vals(self, val):
-        for prop in self._props:
-            self[prop] = val
-    def set_vals(self, vals):
-        assert len(vals) == len(self._props)
+    def keys(self):
+        return object.__getattribute__(self, '_keys_tuple')
+
+    def _reset_vals(self, val):
+        for key in self.keys():
+            self[key] = val
+
+    def _set_vals(self, vals):
+        assert len(vals) == len(self.keys())
+        keys = self.keys()
         for i in range(len(vals)):
-            self[self._props[i]] = vals[i]
-    def op_tuple(self, op_dict):
+            self[keys[i]] = vals[i]
+
+    def _op_tuple(self, op_dict):
         l = []
-        for name in self._props:
+        for name in self.keys():
             l.append(op_dict[name])
         return tuple(l)
+
     def run_ops(self, session, op_dict):
-        self.set_vals(session.run(self.op_tuple(op_dict)))
+        self._set_vals(session.run(self._op_tuple(op_dict)))
+
+
+class TFRun(TFOpNames):
+    def __init__(self, session, ops, op_names, reset_val):
+        TFOpNames.__init__(self, op_names, reset_val)
+        object.__setattr__(self, '_ops_dict', ops)
+        object.__setattr__(self, '_session', session)
+
+    @property
+    def ops(self):
+        return object.__getattribute__(self, '_ops_dict')
+
+    @property
+    def session(self):
+        return object.__getattribute__(self, '_session')
+
+    def run_ops(self):
+        TFOpNames.run_ops(self, self.session, self.ops)
 
 
 def main(raw_data_folder,
@@ -232,15 +254,27 @@ def main(raw_data_folder,
                     with tf.name_scope('gpu_%d'%i):
                         with tf.device('/gpu:%d'%i):
                             reuse_vars = False if ((i==0) and not args.doTrain) else True
-                            logger.info('reuse_vars = %s'%reuse_vars)
-                            model_predict = Im2LatexModel(hyper_predict, valid_q, opt=None,
-                                                          seq2seq_beam_width=hyper.seq2seq_beam_width, reuse=reuse_vars)
-                            valid_tower_ops.append(model_predict.build_testing_tower())
+                            if hyper.build_scanning_RNN:
+                                model_predict = Im2LatexModel(hyper_predict,
+                                                              valid_q,
+                                                              opt=opt,
+                                                              reuse=reuse_vars)
+                                valid_tower_ops.append(model_predict.build_training_tower())
+                            else:
+                                model_predict = Im2LatexModel(hyper_predict,
+                                                              valid_q,
+                                                              opt=None,
+                                                              seq2seq_beam_width=hyper.seq2seq_beam_width,
+                                                              reuse=reuse_vars)
+                                valid_tower_ops.append(model_predict.build_testing_tower())
                             if not reuse_vars:
                                 trainable_vars_n = num_trainable_vars()
                 hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
                 assert num_trainable_vars() == trainable_vars_n, 'num_trainable_vars(%d) != %d'%(num_trainable_vars(), trainable_vars_n)
-                valid_ops = sync_testing_towers(hyper, valid_tower_ops)
+                if hyper.build_scanning_RNN:
+                    valid_ops = sync_training_towers(hyper, valid_tower_ops, tf_train_step, opt=None)
+                else:
+                    valid_ops = sync_testing_towers(hyper, valid_tower_ops)
             qr2 = tf.train.QueueRunner(valid_q, [enqueue_op2], cancel_op=[close_queue2])
             qrs.append(qr2)
 
@@ -298,7 +332,7 @@ def main(raw_data_folder,
                 step = 0
                 logger.info('Starting a new session')
 
-            ## Ensure that everything was initialized
+            # Ensure that everything was initialized
             assert len(tf.report_uninitialized_variables().eval()) == 0
 
             try:
@@ -307,24 +341,31 @@ def main(raw_data_folder,
                 if args.doTrain:
                     logger.info('Starting training')
                     ops_accum = (
-                            'train',
-                            'predicted_ids_list',
-                            'predicted_lens',
-                            'y_ctc_list',
-                            'ctc_len',
-                            'ctc_ed',
-                            'log_likelihood',
-                            'ctc_loss',
-                            'alpha_penalty',
-                            'cost',
-                            'mean_norm_ase',
-                            'mean_norm_aae',
-                            'beta_mean',
-                            'beta_std_dev',
-                            'pred_len_ratio',
-                            'num_hits',
-                            'reg_loss',
-                        )
+                        'train',
+                        'predicted_ids_list',
+                        'predicted_lens',
+                        'y_ctc_list',
+                        'ctc_len',
+                        'ctc_ed',
+                        'log_likelihood',
+                        'ctc_loss',
+                        'alpha_penalty',
+                        'cost',
+                        'mean_norm_ase',
+                        'mean_norm_aae',
+                        'beta_mean',
+                        'beta_std_dev',
+                        'pred_len_ratio',
+                        'num_hits',
+                        'reg_loss',
+                    )
+                    ops_log = (
+                        'y_s_list',
+                        'predicted_ids_list',
+                        'alpha',
+                        'beta',
+                        'image_name_list',
+                    )
                     accum = Accumulator()
                     while not coord.should_stop():
                         step_start_time = time.time()
@@ -333,13 +374,7 @@ def main(raw_data_folder,
                         if not doLog:
                             batch_ops = TFOpNames(ops_accum, None)
                         else:
-                            batch_ops = TFOpNames(ops_accum + (
-                                    'y_s_list',
-                                    'predicted_ids_list',
-                                    'alpha',
-                                    'beta',
-                                    'image_name_list',
-                                ), None)
+                            batch_ops = TFOpNames(ops_accum + ops_log, None)
 
                         batch_ops.run_ops(session, train_ops)
                         ## Accumulate Metrics
@@ -393,26 +428,28 @@ def main(raw_data_folder,
                                 saver.save(session, args.logdir + '/snapshot', global_step=step,
                                            latest_filename='checkpoints_list')
                             if doValidate:
-                                accuracy_res = evaluate(
-                                    session,
-                                    dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
-                                    dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                                    hyper,
-                                    args,
-                                    step,
-                                    num_validation_batches,
-                                    tf_sw)
-                                if accuracy_res:
-                                    logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
-                                        step,
-                                        time.time()-start_time,
-                                        train_time_per100,
-                                        accuracy_res.valid_time_per100))
+                                if hyper.build_scanning_RNN:
+                                    validate_scanning_RNN(args, hyper, session, valid_ops, ops_accum, ops_log, step, num_validation_batches, tf_sw)
                                 else:
-                                    logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
+                                    accuracy_res = evaluate(
+                                        session,
+                                        dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
+                                        dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                                        hyper,
+                                        args,
                                         step,
-                                        time.time()-start_time,
-                                        train_time_per100))
+                                        num_validation_batches,
+                                        tf_sw)
+                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
+                                    step,
+                                    time.time()-start_time,
+                                    train_time_per100,
+                                    accuracy_res.valid_time_per100))
+                            else:
+                                logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
+                                    step,
+                                    time.time()-start_time,
+                                    train_time_per100))
 
                             ## Reset Metrics
                             accum.reset()
@@ -638,93 +675,70 @@ def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
 
 
-# def run_training_graph(args, session, num_steps):
-#     start_time = time.time()
-#     ############################# Training (with Validation) Cycle ##############################
-#     if args.doTrain:
-#         logger.info('Starting training')
-#         ops_accum = (
-#             'train',
-#             'predicted_ids_list',
-#             'predicted_lens',
-#             'y_ctc_list',
-#             'ctc_len',
-#             'ctc_ed',
-#             'log_likelihood',
-#             'ctc_loss',
-#             'alpha_penalty',
-#             'cost',
-#             'mean_norm_ase',
-#             'mean_norm_aae',
-#             'beta_mean',
-#             'beta_std_dev',
-#             'pred_len_ratio',
-#             'num_hits',
-#             'reg_loss',
-#         )
-#         accum = Accumulator()
-#         while not coord.should_stop():
-#             step_start_time = time.time()
-#             step += 1
-#             doLog = do_log(step, args, train_it, valid_it)
-#             if not doLog:
-#                 batch_ops = TFOpNames(ops_accum, None)
-#             else:
-#                 batch_ops = TFOpNames(ops_accum + (
-#                     'y_s_list',
-#                     'predicted_ids_list',
-#                     'alpha',
-#                     'beta',
-#                     'image_name_list',
-#                 ), None)
-#
-#             batch_ops.run_ops(session, train_ops)
-#             ## Accumulate Metrics
-#             accum.append(batch_ops)
-#             train_time = time.time() - step_start_time
-#             bleu = sentence_bleu_scores(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens,
-#                                         batch_ops.y_ctc_list, batch_ops.ctc_len)
-#             accum.extend({'bleu_scores': bleu})
-#             accum.extend({
-#                 'sq_predicted_ids': squashed_seq_list(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens),
-#                 'sq_y_ctc': trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len)
-#             })
-#             accum.append({'train_time': train_time})
-#
-#             if doLog:
-#                 logger.info('Step %d', step)
-#                 train_time_per100 = np.mean(train_time) * 100. / (hyper.data_reader_B)
-#
-#                 with dtc.Storer(args, 'training', step) as storer:
-#                     storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
-#                     storer.write('y', batch_ops.y_s_list, np.int16)
-#                     storer.write('alpha', batch_ops.alpha, np.float32, batch_axis=1)
-#                     storer.write('beta', batch_ops.beta, np.float32, batch_axis=1)
-#                     storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
-#                     storer.write('ed', batch_ops.ctc_ed, np.float32)
-#                     storer.write('bleu', bleu, np.float32)
-#
-#                 # Calculate aggregated training metrics
-#                 tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
-#                     train_ops.ph_train_time: train_time_per100,
-#                     train_ops.ph_bleu_scores: accum.bleu_scores,
-#                     train_ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
-#                     train_ops.ph_ctc_eds: accum.ctc_ed,
-#                     train_ops.ph_loglosses: accum.log_likelihood,
-#                     train_ops.ph_ctc_losses: accum.ctc_loss,
-#                     train_ops.ph_alpha_penalties: accum.alpha_penalty,
-#                     train_ops.ph_costs: accum.cost,
-#                     train_ops.ph_mean_norm_ases: accum.mean_norm_ase,
-#                     train_ops.ph_mean_norm_aaes: accum.mean_norm_aae,
-#                     train_ops.ph_beta_mean: accum.beta_mean,
-#                     train_ops.ph_beta_std_dev: accum.beta_std_dev,
-#                     train_ops.ph_pred_len_ratios: accum.pred_len_ratio,
-#                     train_ops.ph_num_hits: accum.num_hits,
-#                     train_ops.ph_reg_losses: accum.reg_loss
-#                 })
-#                 tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
-#                 tf_sw.flush()
+def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, step, num_steps, tf_sw):
+    start_time = time.time()
+    ############################# Training (with Validation) Cycle ##############################
+    hyper.logger.info('validation cycle starting at step %d for %d steps', step, num_steps)
+    accum = Accumulator()
+    print_batch_num = np.random.randint(1, num_steps + 1) if args.print_batch else -1
+    for step in range(1, 1+num_steps):
+        step_start_time = time.time()
+        doLog = (print_batch_num == step)
+        if not doLog:
+            batch_ops = TFRun(session, ops, ops_accum, None)
+        else:
+            batch_ops = TFRun(session, ops, ops_accum + ops_log, None)
 
+        batch_ops.run_ops(accum)
+        ## Accumulate Metrics
+        accum.append(batch_ops)
+        batch_time = time.time() - step_start_time
+        bleu = sentence_bleu_scores(hyper,
+                                    batch_ops.predicted_ids_list,
+                                    batch_ops.predicted_lens,
+                                    batch_ops.y_ctc_list,
+                                    batch_ops.ctc_len)
+        accum.extend({'bleu_scores': bleu})
+        accum.extend({
+            'sq_predicted_ids': squashed_seq_list(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens),
+            'sq_y_ctc': trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len)
+        })
+        accum.append({'batch_time': batch_time})
+
+        if doLog:
+            logger.info('Step %d', step)
+            time_per100 = np.mean(batch_time) * 100. / hyper.data_reader_B
+
+            with dtc.Storer(args, 'validation', step) as storer:
+                storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
+                storer.write('y', batch_ops.y_s_list, np.int16)
+                storer.write('alpha', batch_ops.alpha, np.float32, batch_axis=1)
+                storer.write('beta', batch_ops.beta, np.float32, batch_axis=1)
+                storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
+                storer.write('ed', batch_ops.ctc_ed, np.float32)
+                storer.write('bleu', bleu, np.float32)
+
+            # Calculate aggregated training metrics
+            tb_agg_logs_validation = session.run(ops.tb_agg_logs_validation, feed_dict={
+                ops.ph_train_time: time_per100,
+                ops.ph_bleu_scores: accum.bleu_scores,
+                ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
+                ops.ph_ctc_eds: accum.ctc_ed,
+                ops.ph_loglosses: accum.log_likelihood,
+                ops.ph_ctc_losses: accum.ctc_loss,
+                ops.ph_alpha_penalties: accum.alpha_penalty,
+                ops.ph_costs: accum.cost,
+                ops.ph_mean_norm_ases: accum.mean_norm_ase,
+                ops.ph_mean_norm_aaes: accum.mean_norm_aae,
+                ops.ph_beta_mean: accum.beta_mean,
+                ops.ph_beta_std_dev: accum.beta_std_dev,
+                ops.ph_pred_len_ratios: accum.pred_len_ratio,
+                ops.ph_num_hits: accum.num_hits,
+                ops.ph_reg_losses: accum.reg_loss
+            })
+            tf_sw.add_summary(tb_agg_logs_validation, global_step=log_step(step))
+            tf_sw.flush()
+    return dlc.Properties({'valid_time_per100': valid_time_per100})
 
 def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):
     # validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
