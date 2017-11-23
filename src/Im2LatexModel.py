@@ -589,7 +589,8 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
 
                         if self.C.pLambda > 0:
-                            alpha_penalty = self.C.pLambda * (mean_norm_ase - self.C.target_ase)  # scalar
+                            alpha_penalty = tf.identity(self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
+                                                        name='alpha_penalty')  # scalar
                         else:
                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
 
@@ -838,9 +839,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     assert top1_ids.get_shape().as_list() == [B, T]
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
                     top1_len_ratio = tf.divide(top1_seq_lens,self._seq_len)
-                    if self.C.no_towers: ## Old Code without towers
-                        tf.summary.histogram( 'score', top1_seq_scores, collections=['top1'])
-                        tf.summary.histogram( 'top1_len_ratio', top1_len_ratio, collections=['top1'])
 
                 ## Top K
                 with tf.name_scope('top_k'):
@@ -882,11 +880,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         top1_accuracy = tf.reduce_mean(top1_hits) # scalar
                         top1_num_hits = tf.reduce_sum(top1_hits) # scalar
 
-                        if self.C.no_towers: ## Old Code without towers
-                            tf.summary.scalar( 'edit_distance', top1_mean_ed, collections=['top1'])
-                            ## tf.summary.scalar( 'accuracy', top1_accuracy, collections=['top1'])
-                            tf.summary.scalar('num_hits', top1_num_hits, collections=['top1'])
-
                     with tf.name_scope('bestof_%d'%k):
                         ed = tfc.edit_distance3D(B, k,
                                                  topK_ids, topK_seq_lens,
@@ -900,13 +893,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         bok_seq_lens =  tf.squeeze(tfc.batch_slice(topK_seq_lens, bok_indices), axis=1) # (B, 1).squeeze => (B,)
                         bok_seq_scores = tf.squeeze(tfc.batch_slice(topK_seq_scores, bok_indices), axis=1) # (B, 1).squeeze => (B,)
                         bok_ids = tf.squeeze(tfc.batch_slice(topK_ids, bok_indices), axis=1) # (B, 1, T).squeeze => (B,T)
-
-                        if self.C.no_towers: ## Old Code without towers
-                            tf.summary.scalar( 'edit_distance', bok_mean_ed, collections=['top_k'])
-                            tf.summary.scalar( 'accuracy', bok_accuracy, collections=['top_k'])
-                            tf.summary.histogram( 'seq_len', bok_seq_lens, collections=['top_k'])
-                            tf.summary.histogram( 'score', bok_seq_scores, collections=['top_k'])
-
 
                 return dlc.Properties({
                     'inp_q': self._inp_q,
@@ -1100,7 +1086,7 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             'ph_train_time': ph_train_time,  # scalar
             'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_gpus*B,)
             'ph_bleu_score2': ph_bleu_score2,  # scalar
-            'tb_agg_logs_%s'%run_mode: tb_agg_logs  # summary string
+            'tb_agg_logs': tb_agg_logs  # summary string
         })
 
 def sync_testing_towers(hyper, tower_ops):

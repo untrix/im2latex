@@ -200,7 +200,7 @@ def main():
                                     'output_reuse_embeddings': False,
                                     'REGROUP_IMAGE': (4, 1),  # None  # (4,2)
                                     'build_att_modulator': False,  # turn off beta-MLP
-                                    'build_scanning_RNN': True
+                                    'build_scanning_RNN': False
                                     })
 
     if args.batch_size is not None:
