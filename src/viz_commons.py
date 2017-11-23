@@ -142,13 +142,15 @@ class VisualizeDir(object):
         try:
             self._hyper = dtc.load(self._logdir, 'hyper.pkl')
             self._args = dtc.load(self._logdir, 'args.pkl')
+            print('Loaded %s and %s'%(dtc.join(self._logdir, 'hyper.pkl'), dtc.join(self._logdir, 'args.pkl')))
         except:
             self._hyper = dtc.load(self._storedir, 'hyper.pkl')
             self._args = dtc.load(self._storedir, 'args.pkl')
+            print('Loaded %s and %s' % (dtc.join(self._storedir, 'hyper.pkl'), dtc.join(self._storedir, 'args.pkl')))
+            
         self._image_dir = self._args['image_dir']
-        self._generated_data_dir = gen_datadir = self._args['generated_data_dir']
         self._data_dir = self._args['data_dir']
-        self._raw_data_dir = os.path.join(gen_datadir, 'training')
+        self._raw_data_dir = self._args['raw_data_dir']
         self._SCF = self._hyper.B * self._hyper.num_gpus * 1.0 / (64.0)  # conflation factor
 
         self._data_props = pd.read_pickle(os.path.join(self._raw_data_dir, 'data_props.pkl'))
@@ -180,6 +182,7 @@ class VisualizeDir(object):
 
         ## Train/Test DataFrames
         self._df_train_image = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
+        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self._df_train_image.shape) )
         # self._df_train_image = self._df_train.copy()
         self._df_train_image.index = self._df_train_image.image
         # self._df_test = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))
@@ -255,7 +258,7 @@ class VisualizeDir(object):
             step:  step who's output is to be fetched
             key:   key of object to fetch - e.g. 'predicted_ids'
         """
-        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
+        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph, step))) as h5:
             return h5[key][...]
     
     @staticmethod
@@ -419,13 +422,15 @@ class VisualizeDir(object):
         nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
         nd_words = df_all.loc[sample_idx].words # (B,T) --> (T,)
         ## Careful with sample_idx
-        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx] #(N,B,H,W,T) --> (H,W,T)
-        image_name = self.nd(graph, step, 'image_name')[sample_idx] #(B,) --> (,)
+        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx]  # (N,B,H,W,T) --> (H,W,T)
+        image_name = self.nd(graph, step, 'image_name')[sample_idx]  #(B,) --> (,)
         T = len(nd_words)
         assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
         df = self._df_train_image
-        image_data = self._image_processor.get_one(image_name, df.height.loc[image_name],
-                                                   df.width.loc[image_name], self._padded_im_dim) #(H,W,C)
+        image_data = self._image_processor.get_one(image_name,
+                                                   df.height.loc[image_name],
+                                                   df.width.loc[image_name],
+                                                   self._padded_im_dim)  # (H,W,C)
         pool_factor = self._image_pool_factor
         pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*pool_factor.h
         pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*pool_factor.w
