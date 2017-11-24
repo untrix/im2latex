@@ -404,7 +404,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope(self.outer_scope):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## tf.scan requires time-dimension to be the first dimension
-                # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s') # (T, B)
+                # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s')  # (T, B)
                 y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
                 assert K.int_shape(y_s) == (T,B)
 
@@ -426,25 +426,34 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     #    of S given the data-set.
                     # 3) A scalar 's' between 0.0 and 1.0 indicating the value of S for that batch. = S/max-S
 
-                    batch_seq_len = y_s.shape[0]
-                    tf_len = (batch_seq_len*self.C.SFactor)
-                    print 'tf_len = %s'%tf_len
-                    tf_S = tf.cast(tf_len, dtype=self.C.int_type, name='S')  # scalar
-                    tf_MaxS = tf.cast(tf.floor(tf.constant(self.C.MaxSeqLen*self.C.SFactor)), dtype=self.C.inttype, name='MaxS' )  # scalar
-                    s = tf.divide(tf_S, tf_MaxS, 's_scalar') # scalar
-                    t = tf.expand_dims((tf.range(tf_S) + 1), axis=1) # (T,1)
-                    t = tf.expand_dims(tf.tile(t, [1, B]), axis=2, name='t') # (T, B, 1)
-                    clock1 = tf.divide(t, tf_S, 'clock1')  # (T, B, 1)
-                    assert K.int_shape(clock1) == (T, B, 1)
-                    clock2 = tf.divide(t, tf_MaxS, 'clock2')  # (T,B,1)
-                    assert K.int_shape(clock2) == (T, B, 1)
-                    s = tf.tile(tf.expand_dims(s, axis=0), [batch_seq_len, B])  # (T, B)
-                    s = tf.expand_dims(s, axis=2, name='s_tensor')  # (T, B, 1)
-                    assert K.int_shape(s) == (T, B, 1)
-                    x_s = tf.concat([clock1, clock2, s], axis=2, name='x_s')  # (T, B, 3)
-                    assert K.int_shape(x_s) == (T, B, 3)
+                    MaxS = int(self.C.MaxSeqLen*self.C.SFactor)
+                    tf_MaxS = tf.convert_to_tensor(MaxS, dtype=self.C.int_type, name='MaxS')  # scalar
 
-                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype), # The init-value is not used
+                    bin_len = tf.cast(tf.shape(y_s)[0], dtype=self.C.dtype)
+                    tf_S = tf.floor(bin_len * tf.constant(self.C.SFactor))  # scalar
+                    tf_S = tf.cast(tf_S, dtype=self.C.int_type, name='S')  # scalar
+                    assert K.int_shape(tf_S) == ()
+
+                    t = tf.expand_dims((tf.range(tf_S) + 1), axis=1)  # (S, 1)
+                    t = tf.tile(t, [1, B])  # (S, B)
+                    t = tf.cast(t, dtype=self.C.int_type, name='t')
+                    assert K.int_shape(t) == (None, B)
+
+                    clock1 = tf.cast(tf.divide(t, tf_S, 'clock1'), dtype=self.C.dtype)  # (S, B)
+                    assert K.int_shape(clock1) == (None, B)
+
+                    clock2 = tf.cast(tf.divide(t, tf_MaxS, 'clock2'), dtype=self.C.dtype)  # (S, B)
+                    assert K.int_shape(clock2) == (None, B)
+
+                    s = tf.cast(tf.divide(tf_S, tf_MaxS, name='s_scalar'), dtype=self.C.dtype)  # scalar
+                    s = tf.expand_dims(tf.expand_dims(s, axis=0), axis=0)  # (1, 1)
+                    s = tf.tile(s, [tf_S, B], name='s_tensor')  # (S, B)
+                    assert K.int_shape(s) == (None, B)
+
+                    x_s = tf.stack([clock1, clock2, s], axis=2, name='x_s')  # (S, B, 3)
+                    assert K.int_shape(x_s) == (None, B, 3)
+
+                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),  # The init-value is not used
                                      self._init_state_model)
                 out_s = tf.scan(self._scan_step_training, x_s,
                                 initializer=accum,
@@ -496,11 +505,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
                 assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
                 assert K.int_shape(beta) == (N, B, None, 1) # (N, B, T, 1)
-                assert K.int_shape(y_s) == (B, None) # (B, T)
+                assert K.int_shape(y_s) == (B, None)  # (B, T)
                 assert K.int_shape(sequence_lengths) == (B,)
-                assert K.int_shape(y_ctc) == (B, None) # (B, T)
+                assert K.int_shape(y_ctc) == (B, None)  # (B, T)
                 assert K.int_shape(ctc_len) == (B,)
-                T_t = tf.shape(y_s)[1]
+                tf_T = tf.shape(yLogits)[1]
 
                 ################ Loss Calculations ################
                 with tf.variable_scope('Loss_Calculations'):
@@ -518,7 +527,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ################ Build LogLoss ################
                     with tf.variable_scope('LogLoss'):
                         sequence_mask = tf.sequence_mask(sequence_lengths,
-                                                         maxlen=T_t,
+                                                         maxlen=tf_T,
                                                          dtype=self.C.dtype,
                                                          name='sequence_mask')  # (B, T)
                         assert K.int_shape(sequence_mask) == (B,None) # (B,T)
@@ -613,7 +622,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
                         seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
                         beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
-                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1,1,T_t])  # (N, B, T)
+                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1, 1, tf_T])  # (N, B, T)
                         beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
                         beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
                         beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
@@ -712,7 +721,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         'cost': cost, # scalar
                         'ctc_ed': ctc_ed, #(B,)
                         'mean_ctc_ed': mean_ctc_ed, # scalar
-                        'sequence_lengths': sequence_lengths, # (B,)
+                        'sequence_lengths': sequence_lengths,  # (B,)
                         'ctc_len': ctc_len, # (B,)
 #                        'pred_squash_lens': ctc_squashed_lens, # (B,)
                         'pred_len_ratio': pred_len_ratio, # (B,)

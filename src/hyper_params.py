@@ -233,9 +233,10 @@ class GlobalParams(dlc.HyperParams):
            ),
         PD('use_ctc_loss',
            "Whether to train using ctc_loss or cross-entropy/log-loss/log-likelihood. In either case "
-           "ctc_loss will be logged.",
+           "ctc_loss will be logged. Also, use_ctc_loss must be turned on if building scanning-RNN.",
            boolean,
-           False),
+           LambdaVal(lambda _, p: p.build_scanning_RNN)
+           ),
         PD('biases_regularizer',
            'L1 / L2 norm regularization',
            iscallable(noneokay=True),
@@ -439,7 +440,8 @@ class Im2LatexModelParams(dlc.HyperParams):
                 integer(151),
                 LambdaVal(lambda _, p: p.MaxSeqLen + p.DecodingSlack)
                 ),
-            PD('SFactor', 'Applicable to Scanning LSTM only: Multiplier to derive MaxS from MaxSeqLen',
+            PD('SFactor',
+               'Applicable to Scanning LSTM only: Multiplier to derive MaxS from MaxSeqLen',
                 decimal(1.0),
                 LambdaVal(lambda _, p: 2.0 if p.build_scanning_RNN else None)
                 ),
