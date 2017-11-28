@@ -236,10 +236,11 @@ class VisualizeDir(object):
         print('Snapshots = %s'%[(step, b*step / 64.) for step in snapshots])
 
     def view_steps(self):
-        _, epoch_steps = self.get_steps()
+        all_steps, epoch_steps = self.get_steps()
         print('num epoch_steps = %d'%len(epoch_steps))
         b = self._hyper['data_reader_B']*1.
         print('epoch_steps = %s'%[(step, b*step / 64.) for step in epoch_steps])
+        print('all_steps = %s'%[(step, b*step / 64.) for step in all_steps])
 
     def standardize_step(self, step):
         return (step * self._hyper['data_reader_B']*1.) / 64.
@@ -536,9 +537,12 @@ class VisualizeStep():
     def nd(self, key):
         return self._visualizer.nd(self._graph, self._step, key)
     
-    def df(self, step, key):
-        return pd.DataFrame.df(self.nd(self._graph, step, key))
-    
+    def df(self, key):
+        return self._visualizer.df(self._graph, self._step, key)
+
+    def df_ids(self, key, sortkey='ed', trim=False):
+        return self._visualizer.df_ids(self._graph, self._step, key, sortkey, trim)
+
     def words(self, key):
         return self._visualizer.words(self._graph, self._step, key)
 

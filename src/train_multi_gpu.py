@@ -105,12 +105,12 @@ def printVars(logger):
     logger.info( 'Output Layer: %d (%2.2f%%)'%(total_output, total_output*100./total_n))
     logger.info( 'Embedding Matrix: %d (%2.2f%%)'%(total_embedding, total_embedding*100./total_n))
 
-def make_log_step(hyper):
+def make_standardized_step(hyper):
     B = hyper.data_reader_B
-    def log_step(step):
+    def standardized_step(step):
         return (step * B) // 64
-    return log_step
-log_step = None
+    return standardized_step
+standardized_step = None
 
 
 class Accumulator(dlc.Properties):
@@ -190,8 +190,8 @@ def main(raw_data_folder,
     dtc.initialize(args.generated_data_dir, hyper)
     global logger
     logger = hyper.logger
-    global log_step
-    log_step = make_log_step(hyper)
+    global standardized_step
+    standardized_step = make_standardized_step(hyper)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -253,7 +253,7 @@ def main(raw_data_folder,
                 for i in range(args.num_gpus):
                     with tf.name_scope('gpu_%d'%i):
                         with tf.device('/gpu:%d'%i):
-                            reuse_vars = False if ((i==0) and not args.doTrain) else True
+                            reuse_vars = False if ((i==0) and (not args.doTrain)) else True
                             if hyper.build_scanning_RNN:
                                 model_predict = Im2LatexModel(hyper_predict,
                                                               valid_q,
@@ -356,6 +356,8 @@ def main(raw_data_folder,
                         'pred_len_ratio',
                         'num_hits',
                         'reg_loss',
+                        'scan_len',
+                        'bin_len',
                     )
                     ops_log = (
                         'y_s_list',
@@ -363,6 +365,7 @@ def main(raw_data_folder,
                         'alpha',
                         'beta',
                         'image_name_list',
+                        'x_s_list',
                     )
                     accum = Accumulator()
                     while not coord.should_stop():
@@ -398,6 +401,9 @@ def main(raw_data_folder,
                                 storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
                                 storer.write('ed', batch_ops.ctc_ed, np.float32)
                                 storer.write('bleu', bleu, np.float32)
+                                storer.write('bin_len', batch_ops.bin_len, np.float32)
+                                storer.write('scan_len', batch_ops.scan_len, np.float32)
+                                storer.write('x', batch_ops.x_s_list, np.float32)
 
                             agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc)
                             # Calculate aggregated training metrics
@@ -416,9 +422,13 @@ def main(raw_data_folder,
                                 train_ops.ph_beta_std_dev: accum.beta_std_dev,
                                 train_ops.ph_pred_len_ratios: accum.pred_len_ratio,
                                 train_ops.ph_num_hits: accum.num_hits,
-                                train_ops.ph_reg_losses: accum.reg_loss
+                                train_ops.ph_reg_losses: accum.reg_loss,
+                                train_ops.ph_scan_lens: accum.scan_len
                             })
-                            tf_sw.add_summary(tb_agg_logs, global_step=log_step(step))
+                            logger.info('step %d, training mean scan_len = %f and mean bin_len = %f of %s samples. ratio = %f',
+                                        step, np.mean(accum.scan_len), np.mean(accum.bin_len),
+                                        np.asarray(accum.scan_len).shape, np.mean(accum.scan_len)/np.mean(accum.bin_len))
+                            tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(step))
                             tf_sw.flush()
 
                             doValidate, num_validation_batches, do_save = TrainingLogic.do_validate(step, args, train_it, valid_it, (agg_bleu2 if (args.valid_epochs <= 0) else None))
@@ -427,7 +437,7 @@ def main(raw_data_folder,
                                            latest_filename='checkpoints_list')
                             if doValidate:
                                 if hyper.build_scanning_RNN:
-                                    validate_scanning_RNN(args, hyper, session, valid_ops, ops_accum, ops_log, step, num_validation_batches, tf_sw)
+                                    accuracy_res = validate_scanning_RNN(args, hyper, session, valid_ops, ops_accum, ops_log, step, num_validation_batches, tf_sw)
                                 else:
                                     accuracy_res = evaluate(
                                         session,
@@ -670,7 +680,7 @@ def do_log(step, args, train_it, valid_it):
         # score = np.mean(accum.bleu_scores) if (args.valid_epochs == 'smart') else None
         return do_log
     else:
-        validate, _ = TrainingLogic.do_validate(step, args, train_it, valid_it, None)
+        validate, _, _ = TrainingLogic.do_validate(step, args, train_it, valid_it, None)
         return do_log or validate
 
 
@@ -678,21 +688,22 @@ def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
 
 
-def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, step, num_steps, tf_sw):
+def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step, num_steps, tf_sw):
     start_time = time.time()
     ############################# Training (with Validation) Cycle ##############################
-    hyper.logger.info('validation cycle starting at step %d for %d steps', step, num_steps)
+    hyper.logger.info('validation cycle starting at step %d for %d steps', tr_step, num_steps)
     accum = Accumulator()
     print_batch_num = np.random.randint(1, num_steps + 1) if args.print_batch else -1
-    for step in range(1, 1+num_steps):
+    for batch in range(1, 1+num_steps):
         step_start_time = time.time()
-        doLog = (print_batch_num == step)
+        doLog = (print_batch_num == batch)
         if not doLog:
             batch_ops = TFRun(session, ops, ops_accum, None)
         else:
             batch_ops = TFRun(session, ops, ops_accum + ops_log, None)
 
-        batch_ops.run_ops(accum)
+        batch_ops.run_ops()
+
         ## Accumulate Metrics
         accum.append(batch_ops)
         batch_time = time.time() - step_start_time
@@ -709,10 +720,7 @@ def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, step, n
         accum.append({'batch_time': batch_time})
 
         if doLog:
-            logger.info('Step %d', step)
-            time_per100 = np.mean(batch_time) * 100. / hyper.data_reader_B
-
-            with dtc.Storer(args, 'validation', step) as storer:
+            with dtc.Storer(args, 'validation', tr_step) as storer:
                 storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
                 storer.write('y', batch_ops.y_s_list, np.int16)
                 storer.write('alpha', batch_ops.alpha, np.float32, batch_axis=1)
@@ -720,27 +728,35 @@ def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, step, n
                 storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
                 storer.write('ed', batch_ops.ctc_ed, np.float32)
                 storer.write('bleu', bleu, np.float32)
+                storer.write('bin_len', batch_ops.bin_len, np.float32)
+                storer.write('scan_len', batch_ops.scan_len, np.float32)
+                storer.write('x', batch_ops.x_s_list, np.float32)
 
-            # Calculate aggregated training metrics
-            tb_agg_logs_validation = session.run(ops.tb_agg_logs_validation, feed_dict={
-                ops.ph_train_time: time_per100,
-                ops.ph_bleu_scores: accum.bleu_scores,
-                ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
-                ops.ph_ctc_eds: accum.ctc_ed,
-                ops.ph_loglosses: accum.log_likelihood,
-                ops.ph_ctc_losses: accum.ctc_loss,
-                ops.ph_alpha_penalties: accum.alpha_penalty,
-                ops.ph_costs: accum.cost,
-                ops.ph_mean_norm_ases: accum.mean_norm_ase,
-                ops.ph_mean_norm_aaes: accum.mean_norm_aae,
-                ops.ph_beta_mean: accum.beta_mean,
-                ops.ph_beta_std_dev: accum.beta_std_dev,
-                ops.ph_pred_len_ratios: accum.pred_len_ratio,
-                ops.ph_num_hits: accum.num_hits,
-                ops.ph_reg_losses: accum.reg_loss
-            })
-            tf_sw.add_summary(tb_agg_logs_validation, global_step=log_step(step))
-            tf_sw.flush()
+    # Calculate aggregated validation metrics
+    valid_time_per100 = np.mean(batch_time) * 100. / hyper.data_reader_B
+    tb_agg_logs = session.run(ops.tb_agg_logs, feed_dict={
+        ops.ph_train_time: valid_time_per100,
+        ops.ph_bleu_scores: accum.bleu_scores,
+        ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
+        ops.ph_ctc_eds: accum.ctc_ed,
+        ops.ph_loglosses: accum.log_likelihood,
+        ops.ph_ctc_losses: accum.ctc_loss,
+        ops.ph_alpha_penalties: accum.alpha_penalty,
+        ops.ph_costs: accum.cost,
+        ops.ph_mean_norm_ases: accum.mean_norm_ase,
+        ops.ph_mean_norm_aaes: accum.mean_norm_aae,
+        ops.ph_beta_mean: accum.beta_mean,
+        ops.ph_beta_std_dev: accum.beta_std_dev,
+        ops.ph_pred_len_ratios: accum.pred_len_ratio,
+        ops.ph_num_hits: accum.num_hits,
+        ops.ph_reg_losses: accum.reg_loss,
+        ops.ph_scan_lens: accum.scan_len
+    })
+    logger.info('step %d, validation mean scan_len = %f mean bin_len = %f of %s samples. ratio = %f', tr_step,
+                np.mean(accum.scan_len), np.mean(accum.bin_len), np.asarray(accum.scan_len).shape,
+                np.mean(accum.scan_len) / np.mean(accum.bin_len))
+    tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(tr_step))
+    tf_sw.flush()
     return dlc.Properties({'valid_time_per100': valid_time_per100})
 
 def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):

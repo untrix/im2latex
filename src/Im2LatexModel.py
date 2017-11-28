@@ -225,14 +225,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## First layer of output MLP
                     if CONF.output_reuse_embeddings: ## Follow the paper.
                         with tf.variable_scope('FirstLayer'):
-                            affine_params = tfc.FCLayerParams(CONF.output_first_layer).updated({'num_units':m, 'activation_fn':None, 'dropout':None})
+                            affine_params = tfc.FCLayerParams(CONF.output_first_layer).updated({'activation_fn':None, 'dropout': None})
                             ## Affine transformation of h_t and z_t from size n/D to bring it down to m
-                            h_z_t = tfc.FCLayer(affine_params, batch_input_shape=(B,n+D))(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
+                            h_z_t = tfc.FCLayer(affine_params)(tf.concat([h_t, z_t], -1)) # o_t: (B, m)
                             ## h_t and z_t are both dimension m now. So they can now be added to Ex_t.
                             o_t = h_z_t + Ex_t # Paper does not multiply this with weights presumably becasue its been already transformed by the embedding-weights.
                             ## non-linearity for the first layer
-                            o_t = tfc.Activation(tfc.ActivationParams(CONF.output_first_layer), batch_input_shape=(B,m))(o_t)
-                            dim = m
+                            o_t = tfc.Activation(tfc.ActivationParams(CONF.output_first_layer))(o_t)
+                            dim = CONF.output_first_layer.num_units
                             # ## DROPOUT: Paper has one dropout layer here
                             # if CONF.output_first_layer.dropout is not None:
                             #     o_t = tfc.DropoutLayer(CONF.output_first_layer.dropout, batch_input_shape=(B,m))(o_t)
@@ -405,7 +405,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope(self.outer_scope.original_name_scope):## ugly, but only option to get pretty tensorboard visuals
                 ## tf.scan requires time-dimension to be the first dimension
                 # y_s = K.permute_dimensions(self._y_s, (1, 0), name='y_s')  # (T, B)
-                y_s = tf.transpose(self._y_s, (1, 0), name='y_s') # (T, B)
+                y_s = tf.transpose(self._y_s, (1, 0), name='y_s')  # (T, B)
                 assert K.int_shape(y_s) == (T,B)
 
                 if not self.C.build_scanning_RNN:
@@ -430,13 +430,13 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     tf_MaxS = tf.convert_to_tensor(MaxS, dtype=self.C.int_type, name='MaxS')  # scalar
 
                     bin_len = tf.cast(tf.shape(y_s)[0], dtype=self.C.dtype)
-                    tf_S = tf.floor(bin_len * tf.constant(self.C.SFactor))  # scalar
+                    tf_S = tf.floor(bin_len * tf.constant(self.C.SFactor, dtype=self.C.dtype, name='SFactor'))  # scalar
                     tf_S = tf.cast(tf_S, dtype=self.C.int_type, name='S')  # scalar
                     assert K.int_shape(tf_S) == ()
 
                     t = tf.expand_dims((tf.range(tf_S) + 1), axis=1)  # (S, 1)
                     t = tf.tile(t, [1, B])  # (S, B)
-                    t = tf.cast(t, dtype=self.C.int_type, name='t')
+                    t = tf.cast(t, dtype=self.C.int_type, name='t')  # (S, B)
                     assert K.int_shape(t) == (None, B)
 
                     clock1 = tf.cast(tf.divide(t, tf_S, 'clock1'), dtype=self.C.dtype)  # (S, B)
@@ -453,63 +453,65 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     x_s = tf.stack([clock1, clock2, s], axis=2, name='x_s')  # (S, B, 3)
                     assert K.int_shape(x_s) == (None, B, 3)
 
-                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),  # The init-value is not used
+                accum = self.ScanOut(tf.zeros(shape=(self.RuntimeBatchSize, self.C.K), dtype=self.C.dtype),  # The yLogits init-value is not used
                                      self._init_state_model)
-                out_s = tf.scan(self._scan_step_training, x_s,
+                out_s = tf.scan(self._scan_step_training,
+                                x_s,
                                 initializer=accum,
                                 swap_memory=self.C.swap_memory)
-                ## yLogits_s, yProbs_s, alpha_s = out_s.yLogits, out_s.state.yProbs, out_s.state.calstm_state.alpha
-                ## SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
+                # SCRATCHED: THIS IS ONLY ACCURATE FOR 1 CALSTM LAYER. GATHER ALPHAS OF LOWER CALSTM LAYERS.
                 yLogits_s = out_s.yLogits
                 alpha_s_n = tf.stack([cs.alpha for cs in out_s.state.calstm_states], axis=0) # (N, T, B, L)
                 beta_s_n = tf.stack([cs.beta for cs in out_s.state.calstm_states], axis=0) # (N, T, B, 1)
-                ## Switch the batch dimension back to first position - (B, T, ...)
-                ## yProbs = K.permute_dimensions(yProbs_s, [1,0,2])
-                # yLogits = K.permute_dimensions(yLogits_s, [1,0,2])
-                # alpha = K.permute_dimensions(alpha_s_n, [0,2,1,3]) # (N, B, T, L)
+                # Switch the batch dimension back to first position - (B, T, ...)
                 yLogits = tf.transpose(yLogits_s, [1,0,2], name='yLogits')
-                alpha = tf.transpose(alpha_s_n, [0,2,1,3], name='alpha') # (N, B, T, L)
-                beta = tf.transpose(beta_s_n, [0,2,1,3], name='beta') # (N, B, T, 1)
+                alpha = tf.transpose(alpha_s_n, [0,2,1,3], name='alpha')  # (N, B, T, L)
+                beta = tf.transpose(beta_s_n, [0,2,1,3], name='beta')  # (N, B, T, 1)
                 assert K.int_shape(beta) == (N, B, T, 1)
-                beta_out = tf.squeeze(beta, axis=3, name='beta_out') # (N, B, T, 1) -> (N, B, T)
+                beta_out = tf.squeeze(beta, axis=3, name='beta_out')  # (N, B, T, 1) -> (N, B, T)
                 assert K.int_shape(beta_out) == (N, B, T)
+                x_out = tf.transpose(x_s, [1, 0, 2] if self.C.build_scanning_RNN else [1, 0])
+                assert K.int_shape(x_out)[:2] == (B, T)
 
                 optimizer_ops = self._optimizer(yLogits,
-                                            self._y_s,
                                             alpha,
                                             beta,
+                                            tf.tile(tf.expand_dims(tf_S, axis=0), [B]) if self.C.build_scanning_RNN else self._seq_len,  # (B,)
+                                            self._y_s,
                                             self._seq_len,
                                             self._y_ctc,
                                             self._ctc_len)
 
                 return optimizer_ops.updated({
-                                              'inp_q':self._inp_q,
+                                              'inp_q': self._inp_q,
                                               'image_name': self._image_name,
                                               'beta': beta_out,  # (N, B, T)
-                                              'y_s': self._y_s, # (B,T)
-                                              'y_ctc': self._y_ctc # ((B,T),)
+                                              'y_s': self._y_s,  # (B, T)
+                                              'y_ctc': self._y_ctc,  # ((B,T),)
+                                              'x_s': x_out  # (B, S, 3) or (B, T)
                                               })
 
-
-    def _optimizer(self, yLogits, y_s, alpha, beta, sequence_lengths, y_ctc, ctc_len):
+    def _optimizer(self, yLogits, alpha, beta, x_len, y_s, y_len, y_ctc, ctc_len):
         with tf.variable_scope(self.outer_scope) as var_scope:
             with tf.name_scope(var_scope.original_name_scope):
                 B = self.C.B
-                Kv =self.C.K
+                Kv = self.C.K
                 L = self.C.L
                 N = self._num_calstm_layers
                 H = self.C.H
                 W = self.C.W
                 T = None
 
-                assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
-                assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
-                assert K.int_shape(beta) == (N, B, None, 1) # (N, B, T, 1)
+                assert K.int_shape(yLogits) == (B, None, Kv)  # (B, T, K)
+                assert K.int_shape(alpha) == (N, B, None, L)  # (N, B, T, L)
+                assert K.int_shape(beta) == (N, B, None, 1)  # (N, B, T, 1)
                 assert K.int_shape(y_s) == (B, None)  # (B, T)
-                assert K.int_shape(sequence_lengths) == (B,)
+                assert K.int_shape(x_len) == (B,)
+                assert K.int_shape(y_len) == (B,)
                 assert K.int_shape(y_ctc) == (B, None)  # (B, T)
                 assert K.int_shape(ctc_len) == (B,)
                 tf_T = tf.shape(yLogits)[1]
+                bin_len = tf.shape(y_s)[1]
 
                 ################ Loss Calculations ################
                 with tf.variable_scope('Loss_Calculations'):
@@ -517,80 +519,95 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ################ Regularization Cost ################
                     with tf.variable_scope('Regularization_Cost'):
                         if (self.C.weights_regularizer is not None) and self.C.rLambda > 0:
-                            reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
+                            reg_loss = self.C.rLambda * tf.reduce_sum(
+                                [self.C.weights_regularizer(t) for t in
+                                 tf.get_collection("REGULARIZED_WEIGHTS")])
                             _reg_wt_names = [var.name for var in tf.get_collection("REGULARIZED_WEIGHTS")]
                             assert len(dlc.get_dupes(_reg_wt_names)) == 0, \
-                                'Some regularization weights seem to have been double-counted.%s'%dlc.get_dupes(_reg_wt_names)
+                                'Some regularization weights seem to have been double-counted.%s' % dlc.get_dupes(
+                                    _reg_wt_names)
                         else:
                             reg_loss = tf.constant(0, dtype=self.C.dtype)
 
+                    x_mask = tf.sequence_mask(x_len,
+                                                     maxlen=tf_T,
+                                                     dtype=self.C.dtype,
+                                                     name='sequence_mask')  # (B, T)
+                    assert K.int_shape(x_mask) == (B, None)  # (B,T)
+
                     ################ Build LogLoss ################
-                    with tf.variable_scope('LogLoss'):
-                        sequence_mask = tf.sequence_mask(sequence_lengths,
-                                                         maxlen=tf_T,
-                                                         dtype=self.C.dtype,
-                                                         name='sequence_mask')  # (B, T)
-                        assert K.int_shape(sequence_mask) == (B,None) # (B,T)
+                    if not self.C.use_ctc_loss:
+                        with tf.variable_scope('LogLoss'):
+                            assert not self.C.build_scanning_RNN
+                            sequence_mask = x_mask
+                            ## Masked negative log-likelihood of the sequence.
+                            ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
+                            ## joint-sequence-probability is same as taking sum of log of probability at each time-step
 
-                        ## Masked negative log-likelihood of the sequence.
-                        ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
-                        ## joint-sequence-probability is same as taking sum of log of probability at each time-step
-
-                        ################ Compute Sequence Log-Loss / Log-Likelihood  ################
-                        #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
-                        if self.C.sum_logloss:
-                            ## Here we do not normalize the log-loss across time-steps because the
-                            ## paper as well as it's source-code do not do that.
-                            log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-                                                                        targets=y_s,
-                                                                        weights=sequence_mask,
-                                                                        average_across_timesteps=False,
-                                                                        average_across_batch=False,
-                                                                        name='log_losses'
-                                                                        )
-                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                            log_losses = tf.reduce_sum(log_losses, axis=1, name='total log-loss') # sum along time dimension => (B,)
-                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                            log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
-                        else: ## Standard log perplexity (average per-word log perplexity)
-                            log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-                                                                        targets=y_s,
-                                                                        weights=sequence_mask,
-                                                                        average_across_timesteps=True,
-                                                                        average_across_batch=False)
-                            # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-                            log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
-                        assert K.int_shape(log_likelihood) == tuple()
+                            ################ Compute Sequence Log-Loss / Log-Likelihood  ################
+                            #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
+                            if self.C.sum_logloss:
+                                ## Here we do not normalize the log-loss across time-steps because the
+                                ## paper as well as it's source-code do not do that.
+                                log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                                                                              targets=y_s,
+                                                                              weights=sequence_mask,
+                                                                              average_across_timesteps=False,
+                                                                              average_across_batch=False,
+                                                                              name='log_losses'
+                                                                              )
+                                # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                                log_losses = tf.reduce_sum(log_losses, axis=1,
+                                                           name='total log-loss')  # sum along time dimension => (B,)
+                                # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                                log_likelihood = tf.reduce_mean(log_losses, axis=0,
+                                                                name='CrossEntropyPerSentence')  # scalar
+                            else:  ## Standard log perplexity (average per-word log perplexity)
+                                log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+                                                                              targets=y_s,
+                                                                              weights=sequence_mask,
+                                                                              average_across_timesteps=True,
+                                                                              average_across_batch=False)
+                                # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+                                log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
+                            assert K.int_shape(log_likelihood) == tuple()
+                    else:
+                        log_likelihood = tf.constant(0.0, name='no_log_likelihood')
 
                     ################   Calculate the alpha penalty:   ################
                     #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
                     with tf.variable_scope('AlphaPenalty'):
-                        alpha_mask = tf.expand_dims(sequence_mask, axis=2)  # (B, T, 1)
+                        alpha_mask = tf.expand_dims(x_mask, axis=2)  # (B, T, 1)
                         if self.C.MeanSumAlphaEquals1:
                             mean_sum_alpha_over_t = 1.0
                         else:
-                            mean_sum_alpha_over_t = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
-                            mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1) # (B, 1)
+                            mean_sum_alpha_over_t = tf.div(tf.cast(x_len, dtype=self.C.dtype),
+                                                           tf.cast(self.C.L, dtype=self.C.dtype))  # (B,)
+                            mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1)  # (B, 1)
 
-                        #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
+                        # sum_over_t = tf.reduce_sum(tf.multiply(alpha,x_mask), axis=1, keep_dims=False)# (B, L)tf_S, tf_MaxS,
                         #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
                         #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                        sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
+                        sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2,
+                                                   keep_dims=False)  # (N, B, L)
                         squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
                         abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
 
                         alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
-                        alpha_abs_error = tf.reduce_sum(abs_diff,  axis=2, keep_dims=False)  # (N, B)
+                        alpha_abs_error = tf.reduce_sum(abs_diff, axis=2, keep_dims=False)  # (N, B)
                         # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
                         # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
 
                         ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
-                        ase_max = tf.constant((L-1.0) / L*1.0) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype))  # (B,)
+                        ase_max = tf.constant((L - 1.0) / L * 1.0) * tf.square(
+                            tf.cast(x_len, dtype=self.C.dtype))  # (B,)
                         assert K.int_shape(ase_max) == (B,)
-                        ase_max = tf.expand_dims(ase_max, axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
+                        ase_max = tf.expand_dims(ase_max,
+                                                 axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
 
                         # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
-                        aae_max = tf.constant(2. * (L-1.0) / (L*1.0)) * tf.cast(sequence_lengths, dtype=self.C.dtype)  # (B,)
+                        aae_max = tf.constant(2. * (L - 1.0) / (L * 1.0)) * tf.cast(x_len,
+                                                                                    dtype=self.C.dtype)  # (B,)
                         assert K.int_shape(aae_max) == (B,)
                         aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
 
@@ -601,97 +618,117 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
 
                         if self.C.pLambda > 0:
-                            alpha_penalty = tf.identity(self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
-                                                        name='alpha_penalty')  # scalar
+                            alpha_penalty = tf.identity(
+                                self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
+                                name='alpha_penalty')  # scalar
                         else:
                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
 
-                        mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
+                        # mean_seq_len = tf.reduce_mean(tf.cast(x_len, dtype=tf.float32))
                         # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
                         # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
                         assert K.int_shape(alpha_penalty) == tuple()
 
                         # Reshape alpha for debugging output
-                        alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
-                        alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2), name='alpha_out') # (N, B, T, H, W)->(N, B, H, W, T)
+                        alpha_out = tf.reshape(alpha, (N, B, -1, H, W))  # (N, B, T, L) -> (N, B, T, H, W)
+                        alpha_out = tf.transpose(alpha_out, perm=(0, 1, 3, 4, 2),
+                                                 name='alpha_out')  # (N, B, T, H, W)->(N, B, H, W, T)
                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
 
                         # Beta metrics for logging
                         beta  # (N, B, T, 1)
                         alpha_mask  # (B, T, 1)
                         beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
-                        seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
-                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
-                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1, 1, tf_T])  # (N, B, T)
-                        beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
+                        seq_lens = tf.cast(tf.expand_dims(x_len, axis=0),
+                                           dtype=self.C.dtype)  # (N, B)
+                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False), seq_lens,
+                                              name='beta_mean')  # (N, B)
+                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2),
+                                                  [1, 1, tf_T])  # (N, B, T)
+                        beta_mask = tf.expand_dims(x_mask, axis=0)  # (1, B, T)
                         beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
-                        beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
-
+                        beta_std_dev = tf.sqrt(
+                            tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2,
+                                          keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
 
                     ################ Build CTC Cost Function ################
                     ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
                     ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
+                    ## In case of scanning-RNN, x_s is already much longer than y_s by a factor of self.C.SFactor. In
+                    ## case of scanning-RNN this is the only log-loss calculated.
                     ## Using CTC loss will have the following side-effect:
                     ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
                     ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
                     ##     between tokens when printing out the predicted markup.
                     with tf.variable_scope('CTC_Cost'):
                         ## sparse tensor
-                    #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
+                        #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
                         ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
-                        assert K.int_shape(ctc_mask) == (B,None) # (B,T)
-                        y_idx =    tf.where(ctc_mask)
-                        y_vals =   tf.gather_nd(y_ctc, y_idx)
+                        assert K.int_shape(ctc_mask) == (B, None)  # (B,T)
+                        y_idx = tf.where(ctc_mask)
+                        y_vals = tf.gather_nd(y_ctc, y_idx)
                         y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
                         ctc_losses = tf.nn.ctc_loss(y_sparse,
-                                                yLogits,
-                                                sequence_lengths,
-                                                ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
-                                                time_major=False)
+                                                    yLogits,
+                                                    x_len,
+                                                    ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
+                                                    time_major=False)
                         ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
-                        assert K.int_shape(ctc_losses) == (B, )
+                        assert K.int_shape(ctc_losses) == (B,)
                         if self.C.sum_logloss:
-                            ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
-                        else: # mean loss per word
-                            ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
+                            ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss')  # scalar
+                        else:  # mean loss per word
+                            ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0),
+                                              tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)),
+                                              name='CTCWordLoss')  # scalar
                         assert K.int_shape(ctc_loss) == tuple()
+
                     if self.C.use_ctc_loss:
                         cost = ctc_loss + alpha_penalty + reg_loss
                     else:
+                        assert not self.C.build_scanning_RNN, 'use_ctc_loss must be True when building a scanning-RNN'
                         cost = log_likelihood + alpha_penalty + reg_loss
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
                     if (self.C.CTCBlankTokenID is not None) or (self.C.SpaceTokenID is not None):
-                        yLogits_s = K.permute_dimensions(yLogits, [1,0,2])  # (T, B, K)
+                        yLogits_s = K.permute_dimensions(yLogits, [1, 0, 2])  # (T, B, K)
                         ## ctc_beam_search_decoder sometimes produces ID values = -1
                         ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
-                        decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
-                                                                              top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
+                        decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s,
+                                                                              x_len,
+                                                                              beam_width=self.C.ctc_beam_width,
+                                                                              top_paths=1,
+                                                                              merge_repeated=(
+                                                                              not self.C.no_ctc_merge_repeated))
                         # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
 
                         ## Pad EOS_Tokens to the end of the sequences. (and convert to dense form).
-                        ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=self.C.NullTokenID) # (B, T)
-                        ctc_decoded_ids.set_shape((B,None))
+                        ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0],
+                                                                    default_value=self.C.NullTokenID)  # (B, T)
+                        ctc_decoded_ids.set_shape((B, None))
                         ## get seq-lengths including eos_token (as is the case with tf.dynamic_decode as well as our input sequences)
                         ctc_decoded_lens = tfc.seqlens(ctc_decoded_ids)
-    #                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
-    #                                                                        ctc_decoded_ids,
-    #                                                                        sequence_lengths,
-    #                                                                        self.C.SpaceTokenID,
-    #                                                                        padding_token=0) # ((B,T), (B,))
-    #                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
+                        #                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
+                        #                                                                        ctc_decoded_ids,
+                        #                                                                        sequence_lengths,
+                        #                                                                        self.C.SpaceTokenID,
+                        #                                                                        padding_token=0) # ((B,T), (B,))
+                        #                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
                         # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
                         ctc_ed = tfc.edit_distance2D(B,
                                                      ctc_decoded_ids, ctc_decoded_lens,
                                                      tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
-                                                     self.C.CTCBlankTokenID, self.C.SpaceTokenID, self.C.NullTokenID)
-                        mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
+                                                     self.C.CTCBlankTokenID, self.C.SpaceTokenID,
+                                                     self.C.NullTokenID)
+                        mean_ctc_ed = tf.reduce_mean(ctc_ed)  # scalar
                         num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
-    #                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
-                        pred_len_ratio = tf.divide( tf.cast(ctc_decoded_lens, self.C.dtype), tf.cast(ctc_len, self.C.dtype) )
+                        #                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
+                        pred_len_ratio = tf.divide(tf.cast(ctc_decoded_lens, self.C.dtype),
+                                                   tf.cast(ctc_len, self.C.dtype))
                         # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
                     else:
+                        assert not self.C.build_scanning_RNN, 'CTC Beamsearch Decoding must not be turned-off in a scanning-RNN'
                         ctc_ed = None
                         mean_ctc_ed = None
                         pred_len_ratio = None
@@ -707,34 +744,277 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     grads = tf.constant(0)
 
                 return dlc.Properties({
-                        'grads': grads,
-                        'alpha':  alpha_out, #(N, B, H, W, T)
-                        'beta_mean': beta_mean,  # (N, B)
-                        'beta_std_dev': beta_std_dev,  # (N, B)
-                        # 'train': train,
-                        # 'global_step':global_step, # scalar
-                        'log_likelihood': log_likelihood, # scalar
-                        'ctc_loss': ctc_loss, # scalar
-                        'loss': ctc_loss if self.C.use_ctc_loss else log_likelihood,
-                        'alpha_penalty': alpha_penalty, # scalar
-                        'reg_loss': reg_loss, # scalar
-                        'cost': cost, # scalar
-                        'ctc_ed': ctc_ed, #(B,)
-                        'mean_ctc_ed': mean_ctc_ed, # scalar
-                        'sequence_lengths': sequence_lengths,  # (B,)
-                        'ctc_len': ctc_len, # (B,)
-#                        'pred_squash_lens': ctc_squashed_lens, # (B,)
-                        'pred_len_ratio': pred_len_ratio, # (B,)
-                        'num_hits': num_hits,
-                        'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
-                        'mean_norm_aae': mean_norm_aae, # scalar between 0. and 100.0
-                        # 'mean_sum_alpha_i': mean_sum_alpha_over_t,
-                        # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
-                        'mean_seq_len': mean_seq_len, # scalar
-                        'predicted_ids': ctc_decoded_ids, # (B,T)
-                        'predicted_lens': ctc_decoded_lens, #(B,)
-#                        'predicted_squashed_ids': ctc_squashed_ids #(B,T)
-                        })
+                    'grads': grads,
+                    'alpha': alpha_out,  # (N, B, H, W, T)
+                    'beta_mean': beta_mean,  # (N, B)
+                    'beta_std_dev': beta_std_dev,  # (N, B)
+                    'log_likelihood': log_likelihood,  # scalar
+                    'ctc_loss': ctc_loss,  # scalar
+                    'loss': ctc_loss if self.C.use_ctc_loss else log_likelihood,
+                    'alpha_penalty': alpha_penalty,  # scalar
+                    'reg_loss': reg_loss,  # scalar
+                    'cost': cost,  # scalar
+                    'ctc_ed': ctc_ed,  # (B,)
+                    'mean_ctc_ed': mean_ctc_ed,  # scalar
+                    'y_len': y_len,  # (B,)
+                    'ctc_len': ctc_len,  # (B,)
+                    'scan_len': x_len if self.C.build_scanning_RNN else tf.constant(0.),  # (B,)
+                    'bin_len': bin_len,  # scalar
+                    'pred_len_ratio': pred_len_ratio,  # (B,)
+                    'num_hits': num_hits,
+                    'mean_norm_ase': mean_norm_ase,  # scalar between 0. and 100.0
+                    'mean_norm_aae': mean_norm_aae,  # scalar between 0. and 100.0
+                    'predicted_ids': ctc_decoded_ids,  # (B,T)
+                    'predicted_lens': ctc_decoded_lens  # (B,)
+                })
+
+
+
+#     def _optimizer(self, yLogits, alpha, beta, y_s, sequence_lengths, y_ctc, ctc_len):
+#         with tf.variable_scope(self.outer_scope) as var_scope:
+#             with tf.name_scope(var_scope.original_name_scope):
+#                 B = self.C.B
+#                 Kv =self.C.K
+#                 L = self.C.L
+#                 N = self._num_calstm_layers
+#                 H = self.C.H
+#                 W = self.C.W
+#                 T = None
+#
+#                 assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
+#                 assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
+#                 assert K.int_shape(beta) == (N, B, None, 1) # (N, B, T, 1)
+#                 assert K.int_shape(y_s) == (B, None)  # (B, T)
+#                 assert K.int_shape(sequence_lengths) == (B,)
+#                 assert K.int_shape(y_ctc) == (B, None)  # (B, T)
+#                 assert K.int_shape(ctc_len) == (B,)
+#                 tf_T = tf.shape(yLogits)[1]
+#
+#                 ################ Loss Calculations ################
+#                 with tf.variable_scope('Loss_Calculations'):
+#
+#                     ################ Regularization Cost ################
+#                     with tf.variable_scope('Regularization_Cost'):
+#                         if (self.C.weights_regularizer is not None) and self.C.rLambda > 0:bin_len
+#                             reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
+#                             _reg_wt_names = [var.name for var in tf.get_collection("REGULARIZED_WEIGHTS")]
+#                             assert len(dlc.get_dupes(_reg_wt_names)) == 0, \
+#                                 'Some regularization weights seem to have been double-counted.%s'%dlc.get_dupes(_reg_wt_names)
+#                         else:
+#                             reg_loss = tf.constant(0, dtype=self.C.dtype)
+#
+#                     ################ Build LogLoss ################
+#                     with tf.variable_scope('LogLoss'):
+#                         sequence_mask = tf.sequence_mask(sequence_lengths,
+#                                                          maxlen=tf_T,
+#                                                          dtype=self.C.dtype,
+#                                                          name='sequence_mask')  # (B, T)
+#                         assert K.int_shape(sequence_mask) == (B,None) # (B,T)
+#
+#                         ## Masked negative log-likelihood of the sequence.
+#                         ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
+#                         ## joint-sequence-probability is same as taking sum of log of probability at each time-step
+#
+#                         ################ Compute Sequence Log-Loss / Log-Likelihood  ################
+#                         #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
+#                         if self.C.sum_logloss:
+#                             ## Here we do not normalize the log-loss across time-steps because the
+#                             ## paper as well as it's source-code do not do that.
+#                             log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+#                                                                         targets=y_s,
+#                                                                         weights=sequence_mask,
+#                                                                         average_across_timesteps=False,
+#                                                                         average_across_batch=False,
+#                                                                         name='log_losses'
+#                                                                         )
+#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+#                             log_losses = tf.reduce_sum(log_losses, axis=1, name='total log-loss') # sum along time dimension => (B,)
+#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+#                             log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
+#                         else: ## Standard log perplexity (average per-word log perplexity)
+#                             log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
+#                                                                         targets=y_s,
+#                                                                         weights=sequence_mask,
+#                                                                         average_across_timesteps=True,
+#                                                                         average_across_batch=False)
+#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
+#                             log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
+#                         assert K.int_shape(log_likelihood) == tuple()
+#
+#                     ################   Calculate the alpha penalty:   ################
+#                     #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
+#                     with tf.variable_scope('AlphaPenalty'):
+#                         alpha_mask = tf.expand_dims(sequence_mask, axis=2)  # (B, T, 1)
+#                         if self.C.MeanSumAlphaEquals1:
+#                             mean_sum_alpha_over_t = 1.0
+#                         else:
+#                             mean_sum_alpha_over_t = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
+#                             mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1) # (B, 1)
+#
+#                         #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
+#                         #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
+#                         #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+#                         sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
+#                         squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
+#                         abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
+#
+#                         alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
+#                         alpha_abs_error = tf.reduce_sum(abs_diff,  axis=2, keep_dims=False)  # (N, B)
+#                         # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+#                         # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
+#
+#                         ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
+#                         ase_max = tf.constant((L-1.0) / L*1.0) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype))  # (B,)
+#                         assert K.int_shape(ase_max) == (B,)
+#                         ase_max = tf.expand_dims(ase_max, axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
+#
+#                         # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
+#                         aae_max = tf.constant(2. * (L-1.0) / (L*1.0)) * tf.cast(sequence_lengths, dtype=self.C.dtype)  # (B,)
+#                         assert K.int_shape(aae_max) == (B,)
+#                         aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
+#
+#                         normalized_ase = alpha_squared_error * 100. / ase_max  # (N, B) all values lie between 0. and 100.
+#                         mean_norm_ase = tf.reduce_mean(normalized_ase)  # scalar between 0. and 100.0
+#
+#                         normalized_aae = alpha_abs_error * 100. / aae_max  # (N, B) all values lie between 0. and 100.
+#                         mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
+#
+#                         if self.C.pLambda > 0:
+#                             alpha_penalty = tf.identity(self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
+#                                                         name='alpha_penalty')  # scalar
+#                         else:
+#                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
+#
+#                         mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
+#                         # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
+#                         # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
+#                         assert K.int_shape(alpha_penalty) == tuple()
+#
+#                         # Reshape alpha for debugging output
+#                         alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
+#                         alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2), name='alpha_out') # (N, B, T, H, W)->(N, B, H, W, T)
+#                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
+#
+#                         # Beta metrics for logging
+#                         beta  # (N, B, T, 1)
+#                         alpha_mask  # (B, T, 1)
+#                         beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
+#                         seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
+#                         beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
+#                         beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1, 1, tf_T])  # (N, B, T)
+#                         beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
+#                         beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
+#                         beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
+#
+#
+#                     ################ Build CTC Cost Function ################
+#                     ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
+#                     ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
+#                     ## Using CTC loss will have the following side-effect:
+#                     ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
+#                     ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
+#                     ##     between tokens when printing out the predicted markup.
+#                     with tf.variable_scope('CTC_Cost'):
+#                         ## sparse tensor
+#                     #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
+#                         ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
+#                         assert K.int_shape(ctc_mask) == (B,None) # (B,T)
+#                         y_idx =    tf.where(ctc_mask)
+#                         y_vals =   tf.gather_nd(y_ctc, y_idx)
+#                         y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
+#                         ctc_losses = tf.nn.ctc_loss(y_sparse,
+#                                                 yLogits,
+#                                                 sequence_lengths,
+#                                                 ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
+#                                                 time_major=False)
+#                         ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
+#                         assert K.int_shape(ctc_losses) == (B, )
+#                         if self.C.sum_logloss:
+#                             ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
+#                         else: # mean loss per word
+#                             ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
+#                         assert K.int_shape(ctc_loss) == tuple()
+#                     if self.C.use_ctc_loss:
+#                         cost = ctc_loss + alpha_penalty + reg_loss
+#                     else:
+#                         cost = log_likelihood + alpha_penalty + reg_loss
+#
+#                 ################ CTC Beamsearch Decoding ################
+#                 with tf.variable_scope('Accuracy_Calculation'):
+#                     if (self.C.CTCBlankTokenID is not None) or (self.C.SpaceTokenID is not None):
+#                         yLogits_s = K.permute_dimensions(yLogits, [1,0,2])  # (T, B, K)
+#                         ## ctc_beam_search_decoder sometimes produces ID values = -1
+#                         ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
+#                         decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
+#                                                                               top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
+#                         # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
+#
+#                         ## Pad EOS_Tokens to the end of the sequences. (and convert to dense form).
+#                         ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=self.C.NullTokenID) # (B, T)
+#                         ctc_decoded_ids.set_shape((B,None))
+#                         ## get seq-lengths including eos_token (as is the case with tf.dynamic_decode as well as our input sequences)
+#                         ctc_decoded_lens = tfc.seqlens(ctc_decoded_ids)
+#     #                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
+#     #                                                                        ctc_decoded_ids,
+#     #                                                                        sequence_lengths,
+#     #                                                                        self.C.SpaceTokenID,
+#     #                                                                        padding_token=0) # ((B,T), (B,))
+#     #                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
+#                         # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
+#                         ctc_ed = tfc.edit_distance2D(B,
+#                                                      ctc_decoded_ids, ctc_decoded_lens,
+#                                                      tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
+#                                                      self.C.CTCBlankTokenID, self.C.SpaceTokenID, self.C.NullTokenID)
+#                         mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
+#                         num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
+#     #                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
+#                         pred_len_ratio = tf.divide( tf.cast(ctc_decoded_lens, self.C.dtype), tf.cast(ctc_len, self.C.dtype) )
+#                         # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
+#                     else:
+#                         ctc_ed = None
+#                         mean_ctc_ed = None
+#                         pred_len_ratio = None
+#                         num_hits = None
+#                         ctc_decoded_ids = None
+#                         ctc_decoded_lens = None
+#
+#                 ################ Optimizer ################
+#                 if self._opt is not None:
+#                     with tf.variable_scope('Optimizer'):
+#                         grads = self._opt.compute_gradients(cost)
+#                 else:
+#                     grads = tf.constant(0)
+#
+#                 return dlc.Properties({
+#                         'grads': grads,
+#                         'alpha':  alpha_out, #(N, B, H, W, T)
+#                         'beta_mean': beta_mean,  # (N, B)
+#                         'beta_std_dev': beta_std_dev,  # (N, B)
+#                         # 'train': train,
+#                         # 'global_step':global_step, # scalar
+#                         'log_likelihood': log_likelihood, # scalar
+#                         'ctc_loss': ctc_loss, # scalar
+#                         'loss': ctc_loss if self.C.use_ctc_loss else log_likelihood,
+#                         'alpha_penalty': alpha_penalty, # scalar
+#                         'reg_loss': reg_loss, # scalar
+#                         'cost': cost, # scalar
+#                         'ctc_ed': ctc_ed, #(B,)
+#                         'mean_ctc_ed': mean_ctc_ed, # scalar
+#                         'sequence_lengths': sequence_lengths,  # (B,)
+#                         'ctc_len': ctc_len, # (B,)
+# #                        'pred_squash_lens': ctc_squashed_lens, # (B,)
+#                         'pred_len_ratio': pred_len_ratio, # (B,)
+#                         'num_hits': num_hits,
+#                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
+#                         'mean_norm_aae': mean_norm_aae, # scalar between 0. and 100.0
+#                         # 'mean_sum_alpha_i': mean_sum_alpha_over_t,
+#                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
+#                         'mean_seq_len': mean_seq_len, # scalar
+#                         'predicted_ids': ctc_decoded_ids, # (B,T)
+#                         'predicted_lens': ctc_decoded_lens, #(B,)
+# #                        'predicted_squashed_ids': ctc_squashed_ids #(B,T)
+#                         })
+
 
     def _beamsearch(self):
         """ Build the prediction graph of the model using beamsearch """
@@ -847,7 +1127,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 with tf.name_scope('top_1'):
                     ## Top 1. I verified that beams in beamsearch_outputs are already sorted by seq_scores.
                     top1_seq_scores = seq_scores[:,0] # (B,)
-                    top1_ids = bm_ids[:,0,:] # (B, T)
+                    top1_ids = bm_ids[:,0,:] # (B, T)training
                     assert top1_ids.get_shape().as_list() == [B, T]
                     top1_seq_lens = bm_seq_lens[:,0] # (B,)
                     top1_len_ratio = tf.divide(top1_seq_lens,self._seq_len)
@@ -951,22 +1231,40 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
 
 def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'):
     with tf.variable_scope('SyncTowers') as var_scope:
+        zero_scalar = tf.constant(0.0)
+        zero_list = [zero_scalar]
+        def allNone(seq):
+            return all([item is None for item in seq])
+
         def gather(prop_name):
-            return [o[prop_name] for o in tower_ops]
+            tensor_list = [o[prop_name] for o in tower_ops]
+            return tensor_list
+
         def get_mean(prop_name, op_name=None):
-            return tf.reduce_mean(gather(prop_name), name=op_name or prop_name)
+            tensor_list = gather(prop_name)
+            return tf.reduce_mean(tensor_list, name=op_name or '%s_out'%prop_name)
+
         def get_sum(prop_name, op_name=None):
-            return tf.reduce_sum(gather(prop_name), name=op_name or prop_name)
+            tensor_list = gather(prop_name)
+            return tf.reduce_sum(tensor_list, name=op_name or '%s_out'%prop_name)
+
         def concat(prop_name, axis=0):
-            return tf.concat(gather(prop_name), axis=axis)
+            tensor_list = gather(prop_name)
+            return tf.concat(tensor_list, axis=axis, name='%s_out'%prop_name)
+
+        def stack(prop_name, op_name=None):
+            tensor_list = gather(prop_name)
+            return tf.stack(tensor_list, axis=0, name=op_name or '%s_out'%prop_name)
 
         log_likelihood = get_mean('log_likelihood')
         ctc_loss = get_mean('ctc_loss')
         alpha_penalty = get_mean('alpha_penalty')
         reg_loss = tower_ops[0]['reg_loss'] # RegLoss should be same for all towers
+
         if hyper.use_ctc_loss:
             cost = ctc_loss + alpha_penalty + reg_loss
         else:
+            assert not hyper.build_scanning_RNN
             cost = log_likelihood + alpha_penalty + reg_loss
 
         if opt is not None:
@@ -1006,6 +1304,7 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             ph_pred_len_ratios = tf.placeholder(hyper.dtype)
             ph_num_hits = tf.placeholder(hyper.int_type)
             ph_reg_losses = tf.placeholder(hyper.dtype)
+            ph_scan_lens = tf.placeholder(hyper.int_type)
 
             aggs = []
             aggs.append(tf.summary.scalar('%s/time_per100/'%run_mode, ph_train_time))
@@ -1014,17 +1313,18 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             aggs.append(tf.summary.scalar('%s/bleu2/'%run_mode, ph_bleu_score2))
             aggs.append(tf.summary.histogram('%s/ctc_ed_dist/'%run_mode, ph_ctc_eds))
             aggs.append(tf.summary.scalar('%s/ctc_ed/'%run_mode, tf.reduce_mean(ph_ctc_eds)))
-            aggs.append(tf.summary.scalar('%s/logloss_mean/'%run_mode, tf.reduce_mean(ph_loglosses)))
-            min_logloss = tf.reduce_min(ph_loglosses)
-            aggs.append(tf.summary.scalar('%s/logloss/'%run_mode, min_logloss))
-            aggs.append(tf.summary.scalar('%s/batch_logloss_min/'%run_mode, min_logloss))
-            aggs.append(tf.summary.scalar('%s/batch_logloss_max/'%run_mode, tf.reduce_max(ph_loglosses)))
+            if not hyper.use_ctc_loss:
+                aggs.append(tf.summary.scalar('%s/logloss_mean/'%run_mode, tf.reduce_mean(ph_loglosses)))
+                min_logloss = tf.reduce_min(ph_loglosses)
+                aggs.append(tf.summary.scalar('%s/logloss/'%run_mode, min_logloss))
+                aggs.append(tf.summary.scalar('%s/batch_logloss_min/'%run_mode, min_logloss))
+                aggs.append(tf.summary.scalar('%s/batch_logloss_max/'%run_mode, tf.reduce_max(ph_loglosses)))
+                aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_mode, tf.reduce_mean(ph_alpha_penalties)))
             aggs.append(tf.summary.scalar('%s/ctc_loss_mean/'%run_mode, tf.reduce_mean(ph_ctc_losses)))
             min_ctc_loss = tf.reduce_min(ph_ctc_losses)
             aggs.append(tf.summary.scalar('%s/ctc_loss/'%run_mode, min_ctc_loss))
             aggs.append(tf.summary.scalar('%s/batch_ctc_loss_min/'%run_mode, min_ctc_loss))
             aggs.append(tf.summary.scalar('%s/batch_ctc_loss_max/'%run_mode, tf.reduce_max(ph_ctc_losses)))
-            aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_mode, tf.reduce_mean(ph_alpha_penalties)))
             aggs.append(tf.summary.scalar('%s/total_cost/'%run_mode, tf.reduce_mean(ph_costs)))
             aggs.append(tf.summary.scalar('%s/mean_norm_ase/'%run_mode, tf.reduce_mean(ph_mean_norm_ases)))
             aggs.append(tf.summary.histogram('%s/mean_norm_ase_dist/'%run_mode, ph_mean_norm_ases))
@@ -1040,17 +1340,19 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             aggs.append(tf.summary.scalar('%s/num_hits/'%run_mode, mean_hits))
             aggs.append(tf.summary.scalar('%s/accuracy/'%run_mode, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0)))
             aggs.append(tf.summary.scalar('%s/regLoss/'%run_mode, tf.reduce_mean(ph_reg_losses)))
+            if hyper.build_scanning_RNN:
+                aggs.append(tf.summary.scalar('%s/scanLen/'%run_mode, tf.reduce_mean(tf.cast(ph_scan_lens, dtype=hyper.dtype))))
+                aggs.append(tf.summary.histogram('%s/scanLen_dist/'%run_mode, ph_scan_lens))
 
             tb_agg_logs = tf.summary.merge(aggs)
 
             if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
-                zero = tf.constant(0.0)
-                ctc_ed = zero
-                mean_ctc_ed = zero
-                pred_len_ratio = zero
-                num_hits = zero
-                predicted_ids_list = zero
-                predicted_lens = zero
+                ctc_ed = zero_scalarconcat_scalar
+                mean_ctc_ed = zero_scalar
+                pred_len_ratio = zero_scalar
+                num_hits = zero_scalar
+                predicted_ids_list = zero_scalar
+                predicted_lens = zero_scalar
             else:
                 ctc_ed = concat('ctc_ed') # (num_gpus*B,)
                 pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
@@ -1058,17 +1360,22 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
                 predicted_ids_list = gather('predicted_ids')  # [(B,T), ...]
                 predicted_lens = concat('predicted_lens')  # (num_gpus*B,)
 
+            if hyper.build_scanning_RNN:
+                scan_len = concat('scan_len')  # (num_gpus*B,)
+            else:
+                scan_len = zero_scalar
+
         return dlc.Properties({
             'train': apply_grads,  # op
             'image_name_list': gather('image_name'),  # [(B,), ...]
             'alpha': concat('alpha', axis=1),  # (N, num_gpus*B, H, W, T)
             'beta': concat('beta', axis=1),  # (N, num_gpus*B, T)
-            'log_likelihood': log_likelihood,  # scalara
+            'log_likelihood': log_likelihood,  # scalar
             'ph_loglosses': ph_loglosses,  # (num_steps,)
             'ctc_loss': ctc_loss,  # scalar
             'ph_ctc_losses': ph_ctc_losses,  # (num_steps,)
             'loss': ctc_loss if hyper.use_ctc_loss else log_likelihood,  # scalar
-            'alpha_penalty': alpha_penalty,  # scalar
+            'alpha_penalty': alpha_penalty,  # scalarconcat_scalar
             'ph_alpha_penalties': ph_alpha_penalties,  # (num_steps,)
             'mean_norm_ase': get_mean('mean_norm_ase'),  # scalar between 0. and 100.
             'ph_mean_norm_ases': ph_mean_norm_ases,  # (num_steps,)
@@ -1090,12 +1397,13 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             'predicted_lens': predicted_lens,  # (num_gpus*B,)
             'pred_len_ratio': pred_len_ratio,  # (num_gpus*B,)
             'ph_pred_len_ratios': ph_pred_len_ratios, # (num_steps*num_gpus*B,)
-#            'pred_squash_ids_list': gather('predicted_squashed_ids'), # [(B,T), ...]
-#            'pred_squash_lens': concat('pred_squash_lens'), # (num_gpus*B,)
+            'x_s_list': gather('x_s'),  # [(B,T),...] or [(B,S,3),...]
             'y_s_list': gather('y_s'),  # [(B,T),...]
             'y_ctc_list': gather('y_ctc'),  # [(B,T),...]
             'ctc_len': concat('ctc_len'),  # (num_gpus*B,)
-#            'tb_logs':tb_logs, # summary string
+            'scan_len': scan_len,  # (num_gpus*B,)
+            'bin_len': stack('bin_len'),  # (num_gpus*B,)
+            'ph_scan_lens': ph_scan_lens,  # (num_steps*num_gpus*B,)
             'ph_train_time': ph_train_time,  # scalar
             'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_gpus*B,)
             'ph_bleu_score2': ph_bleu_score2,  # scalar

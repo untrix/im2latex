@@ -117,9 +117,9 @@ def main():
     parser.add_argument("--logdir-tag", dest="logdir_tag", type=str,
                         help="(optional) Sets TensorboardParams.logdir_tab. Can't specify the --restore argument along with this.",
                         default=None)
-    parser.add_argument("--use-ctc-loss", dest="use_ctc_loss", action='store_true',
-                        help="Sets the use_ctc_loss hyper parameter. Defaults to False.",
-                        default=False)
+    # parser.add_argument("--use-ctc-loss", dest="use_ctc_loss", action='store_true',
+    #                     help="Sets the use_ctc_loss hyper parameter. Defaults to False.",
+    #                     default=False)
     parser.add_argument("--validate", dest="doValidate", action='store_true',
                         help="Run validation cycle only. --restore option should be provided along with this.",
                         default=False)
@@ -184,9 +184,9 @@ def main():
                                     'pLambda': 0.0005,  # 0.0, 0.005, .0005, .0001
                                     'rLambda': args.rLambda,  # 0.0005, 0.00005
                                     'make_training_accuracy_graph': False,
-                                    'use_ctc_loss': args.use_ctc_loss,
+                                    # 'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
-                                    'tf_session_allow_growth': True,
+                                    'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
                                     'beamsearch_length_penalty': 1.0,

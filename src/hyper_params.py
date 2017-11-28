@@ -396,8 +396,8 @@ class CALSTMParams(dlc.HyperParams):
         #### LSTM-Stack ####
         self.decoder_lstm = RNNParams(self).updated({
             'B': self.B,
-            'i': self.m + self.D, ## size of input vector + z_t.
-                ## paper uses a value of n=1000
+            'i': self.m + self.D,  # size of x + size of z_t.
+                # show-and-tell paper uses a value of n=1000
             'layers_units': (self.n, self.n, self.n),
             ## 'dropout': None # No dropout in LSTM
             }).freeze()
@@ -443,7 +443,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             PD('SFactor',
                'Applicable to Scanning LSTM only: Multiplier to derive MaxS from MaxSeqLen',
                 decimal(1.0),
-                LambdaVal(lambda _, p: 2.0 if p.build_scanning_RNN else None)
+                LambdaVal(lambda _, p: 1.5 if p.build_scanning_RNN else None)
                 ),
             PD('MaxS', 'Applicable to Scanning LSTM only: Max value of S for the given data-set',
                 integer(1),
@@ -586,35 +586,38 @@ class Im2LatexModelParams(dlc.HyperParams):
                # True
               ),
             PD('MeanSumAlphaEquals1',
-              '(boolean): When calculating the alpha penalty, the paper uses the term: '
+               '(boolean): When calculating the alpha penalty, the paper uses the term: '
                'square{1 - sum_over_t{alpha_t_i}}). This assumes that the mean sum_over_t should be 1. '
                "However, that's not true, since the mean of sum_over_t term should be C/L. This "
                "variable if set to True, causes the term to change to square{C/L - sum_over_t{alpha_t_i}}). "
                "The default value is True in conformance with the paper.",
-              boolean,
-              # True
-              ),
-            PD('pLambda', 'Lambda value for alpha penalty',
-               decimal(),
-               0.0005),  # default in the paper is 00001
+               boolean,
+               # True
+               ),
+            PD('pLambda',
+               'Lambda value for alpha penalty, Setting this to zero turns off alpha_penalty.',
+               dlc.decimal(),
+               # LambdaVal(lambda _, p: None if p.build_scanning_RNN else 0.0005)
+               ),  # default in the show-and-tell paper is .00001?
             PD('target_aae',
                """
                Target mean_norm_AAE value to shoot for. Varies with data-set. Value discovered by experimentation.
                """,
-               (0., 51.42, 51.79),
-               51.42
+               (0., 51.42, 51.79, None),
+               LambdaVal(lambda _, p: None if (p.pLambda == 0) else 51.42)
                ),
             PD('target_ase',
                """
                Target mean_norm_ASE value to shoot for. Varies with data-set. Value discovered by experimentation.
                """,
-               (0.0, 5.27, 5.35),
-               5.27
+               (0.0, 5.27, 5.35, 10.0, None),
+               LambdaVal(lambda _, p: None if (p.pLambda == 0) else (10.0 if p.build_scanning_RNN else 5.27))
                ),
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),
-               5)
-        )
+               5
+               )
+    )
 
     def __init__(self, initVals):
         dlc.HyperParams.__init__(self, self.proto, initVals, seal=False)
@@ -628,33 +631,35 @@ class Im2LatexModelParams(dlc.HyperParams):
         """
         ######## Output Model ########
         if self.output_reuse_embeddings:
+            assert not self.build_scanning_RNN, 'Scanning RNN cannot reuse-embeddings because there are no embeddings'
             self.output_first_layer = FCLayerParams(self).updated({
                 'num_units': self.m,
                 'activation_fn': tf.nn.tanh,
+                # dropout imported from outer scope
                 }).freeze()
 
             self.output_layers = MLPParams(self).updated({
-                ## One layer with num_units = m is added if output_reuse_embeddings == True
+                # One layer with num_units = m is added if output_reuse_embeddings == True
                 'op_name': 'yLogits_MLP',
-                # 'activation_fn': tf.nn.relu,
+                # dropout imported from outer scope
                 'layers': (
                     ## paper has activation set to relu for all but the softmax layer
-                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
+                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not pyramidal.
+                    # TODO: num_units should probably be self.K otherwise the model is a reverse pyramid
                     FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
-                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn':None, 'dropout': None}).freeze(),
+                    FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
         else:
             self.output_layers = MLPParams(self).updated({
-                ## One layer with num_units = m is added if output_reuse_embeddings == True
                 'op_name': 'yLogits_MLP',
                 # 'activation_fn': tf.nn.relu,
                 'layers': (
                     ## paper has activation set to relu for all but the softmax layer
-                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not triangular.
-                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
-                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    ## paper has all hidden layers with num_units = m. I've noticed that they build rectangular MLPs, i.e. not pyramidal.
+                    FCLayerParams(self).updated({'num_units': 64, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 64, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
