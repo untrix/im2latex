@@ -596,22 +596,23 @@ class Im2LatexModelParams(dlc.HyperParams):
                ),
             PD('pLambda',
                'Lambda value for alpha penalty, Setting this to zero turns off alpha_penalty.',
-               dlc.decimal(),
-               # LambdaVal(lambda _, p: None if p.build_scanning_RNN else 0.0005)
+               (0.0, 0.005, 0.0005, 0.0001),
+               LambdaVal(lambda _, p: 0.0 if p.build_scanning_RNN else 0.0005)
                ),  # default in the show-and-tell paper is .00001?
             PD('target_aae',
                """
                Target mean_norm_AAE value to shoot for. Varies with data-set. Value discovered by experimentation.
                """,
                (0., 51.42, 51.79, None),
-               LambdaVal(lambda _, p: None if (p.pLambda == 0) else 51.42)
+               # LambdaVal(lambda _, p: None if (p.pLambda == 0) else 51.42)
                ),
             PD('target_ase',
                """
                Target mean_norm_ASE value to shoot for. Varies with data-set. Value discovered by experimentation.
                """,
                (0.0, 5.27, 5.35, 10.0, None),
-               LambdaVal(lambda _, p: None if (p.pLambda == 0) else (10.0 if p.build_scanning_RNN else 5.27))
+               # LambdaVal(lambda _, p: None if (p.pLambda == 0) else (10.0 if p.build_scanning_RNN else 5.27))
+               LambdaVal(lambda _, p: None if (p.pLambda == 0) else 5.27)
                ),
             PD('k', 'Number of top-scoring beams to consider for best-of-k metrics.',
                integer(1),

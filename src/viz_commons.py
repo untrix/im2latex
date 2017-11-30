@@ -54,7 +54,7 @@ class VGGnetProcessor(ImagenetProcessor):
         Arguments:
             image_batch: (ndarray) Batch of images.
         """
-        assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
+        assert image_batch.shape[1:] == tuple(self._params.image_shape_unframed), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape_unframed))
         return image_batch / 255.0
 
     def get_array(self):
@@ -81,8 +81,8 @@ class CustomConvnetImageProcessor(ImageProcessor3_BW):
         Arguments:
             image_batch: (ndarray) Batch of images.
         """
-        assert image_batch.shape[1:] == tuple(self._params.image_shape), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape))
-        print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape = %s'%(image_batch.shape, self._params.image_shape)
+        assert image_batch.shape[1:] == tuple(self._params.image_shape_unframed), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape_unframed))
+        print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape_unframed = %s'%(image_batch.shape, self._params.image_shape_unframed)
         image_batch /= 255.0
         num_channels = image_batch.shape[3]
         if num_channels == 1: ## Need all three RGB channels so that we can layer on alpha channel to get RGBA
@@ -101,13 +101,13 @@ def plotImage(image_detail, axes, cmap=None):
     path = image_detail[0]
     image_data = image_detail[1]
     title = os.path.splitext(os.path.basename(path))[0]
-    axes.set_title( title )
-    axes.set_xlim(-10,1500)
+    axes.set_title(title)
+    # axes.set_xlim(-10,1500)
+    # print 'image %s %s'%(title, image_data.shape)
     if cmap is not None:
         axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
     else:
         axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear')
-    # print 'plotted image ', path, ' with shape ', image_data.shape
     return
 
 def plotImages(image_details, fig=None, dpi=None, cmap=None):
@@ -128,7 +128,7 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
 
     orig_dpi = plt.rcParams['figure.dpi']
     with mpl.rc_context(rc={'figure.dpi': dpi or orig_dpi}):
-        fig = plt.figure(figsize=(15.,3.*len(image_details)))
+        fig = plt.figure(figsize=(10.,2.*len(image_details)))
         grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L", aspect=False)
         for i in range(len(image_details)):
             plotImage(image_details[i], grid[i], cmap)
@@ -186,7 +186,8 @@ class VisualizeDir(object):
         # self._df_train_image = self._df_train.copy()
         self._df_train_image.index = self._df_train_image.image
         # self._df_test = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))
-        self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
+        # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
+        self._padded_im_dim = {'height': self._hyper.image_shape_unframed[0], 'width': self._hyper.image_shape_unframed[1]}
 
     @property
     def storedir(self):
@@ -403,8 +404,8 @@ class VisualizeDir(object):
         H = self._hyper.H
         W = self._hyper.W
         pool_factor = self._image_pool_factor
-        pad_0 = self._hyper.image_shape[0] - H*pool_factor.h
-        pad_1 = self._hyper.image_shape[1] - W*pool_factor.w
+        pad_0 = self._hyper.image_shape_unframed[0] - H*pool_factor.h
+        pad_1 = self._hyper.image_shape_unframed[1] - W*pool_factor.w
         print('test_alpha_viz: pad_0=%d, pad_1=%d'%(pad_0, pad_1))
         alphas = np.ones((H*W,H,W), dtype=float)*0.5
         image_details = []
@@ -433,8 +434,8 @@ class VisualizeDir(object):
                                                    df.width.loc[image_name],
                                                    self._padded_im_dim)  # (H,W,C)
         pool_factor = self._image_pool_factor
-        pad_0 = self._hyper.image_shape[0] - nd_alpha.shape[0]*pool_factor.h
-        pad_1 = self._hyper.image_shape[1] - nd_alpha.shape[1]*pool_factor.w
+        pad_0 = self._hyper.image_shape_unframed[0] - nd_alpha.shape[0]*pool_factor.h
+        pad_1 = self._hyper.image_shape_unframed[1] - nd_alpha.shape[1]*pool_factor.w
 
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
         y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
@@ -503,12 +504,19 @@ class VisualizeDir(object):
 
     def prune_snapshots(self, keep_first=None, keep_last=None, dry_run=True):
         """ Keep the latest 'save' snapshots. Delete the rest. """
+        if keep_first is None:
+            keep_first = 0
+
         def get_step(f):
             return int(os.path.basename(f).split('.')[0].split('snapshot-')[1])
         
         files = [f for f in os.listdir(self._logdir) if f.startswith('snapshot-')]
         steps = list(set([get_step(f) for f in files]))
-        steps_to_keep = set(filter(lambda step: (keep_first <= step <= keep_last), steps))
+        if keep_last is not None:
+            steps_to_keep = set(filter(lambda step: (keep_first <= step <= keep_last), steps))
+        else:
+            steps_to_keep = set(filter(lambda step: (keep_first <= step), steps))
+
         steps_to_remove = set(steps) - steps_to_keep
         if len(steps_to_remove) <= 0:
             print 'Nothing to Delete'

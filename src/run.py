@@ -181,7 +181,6 @@ def main():
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
-                                    'pLambda': 0.0005,  # 0.0, 0.005, .0005, .0001
                                     'rLambda': args.rLambda,  # 0.0005, 0.00005
                                     'make_training_accuracy_graph': False,
                                     # 'use_ctc_loss': args.use_ctc_loss,

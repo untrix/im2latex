@@ -237,7 +237,7 @@ def main(raw_data_folder,
                                 ## assert trainable_vars_n == 23261206 if hyper.build_image_context
                             else:
                                 assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
-                train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step, opt)
+                train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step, optimizer=opt)
             qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
             qrs.append(qr1)
 
@@ -270,7 +270,7 @@ def main(raw_data_folder,
                 hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
                 assert num_trainable_vars() == trainable_vars_n, 'num_trainable_vars(%d) != %d'%(num_trainable_vars(), trainable_vars_n)
                 if hyper.build_scanning_RNN:
-                    valid_ops = sync_training_towers(hyper, valid_tower_ops, global_step=None, opt=None, run_mode='validation')
+                    valid_ops = sync_training_towers(hyper, valid_tower_ops, global_step=None, run_tag='validation')
                 else:
                     valid_ops = sync_testing_towers(hyper, valid_tower_ops)
             qr2 = tf.train.QueueRunner(valid_q, [enqueue_op2], cancel_op=[close_queue2])

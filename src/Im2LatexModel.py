@@ -514,7 +514,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                 bin_len = tf.shape(y_s)[1]
 
                 ################ Loss Calculations ################
-                with tf.variable_scope('Loss_Calculations'):
+                with tf.variable_scope('Loss_Calculations') as loss_scope:
 
                     ################ Regularization Cost ################
                     with tf.variable_scope('Regularization_Cost'):
@@ -530,9 +530,9 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                             reg_loss = tf.constant(0, dtype=self.C.dtype)
 
                     x_mask = tf.sequence_mask(x_len,
-                                                     maxlen=tf_T,
-                                                     dtype=self.C.dtype,
-                                                     name='sequence_mask')  # (B, T)
+                                              maxlen=tf_T,
+                                              dtype=self.C.dtype,
+                                              name='sequence_mask')  # (B, T)
                     assert K.int_shape(x_mask) == (B, None)  # (B,T)
 
                     ################ Build LogLoss ################
@@ -574,83 +574,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     else:
                         log_likelihood = tf.constant(0.0, name='no_log_likelihood')
 
-                    ################   Calculate the alpha penalty:   ################
-                    #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
-                    with tf.variable_scope('AlphaPenalty'):
-                        alpha_mask = tf.expand_dims(x_mask, axis=2)  # (B, T, 1)
-                        if self.C.MeanSumAlphaEquals1:
-                            mean_sum_alpha_over_t = 1.0
-                        else:
-                            mean_sum_alpha_over_t = tf.div(tf.cast(x_len, dtype=self.C.dtype),
-                                                           tf.cast(self.C.L, dtype=self.C.dtype))  # (B,)
-                            mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1)  # (B, 1)
-
-                        # sum_over_t = tf.reduce_sum(tf.multiply(alpha,x_mask), axis=1, keep_dims=False)# (B, L)tf_S, tf_MaxS,
-                        #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
-                        #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                        sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2,
-                                                   keep_dims=False)  # (N, B, L)
-                        squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
-                        abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
-
-                        alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
-                        alpha_abs_error = tf.reduce_sum(abs_diff, axis=2, keep_dims=False)  # (N, B)
-                        # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-                        # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
-
-                        ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
-                        ase_max = tf.constant((L - 1.0) / L * 1.0) * tf.square(
-                            tf.cast(x_len, dtype=self.C.dtype))  # (B,)
-                        assert K.int_shape(ase_max) == (B,)
-                        ase_max = tf.expand_dims(ase_max,
-                                                 axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
-
-                        # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
-                        aae_max = tf.constant(2. * (L - 1.0) / (L * 1.0)) * tf.cast(x_len,
-                                                                                    dtype=self.C.dtype)  # (B,)
-                        assert K.int_shape(aae_max) == (B,)
-                        aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
-
-                        normalized_ase = alpha_squared_error * 100. / ase_max  # (N, B) all values lie between 0. and 100.
-                        mean_norm_ase = tf.reduce_mean(normalized_ase)  # scalar between 0. and 100.0
-
-                        normalized_aae = alpha_abs_error * 100. / aae_max  # (N, B) all values lie between 0. and 100.
-                        mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
-
-                        if self.C.pLambda > 0:
-                            alpha_penalty = tf.identity(
-                                self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
-                                name='alpha_penalty')  # scalar
-                        else:
-                            alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
-
-                        # mean_seq_len = tf.reduce_mean(tf.cast(x_len, dtype=tf.float32))
-                        # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
-                        # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
-                        assert K.int_shape(alpha_penalty) == tuple()
-
-                        # Reshape alpha for debugging output
-                        alpha_out = tf.reshape(alpha, (N, B, -1, H, W))  # (N, B, T, L) -> (N, B, T, H, W)
-                        alpha_out = tf.transpose(alpha_out, perm=(0, 1, 3, 4, 2),
-                                                 name='alpha_out')  # (N, B, T, H, W)->(N, B, H, W, T)
-                        assert K.int_shape(alpha_out) == (N, B, H, W, T)
-
-                        # Beta metrics for logging
-                        beta  # (N, B, T, 1)
-                        alpha_mask  # (B, T, 1)
-                        beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
-                        seq_lens = tf.cast(tf.expand_dims(x_len, axis=0),
-                                           dtype=self.C.dtype)  # (N, B)
-                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False), seq_lens,
-                                              name='beta_mean')  # (N, B)
-                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2),
-                                                  [1, 1, tf_T])  # (N, B, T)
-                        beta_mask = tf.expand_dims(x_mask, axis=0)  # (1, B, T)
-                        beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
-                        beta_std_dev = tf.sqrt(
-                            tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2,
-                                          keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
-
                     ################ Build CTC Cost Function ################
                     ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
                     ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
@@ -682,12 +605,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                                               tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)),
                                               name='CTCWordLoss')  # scalar
                         assert K.int_shape(ctc_loss) == tuple()
-
-                    if self.C.use_ctc_loss:
-                        cost = ctc_loss + alpha_penalty + reg_loss
-                    else:
-                        assert not self.C.build_scanning_RNN, 'use_ctc_loss must be True when building a scanning-RNN'
-                        cost = log_likelihood + alpha_penalty + reg_loss
 
                 ################ CTC Beamsearch Decoding ################
                 with tf.variable_scope('Accuracy_Calculation'):
@@ -735,6 +652,100 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         num_hits = None
                         ctc_decoded_ids = None
                         ctc_decoded_lens = None
+
+                with tf.variable_scope(loss_scope):
+                    ################   Calculate the alpha penalty:   ################
+                    #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
+                    with tf.variable_scope('AlphaPenalty'):
+                        if self.C.build_scanning_RNN:
+                            preds_mask = tf.sequence_mask(ctc_decoded_lens,
+                                                          maxlen=tf_T,
+                                                          dtype=self.C.dtype,
+                                                          name='preds_mask')  # (B, T)
+                            preds_len = ctc_decoded_lens
+                        else:
+                            preds_mask = x_mask
+                            preds_len = x_len
+                        alpha_mask = tf.expand_dims(preds_mask, axis=2)  # (B, T, 1)
+
+                        if self.C.MeanSumAlphaEquals1:
+                            mean_sum_alpha_over_t = 1.0
+                        else:
+                            mean_sum_alpha_over_t = tf.div(tf.cast(preds_len, dtype=self.C.dtype),
+                                                           tf.cast(self.C.L, dtype=self.C.dtype))  # (B,)
+                            mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1)  # (B, 1)
+
+                        # sum_over_t = tf.reduce_sum(tf.multiply(alpha,preds_mask), axis=1, keep_dims=False)# (B, L)tf_S, tf_MaxS,
+                        #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
+                        #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                        sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2,
+                                                   keep_dims=False)  # (N, B, L)
+                        squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
+                        abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
+
+                        alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
+                        alpha_abs_error = tf.reduce_sum(abs_diff, axis=2, keep_dims=False)  # (N, B)
+                        # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
+                        # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
+
+                        ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
+                        ase_max = tf.constant((L - 1.0) / L * 1.0) * tf.square(
+                            tf.cast(preds_len, dtype=self.C.dtype))  # (B,)
+                        assert K.int_shape(ase_max) == (B,)
+                        ase_max = tf.expand_dims(ase_max,
+                                                 axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
+
+                        # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
+                        aae_max = tf.constant(2. * (L - 1.0) / (L * 1.0)) * tf.cast(preds_len,
+                                                                                    dtype=self.C.dtype)  # (B,)
+                        assert K.int_shape(aae_max) == (B,)
+                        aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
+
+                        normalized_ase = alpha_squared_error * 100. / ase_max  # (N, B) all values lie between 0. and 100.
+                        mean_norm_ase = tf.reduce_mean(normalized_ase)  # scalar between 0. and 100.0
+
+                        normalized_aae = alpha_abs_error * 100. / aae_max  # (N, B) all values lie between 0. and 100.
+                        mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
+
+                        if self.C.build_scanning_RNN or (self.C.pLambda == 0):
+                            alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
+                        else:
+                            alpha_penalty = tf.identity(
+                                self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
+                                name='alpha_penalty')  # scalar
+
+                        # mean_seq_len = tf.reduce_mean(tf.cast(preds_len, dtype=tf.float32))
+                        # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
+                        # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
+                        assert K.int_shape(alpha_penalty) == tuple()
+
+                        # Reshape alpha for debugging output
+                        alpha_out = tf.reshape(alpha, (N, B, -1, H, W))  # (N, B, T, L) -> (N, B, T, H, W)
+                        alpha_out = tf.transpose(alpha_out, perm=(0, 1, 3, 4, 2),
+                                                 name='alpha_out')  # (N, B, T, H, W)->(N, B, H, W, T)
+                        assert K.int_shape(alpha_out) == (N, B, H, W, T)
+
+                        # Beta metrics for logging
+                        beta  # (N, B, T, 1)
+                        alpha_mask  # (B, T, 1)
+                        beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
+                        seq_lens = tf.cast(tf.expand_dims(preds_len, axis=0),
+                                           dtype=self.C.dtype)  # (N, B)
+                        beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False), seq_lens,
+                                              name='beta_mean')  # (N, B)
+                        beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2),
+                                                  [1, 1, tf_T])  # (N, B, T)
+                        beta_mask = tf.expand_dims(preds_mask, axis=0)  # (1, B, T)
+                        beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
+                        beta_std_dev = tf.sqrt(
+                            tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2,
+                                          keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
+
+                    if self.C.use_ctc_loss:
+                        cost = ctc_loss + alpha_penalty + reg_loss
+                    else:
+                        assert not self.C.build_scanning_RNN, 'use_ctc_loss must be True when building a scanning-RNN'
+                        cost = log_likelihood + alpha_penalty + reg_loss
 
                 ################ Optimizer ################
                 if self._opt is not None:
@@ -1229,7 +1240,14 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     })
 
 
-def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'):
+def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', optimizer=None):
+    if run_tag == 'training':
+        assert optimizer is not None
+    elif run_tag == 'validation':
+        assert optimizer is None
+    else:
+        raise ValueError('run_tag can only have value "training" or "validation"')
+
     with tf.variable_scope('SyncTowers') as var_scope:
         zero_scalar = tf.constant(0.0)
         zero_list = [zero_scalar]
@@ -1267,10 +1285,10 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             assert not hyper.build_scanning_RNN
             cost = log_likelihood + alpha_penalty + reg_loss
 
-        if opt is not None:
+        if optimizer is not None:
             grads = average_gradients(gather('grads'))
             with tf.variable_scope('optimizer'):
-                apply_grads = opt.apply_gradients(grads, global_step=global_step)
+                apply_grads = optimizer.apply_gradients(grads, global_step=global_step)
         else:
             apply_grads = tf.constant(0.0)
 
@@ -1307,42 +1325,42 @@ def sync_training_towers(hyper, tower_ops, global_step, opt, run_mode='training'
             ph_scan_lens = tf.placeholder(hyper.int_type)
 
             aggs = []
-            aggs.append(tf.summary.scalar('%s/time_per100/'%run_mode, ph_train_time))
-            aggs.append(tf.summary.histogram('%s/bleu_dist/'%run_mode, ph_bleu_scores))
-            aggs.append(tf.summary.scalar('%s/bleu/'%run_mode, tf.reduce_mean(ph_bleu_scores)))
-            aggs.append(tf.summary.scalar('%s/bleu2/'%run_mode, ph_bleu_score2))
-            aggs.append(tf.summary.histogram('%s/ctc_ed_dist/'%run_mode, ph_ctc_eds))
-            aggs.append(tf.summary.scalar('%s/ctc_ed/'%run_mode, tf.reduce_mean(ph_ctc_eds)))
+            aggs.append(tf.summary.scalar('%s/time_per100/'%run_tag, ph_train_time))
+            aggs.append(tf.summary.histogram('%s/bleu_dist/'%run_tag, ph_bleu_scores))
+            aggs.append(tf.summary.scalar('%s/bleu/'%run_tag, tf.reduce_mean(ph_bleu_scores)))
+            aggs.append(tf.summary.scalar('%s/bleu2/'%run_tag, ph_bleu_score2))
+            aggs.append(tf.summary.histogram('%s/ctc_ed_dist/'%run_tag, ph_ctc_eds))
+            aggs.append(tf.summary.scalar('%s/ctc_ed/'%run_tag, tf.reduce_mean(ph_ctc_eds)))
             if not hyper.use_ctc_loss:
-                aggs.append(tf.summary.scalar('%s/logloss_mean/'%run_mode, tf.reduce_mean(ph_loglosses)))
+                aggs.append(tf.summary.scalar('%s/logloss_mean/'%run_tag, tf.reduce_mean(ph_loglosses)))
                 min_logloss = tf.reduce_min(ph_loglosses)
-                aggs.append(tf.summary.scalar('%s/logloss/'%run_mode, min_logloss))
-                aggs.append(tf.summary.scalar('%s/batch_logloss_min/'%run_mode, min_logloss))
-                aggs.append(tf.summary.scalar('%s/batch_logloss_max/'%run_mode, tf.reduce_max(ph_loglosses)))
-                aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_mode, tf.reduce_mean(ph_alpha_penalties)))
-            aggs.append(tf.summary.scalar('%s/ctc_loss_mean/'%run_mode, tf.reduce_mean(ph_ctc_losses)))
+                aggs.append(tf.summary.scalar('%s/logloss/'%run_tag, min_logloss))
+                aggs.append(tf.summary.scalar('%s/batch_logloss_min/'%run_tag, min_logloss))
+                aggs.append(tf.summary.scalar('%s/batch_logloss_max/'%run_tag, tf.reduce_max(ph_loglosses)))
+                aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_tag, tf.reduce_mean(ph_alpha_penalties)))
+            aggs.append(tf.summary.scalar('%s/ctc_loss_mean/'%run_tag, tf.reduce_mean(ph_ctc_losses)))
             min_ctc_loss = tf.reduce_min(ph_ctc_losses)
-            aggs.append(tf.summary.scalar('%s/ctc_loss/'%run_mode, min_ctc_loss))
-            aggs.append(tf.summary.scalar('%s/batch_ctc_loss_min/'%run_mode, min_ctc_loss))
-            aggs.append(tf.summary.scalar('%s/batch_ctc_loss_max/'%run_mode, tf.reduce_max(ph_ctc_losses)))
-            aggs.append(tf.summary.scalar('%s/total_cost/'%run_mode, tf.reduce_mean(ph_costs)))
-            aggs.append(tf.summary.scalar('%s/mean_norm_ase/'%run_mode, tf.reduce_mean(ph_mean_norm_ases)))
-            aggs.append(tf.summary.histogram('%s/mean_norm_ase_dist/'%run_mode, ph_mean_norm_ases))
-            aggs.append(tf.summary.scalar('%s/mean_norm_aae/'%run_mode, tf.reduce_mean(ph_mean_norm_aaes)))
-            aggs.append(tf.summary.histogram('%s/mean_norm_aae_dist/'%run_mode, ph_mean_norm_aaes))
-            aggs.append(tf.summary.scalar('%s/beta_mean/'%run_mode, tf.reduce_mean(ph_beta_mean)))
-            aggs.append(tf.summary.scalar('%s/beta_std_dev/'%run_mode, tf.reduce_mean(ph_beta_std_dev)))
-            aggs.append(tf.summary.histogram('%s/beta_mean_dist/'%run_mode, ph_beta_mean))
-            aggs.append(tf.summary.histogram('%s/beta_std_dev_dest/'%run_mode, ph_beta_std_dev))
-            aggs.append(tf.summary.scalar('%s/pred_len_ratio_avg/'%run_mode, tf.reduce_mean(ph_pred_len_ratios)))
-            aggs.append(tf.summary.histogram('%s/pred_len_ratio_dist/'%run_mode, ph_pred_len_ratios))
+            aggs.append(tf.summary.scalar('%s/ctc_loss/'%run_tag, min_ctc_loss))
+            aggs.append(tf.summary.scalar('%s/batch_ctc_loss_min/'%run_tag, min_ctc_loss))
+            aggs.append(tf.summary.scalar('%s/batch_ctc_loss_max/'%run_tag, tf.reduce_max(ph_ctc_losses)))
+            aggs.append(tf.summary.scalar('%s/total_cost/'%run_tag, tf.reduce_mean(ph_costs)))
+            aggs.append(tf.summary.scalar('%s/mean_norm_ase/'%run_tag, tf.reduce_mean(ph_mean_norm_ases)))
+            aggs.append(tf.summary.histogram('%s/mean_norm_ase_dist/'%run_tag, ph_mean_norm_ases))
+            aggs.append(tf.summary.scalar('%s/mean_norm_aae/'%run_tag, tf.reduce_mean(ph_mean_norm_aaes)))
+            aggs.append(tf.summary.histogram('%s/mean_norm_aae_dist/'%run_tag, ph_mean_norm_aaes))
+            aggs.append(tf.summary.scalar('%s/beta_mean/'%run_tag, tf.reduce_mean(ph_beta_mean)))
+            aggs.append(tf.summary.scalar('%s/beta_std_dev/'%run_tag, tf.reduce_mean(ph_beta_std_dev)))
+            aggs.append(tf.summary.histogram('%s/beta_mean_dist/'%run_tag, ph_beta_mean))
+            aggs.append(tf.summary.histogram('%s/beta_std_dev_dest/'%run_tag, ph_beta_std_dev))
+            aggs.append(tf.summary.scalar('%s/pred_len_ratio_avg/'%run_tag, tf.reduce_mean(ph_pred_len_ratios)))
+            aggs.append(tf.summary.histogram('%s/pred_len_ratio_dist/'%run_tag, ph_pred_len_ratios))
             mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
-            aggs.append(tf.summary.scalar('%s/num_hits/'%run_mode, mean_hits))
-            aggs.append(tf.summary.scalar('%s/accuracy/'%run_mode, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0)))
-            aggs.append(tf.summary.scalar('%s/regLoss/'%run_mode, tf.reduce_mean(ph_reg_losses)))
+            aggs.append(tf.summary.scalar('%s/num_hits/'%run_tag, mean_hits))
+            aggs.append(tf.summary.scalar('%s/accuracy/'%run_tag, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0)))
+            aggs.append(tf.summary.scalar('%s/regLoss/'%run_tag, tf.reduce_mean(ph_reg_losses)))
             if hyper.build_scanning_RNN:
-                aggs.append(tf.summary.scalar('%s/scanLen/'%run_mode, tf.reduce_mean(tf.cast(ph_scan_lens, dtype=hyper.dtype))))
-                aggs.append(tf.summary.histogram('%s/scanLen_dist/'%run_mode, ph_scan_lens))
+                aggs.append(tf.summary.scalar('%s/scanLen/'%run_tag, tf.reduce_mean(tf.cast(ph_scan_lens, dtype=hyper.dtype))))
+                aggs.append(tf.summary.histogram('%s/scanLen_dist/'%run_tag, ph_scan_lens))
 
             tb_agg_logs = tf.summary.merge(aggs)
 
