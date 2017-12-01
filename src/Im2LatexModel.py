@@ -707,7 +707,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                         normalized_aae = alpha_abs_error * 100. / aae_max  # (N, B) all values lie between 0. and 100.
                         mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
 
-                        if self.C.build_scanning_RNN or (self.C.pLambda == 0):
+                        if self.C.pLambda == 0:
                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
                         else:
                             alpha_penalty = tf.identity(
@@ -1280,24 +1280,24 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
         reg_loss = tower_ops[0]['reg_loss'] # RegLoss should be same for all towers
 
         if hyper.use_ctc_loss:
-            cost = ctc_loss + alpha_penalty + reg_loss
+            cost_log = ctc_loss + alpha_penalty + reg_loss
         else:
             assert not hyper.build_scanning_RNN
-            cost = log_likelihood + alpha_penalty + reg_loss
+            cost_log = log_likelihood + alpha_penalty + reg_loss
 
         if optimizer is not None:
             grads = average_gradients(gather('grads'))
             with tf.variable_scope('optimizer'):
                 apply_grads = optimizer.apply_gradients(grads, global_step=global_step)
         else:
-            apply_grads = tf.constant(0.0)
+            apply_grads = tf.constant(0.0, name='no_training')
 
         with tf.variable_scope('Instrumentation') as var_scope:
 #            tf.summary.scalar('training/regLoss/', reg_loss, collections=['training'])
 #            tf.summary.scalar('training/logloss/', log_likelihood, collections=['training'])
 #            tf.summary.scalar('training/ctc_loss/', ctc_loss, collections=['training'])
 #            tf.summary.scalar('training/alpha_penalty/', alpha_penalty, collections=['training'])
-#            tf.summary.scalar('training/total_cost/', cost, collections=['training'])
+#            tf.summary.scalar('training/total_cost_log/', cost_log, collections=['training'])
 #            tf.summary.scalar('training/mean_norm_ase/', get_mean('mean_norm_ase'), collections=['training'])
 #            tf.summary.histogram('training/seq_len/', concat('sequence_lengths'), collections=['training'])
 #            tf.summary.histogram('training/pred_len_ratio/', concat('pred_len_ratio'), collections=['training'])
@@ -1407,7 +1407,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             'ph_num_hits': ph_num_hits,  # (num_steps,)
             'reg_loss': reg_loss,  # scalar
             'ph_reg_losses': ph_reg_losses, # (num_steps,)
-            'cost': cost,  # scalar
+            'cost': cost_log,  # scalar
             'ph_costs': ph_costs,  # (num_steps,)
             'ctc_ed': ctc_ed,  # (num_gpus*B,)
             'ph_ctc_eds': ph_ctc_eds,  # (num_steps*num_gpus*B,)

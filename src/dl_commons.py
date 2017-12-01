@@ -847,6 +847,7 @@ class _anyok(_ParamValidator):
 # Helpful validator objects
 mandatory = _mandatoryValidator()
 boolean = instanceof(bool, False)
+booleanOrNone = instanceofOrNone(bool)
 
 def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None, eos_token=0):
     assert np_seq_batch.ndim == 2

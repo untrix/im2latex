@@ -112,7 +112,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 #        self._beamsearch_width = beamwidth
 #        self._LSTM_stack._set_beamwidth(beamwidth)
 
-    def _attention_model(self, a, h_prev):
+    def _attention_model(self, a, h_prev, Ex_t):
         with tf.variable_scope(self.my_scope) as var_scope:
             with tf.name_scope(var_scope.original_name_scope):
                 with tf.variable_scope('AttentionModel'):
@@ -122,22 +122,35 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     D = CONF.D
                     h = h_prev
                     n = self.output_size
+                    m = CONF.m
 
                     self.assertOutputShape(h_prev)
                     assert K.int_shape(a) == (B, L, D)
+                    assert K.int_shape(h_prev) == (B, n)
+                    assert K.int_shape(Ex_t) == (B, m)
 
                     if (CONF.att_model == 'MLP_shared') or (CONF.att_model == '1x1_conv'):
                         """
                         Here we'll effectively create L MLP stacks all sharing the same weights. Each
                         stack receives a concatenated vector of a(l) and h as input.
                         """
-                        ## h.shape = (B,n). Convert it to (B,1,n) and then broadcast to (B,L,n) in order
-                        ## to concatenate with feature vectors of 'a' whose shape=(B,L,D)
-                        h = tf.identity(K.tile(K.expand_dims(h, axis=1), (1,L,1)), name='h_t-1')
+                        # h.shape = (B,n). Expand it to (B,1,n) and then broadcast to (B,L,n) in order
+                        # to concatenate with feature vectors of 'a' whose shape=(B,L,D)
+                        h = tf.identity(K.tile(K.expand_dims(h, axis=1), (1, L, 1)), name='h_t-1')
                         a = tf.identity(a, name='a')
-                        ## Concatenate a and h. Final shape = (B, L, D+n)
-                        ah = tf.concat([a,h], -1, name='ai_h'); # (B, L, D+n)
-                        assert K.int_shape(ah) == (B, L, D+n)
+                        if CONF.feed_clock_to_att:
+                            assert CONF.build_scanning_RNN, 'Attention model can take Ex_t only in a scanning-LSTM'
+                            # Ex_t.shape = (B,m). Expand it to (B,1,m) and then broadcast to (B,L,m) in order
+                            # to concatenate with feature vectors of 'a' whose shape=(B,L,D)
+                            x = tf.identity(K.tile(K.expand_dims(Ex_t, axis=1), (1, L, 1)), name='Ex_t')
+                            # Concatenate a, h nd x. Final shape = (B, L, D+n+m)
+                            att_inp = tf.concat([a, h, x], -1, name='ai_h_x') # (B, L, D+n+m)
+                            assert K.int_shape(att_inp) == (B, L, D+n+m)
+                        else:
+                            # Concatenate a and h. Final shape = (B, L, D+n)
+                            att_inp = tf.concat([a, h], -1, name='ai_h') # (B, L, D+n)
+                            assert K.int_shape(att_inp) == (B, L, D+n)
+
                         if CONF.att_model == 'MLP_shared':
                             ## For #layers > 1 this implementation will endup being different than the paper's implementation because they only 
                             ## Below is how it is implemented in the code released by the authors of the paper
@@ -151,25 +164,25 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                             ##     ah = tanh(ah)
                             ##     alpha = Dense(softmax_layer_params, activation=softmax)(ah)
 
-                            alpha_1_ = tfc.MLPStack(CONF.att_layers)(ah) # (B, L, dimctx)
-                            assert K.int_shape(alpha_1_) == (B,L,1) ## (B, L, 1)
-                            alpha_ = K.squeeze(alpha_1_, axis=2) # output shape = (B, L)
-                            assert K.int_shape(alpha_) == (B,L)
+                            alpha_1_ = tfc.MLPStack(CONF.att_layers)(att_inp)  # (B, L, 1)
+                            assert K.int_shape(alpha_1_) == (B, L, 1)  # (B, L, 1)
+                            alpha_ = K.squeeze(alpha_1_, axis=2)  # output shape = (B, L)
+                            assert K.int_shape(alpha_) == (B, L)
 
                         elif CONF.att_model == '1x1_conv':
                             """
-                            TODO: The above tantamounts to a 
-                            1x1 convolution on the Lx1 shaped (L=H.W) convnet output with num_channels=D i.e. an input shape of (H,W,C) = (1,L,D).
+                            NOTE: The above model ('MLP_shared') tantamounts to a 
+                            1x1 convolution on the Lx1 shaped (L=H.W) convnet features with num_channels=D i.e. an input shape of (H,W,C) or (1,L,D).
                             Using 'dimctx' kernels of size (1,1) and stride=1 resulting in an output shape of (1,L,dimctx) [or (B, L, 1, dimctx) with the batch dimension included].
-                            Using a convnet layer of this type may actually be more efficient (and easier to code).
+                            This option provides such a convnet layer implementation (which turns out not to be faster than MLP_shared).
                             """
-                            ah = tf.expand_dims(ah, axis=1)
-                            alpha_1_ = tfc.ConvStack(CONF.att_layers, (B, 1, L, D+self.output_size))(ah)
+                            att_inp = tf.expand_dims(att_inp, axis=1)
+                            alpha_1_ = tfc.ConvStack(CONF.att_layers, (B, 1, L, D+self.output_size))(att_inp)
                             assert K.int_shape(alpha_1_) == (B,1,L,1)
                             alpha_ = tf.squeeze(alpha_1_, axis=[1,3]) # (B, L)
                             assert K.int_shape(alpha_) == (B,L)
                     
-                    elif CONF.att_model == 'MLP_full': # MLP: weights not shared across L
+                    elif CONF.att_model == 'MLP_full':  # MLP: weights not shared across L
                         ## concatenate a and h_prev and pass them through a MLP. This is different than the theano
                         ## implementation of the paper because we flatten a from (B,L,D) to (B,L*D). Hence each element
                         ## of the L*D vector receives its own weight because the effective weight matrix here would be
@@ -179,9 +192,14 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         with tf.variable_scope('a_h'):
                             a_ = K.batch_flatten(a) # (B, L*D)
                             a_.set_shape((B, L*D)) # Flatten loses shape info
-                            ah = tf.concat([a_, h], -1, name="a_h") # (B, L*D + n)
-                            assert K.int_shape(ah) == (B, L*D + self.output_size), 'shape %s != %s'%(K.int_shape(ah),(B, L*D + self.output_size))
-                        alpha_ = tfc.MLPStack(CONF.att_layers)(ah) # (B, L)
+                            if CONF.feed_clock_to_att:
+                                assert CONF.build_scanning_RNN, 'Attention model can take Ex_t only in a scanning-LSTM'
+                                att_inp = tf.concat([a_, h, Ex_t], -1, name="a_h_x") # (B, L*D + n + m)
+                                assert K.int_shape(att_inp) == (B, L*D + self.output_size + m), 'shape %s != %s'%(K.int_shape(att_inp),(B, L*D + self.output_size + m))
+                            else:
+                                att_inp = tf.concat([a_, h], -1, name="a_h") # (B, L*D + n)
+                                assert K.int_shape(att_inp) == (B, L*D + self.output_size), 'shape %s != %s'%(K.int_shape(att_inp),(B, L*D + self.output_size))
+                        alpha_ = tfc.MLPStack(CONF.att_layers)(att_inp)  # (B, L)
                         assert K.int_shape(alpha_) == (B, L)
 
                     else:
@@ -193,7 +211,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
 
                     ## Attention Modulator: Beta
                     if CONF.build_att_modulator:
-                        beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape )(h_prev)
+                        beta = tfc.MLPStack(CONF.att_modulator, self.batch_output_shape)(h_prev)
                         beta = tf.identity(beta, name='beta')
                     else:
                         beta = tf.constant(1., shape=(B, 1), dtype=CONF.dtype)
@@ -209,8 +227,14 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 D = self.C.D
                 B = self.C.B*self.BeamWidth
 
-                inputs_t = tf.concat((Ex_t, z_t), axis=-1, name="Ex_concat_z")
-                assert K.int_shape(inputs_t) == (B, m+D)
+                if not self.C.no_clock_to_lstm:
+                    assert self.C.build_scanning_RNN, 'no_clock_to_lstm can be set only in a scanning RNN '
+                    inputs_t = tf.concat((Ex_t, z_t), axis=-1, name="Ex_concat_z")
+                    assert K.int_shape(inputs_t) == (B, m+D)
+                else:
+                    inputs_t = z_t
+                    assert K.int_shape(inputs_t) == (B, D)
+
                 self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
                 (htop_t, lstm_states_t) = self._LSTM_stack(inputs_t, lstm_states_t_1)
@@ -253,7 +277,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 self._LSTM_stack.assertStateShape(lstm_states_t_1)
 
                 ################ Attention Model ################
-                alpha_t, beta_t = self._attention_model(a, htop_1) # alpha.shape = (B, L), beta (B,)
+                alpha_t, beta_t = self._attention_model(a, htop_1, Ex_t)  # alpha.shape = (B, L), beta.shape = (B,)
                 assert K.int_shape(alpha_t) == (B,L)
                 assert K.int_shape(beta_t) == (B, 1)
 
@@ -265,7 +289,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                     z_t = tf.identity(z_t, name='z_t') ## For tensorboard viz.
 
                 ################ Decoder Layer ################
-                (htop_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1) # h_t.shape=(B,n)
+                (htop_t, lstm_states_t) = self._decoder_lstm(Ex_t, z_t, lstm_states_t_1)  # h_t.shape=(B,n)
 
         #        ################ Output Layer ################
         #        with tf.variable_scope('Output_Layer'):
