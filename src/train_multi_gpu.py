@@ -425,9 +425,7 @@ def main(raw_data_folder,
                                 train_ops.ph_reg_losses: accum.reg_loss,
                                 train_ops.ph_scan_lens: accum.scan_len
                             })
-                            logger.info('step %d, training mean scan_len = %f and mean bin_len = %f of %s samples. ratio = %f',
-                                        step, np.mean(accum.scan_len), np.mean(accum.bin_len),
-                                        np.asarray(accum.scan_len).shape, np.mean(accum.scan_len)/np.mean(accum.bin_len))
+
                             tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(step))
                             tf_sw.flush()
 
@@ -752,9 +750,6 @@ def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
         ops.ph_reg_losses: accum.reg_loss,
         ops.ph_scan_lens: accum.scan_len
     })
-    logger.info('step %d, validation mean scan_len = %f mean bin_len = %f of %s samples. ratio = %f', tr_step,
-                np.mean(accum.scan_len), np.mean(accum.bin_len), np.asarray(accum.scan_len).shape,
-                np.mean(accum.scan_len) / np.mean(accum.bin_len))
     tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(tr_step))
     tf_sw.flush()
     return dlc.Properties({'valid_time_per100': valid_time_per100})

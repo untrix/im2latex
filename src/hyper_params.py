@@ -689,7 +689,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             'pLambda',
             'Lambda value for alpha penalty, Setting this to zero turns off alpha_penalty.',
             (0.0, 0.005, 0.0005, 0.0001),
-            LambdaVal(lambda _, p: 0.0 if p.build_scanning_RNN else 0.0005)
+            LambdaVal(lambda _, p: 0.0005 if p.build_scanning_RNN else 0.0005)
         ),  # default in the show-and-tell paper is .00001?
         PD(
             'target_aae',
