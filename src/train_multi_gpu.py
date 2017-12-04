@@ -841,7 +841,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):
                                     valid_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
                                 })
 
-    tf_sw.add_summary(logs_agg_top1, log_step(step))
+    tf_sw.add_summary(logs_agg_top1, standardized_step(step))
     tf_sw.flush()
     hyper.logger.info('validation cycle finished. bleu2 = %f', agg_bleu2)
     return dlc.Properties({'valid_time_per100': valid_time_per100})
