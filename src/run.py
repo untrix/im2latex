@@ -136,7 +136,7 @@ def main():
     if args.image_folder:
         image_folder = args.image_folder
     else:
-        image_folder = os.path.join(data_folder,'formula_images')
+        image_folder = os.path.join(data_folder, 'formula_images')
 
     if args.raw_data_folder:
         raw_data_folder = args.raw_data_folder
@@ -199,7 +199,7 @@ def main():
                                     'output_reuse_embeddings': False,
                                     'REGROUP_IMAGE': (4, 1),  # None  # (4,2)
                                     'build_att_modulator': False,  # turn off beta-MLP
-                                    'build_scanning_RNN': True
+                                    'build_scanning_RNN': False
                                     })
 
     if args.batch_size is not None:

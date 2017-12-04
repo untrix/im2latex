@@ -430,8 +430,8 @@ class CALSTMParams(dlc.HyperParams):
             self.att_layers = MLPParams(self).updated({
                 'op_name': 'MLP_full',
                 'layers': (
-                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
-                    FCLayerParams(self).updated({'num_units': max(self.L, 99), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 256), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
+                    FCLayerParams(self).updated({'num_units': max(self.L, 128), 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.L, 'activation_fn': None,       'dropout': None}).freeze(),
                     )
                 }).freeze()
@@ -452,7 +452,7 @@ class CALSTMParams(dlc.HyperParams):
         #### LSTM-Stack ####
         self.decoder_lstm = RNNParams(self).updated({
             'B': self.B,
-            'i': self.D if self.no_clock_to_lstm else self.m + self.D,  # size of Ex_t + size of z_t.
+            'i': self.D if (self.build_scanning_RNN and self.no_clock_to_lstm) else self.m + self.D,  # size of Ex_t + size of z_t.
                 # show-and-tell paper uses a value of n=1000
             'layers_units': (self.n, self.n, self.n),
             ## 'dropout': None # No dropout in LSTM
@@ -688,8 +688,8 @@ class Im2LatexModelParams(dlc.HyperParams):
         PD(
             'pLambda',
             'Lambda value for alpha penalty, Setting this to zero turns off alpha_penalty.',
-            (0.0, 0.005, 0.0005, 0.0001),
-            LambdaVal(lambda _, p: 0.0005 if p.build_scanning_RNN else 0.0005)
+            (0.0,  0.0005, 0.005, 0.0001, 0.05),
+            LambdaVal(lambda _, p: 0.005 if p.build_scanning_RNN else 0.0005)
         ),  # default in the show-and-tell paper is .00001?
         PD(
             'target_aae',
@@ -742,7 +742,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                     ## paper has activation set to relu for all but the softmax layer
                     ## paper has all hidden layers with num_units = m.
                     # TODO: num_units should probably be self.K otherwise the model is a reverse pyramid
-                    FCLayerParams(self).updated({'num_units': self.m, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 64, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
@@ -754,13 +754,14 @@ class Im2LatexModelParams(dlc.HyperParams):
                 'layers': (
                     ## paper has activation set to relu for all but the softmax layer
                     ## paper has all hidden layers with num_units = m.
-                    FCLayerParams(self).updated({'num_units': 64, 'activation_fn':tf.nn.relu}).freeze(),
-                    FCLayerParams(self).updated({'num_units': 64, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.relu}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.relu}).freeze(),
                     ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
 
+        assert self.output_layers.layers[-2].num_units >= self.K
         assert self.output_layers.layers[-1].activation_fn == None, 'The last layer must have linear activation because softmax is added later (since we need logits for efficient cross-entropy calculation)'
         if (not self.output_reuse_embeddings):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."

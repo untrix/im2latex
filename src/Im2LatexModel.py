@@ -1249,8 +1249,8 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
         raise ValueError('run_tag can only have value "training" or "validation"')
 
     with tf.variable_scope('SyncTowers') as var_scope:
-        zero_scalar = tf.constant(0.0)
-        zero_list = [zero_scalar]
+        zero = tf.constant(0.0, shape=(1,))
+        zero_list = [zero]
         def allNone(seq):
             return all([item is None for item in seq])
 
@@ -1337,7 +1337,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
                 aggs.append(tf.summary.scalar('%s/logloss/'%run_tag, min_logloss))
                 aggs.append(tf.summary.scalar('%s/batch_logloss_min/'%run_tag, min_logloss))
                 aggs.append(tf.summary.scalar('%s/batch_logloss_max/'%run_tag, tf.reduce_max(ph_loglosses)))
-                aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_tag, tf.reduce_mean(ph_alpha_penalties)))
+            aggs.append(tf.summary.scalar('%s/alpha_penalty/'%run_tag, tf.reduce_mean(ph_alpha_penalties)))
             aggs.append(tf.summary.scalar('%s/ctc_loss_mean/'%run_tag, tf.reduce_mean(ph_ctc_losses)))
             min_ctc_loss = tf.reduce_min(ph_ctc_losses)
             aggs.append(tf.summary.scalar('%s/ctc_loss/'%run_tag, min_ctc_loss))
@@ -1365,12 +1365,12 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             tb_agg_logs = tf.summary.merge(aggs)
 
             if (hyper.CTCBlankTokenID is None) and (hyper.SpaceTokenID is None):
-                ctc_ed = zero_scalarconcat_scalar
-                mean_ctc_ed = zero_scalar
-                pred_len_ratio = zero_scalar
-                num_hits = zero_scalar
-                predicted_ids_list = zero_scalar
-                predicted_lens = zero_scalar
+                ctc_ed = zero
+                mean_ctc_ed = zero
+                pred_len_ratio = zero
+                num_hits = zero
+                predicted_ids_list = zero
+                predicted_lens = zero
             else:
                 ctc_ed = concat('ctc_ed') # (num_gpus*B,)
                 pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
@@ -1381,7 +1381,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             if hyper.build_scanning_RNN:
                 scan_len = concat('scan_len')  # (num_gpus*B,)
             else:
-                scan_len = zero_scalar
+                scan_len = zero
 
         return dlc.Properties({
             'train': apply_grads,  # op

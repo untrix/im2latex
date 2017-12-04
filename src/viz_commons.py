@@ -347,7 +347,8 @@ class VisualizeDir(object):
         # therefore the string output should be compile if the prediction was syntactically correct
         ar1 = ["".join(row) for row in df1.words.values]
         if key2 is None:
-            return pd.DataFrame({'edit_distance':df1.ed, key: ar1, '_id': range(df1.shape[0])}, index=df1.index)
+            ar1_len = [len(s) for s in ar1]
+            return pd.DataFrame({'edit_distance':df1.ed, 'len': ar1_len, key: ar1, '_id': range(df1.shape[0])}, index=df1.index)
         else:
             ar2 = ["".join(row) for row in df2.words.values]
             if mingle:

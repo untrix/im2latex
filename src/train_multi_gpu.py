@@ -359,6 +359,7 @@ def main(raw_data_folder,
                         'scan_len',
                         'bin_len',
                     )
+
                     ops_log = (
                         'y_s_list',
                         'predicted_ids_list',

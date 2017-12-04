@@ -192,7 +192,7 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                         with tf.variable_scope('a_h'):
                             a_ = K.batch_flatten(a) # (B, L*D)
                             a_.set_shape((B, L*D)) # Flatten loses shape info
-                            if CONF.feed_clock_to_att:
+                            if CONF.build_scanning_RNN and CONF.feed_clock_to_att:
                                 assert CONF.build_scanning_RNN, 'Attention model can take Ex_t only in a scanning-LSTM'
                                 att_inp = tf.concat([a_, h, Ex_t], -1, name="a_h_x") # (B, L*D + n + m)
                                 assert K.int_shape(att_inp) == (B, L*D + self.output_size + m), 'shape %s != %s'%(K.int_shape(att_inp),(B, L*D + self.output_size + m))
@@ -227,11 +227,11 @@ class CALSTM(tf.nn.rnn_cell.RNNCell):
                 D = self.C.D
                 B = self.C.B*self.BeamWidth
 
-                if not self.C.no_clock_to_lstm:
-                    assert self.C.build_scanning_RNN, 'no_clock_to_lstm can be set only in a scanning RNN '
+                if (not self.C.build_scanning_RNN) or (not self.C.no_clock_to_lstm):
                     inputs_t = tf.concat((Ex_t, z_t), axis=-1, name="Ex_concat_z")
                     assert K.int_shape(inputs_t) == (B, m+D)
                 else:
+                    assert self.C.build_scanning_RNN, 'no_clock_to_lstm can be set only in a scanning RNN '
                     inputs_t = z_t
                     assert K.int_shape(inputs_t) == (B, D)
 
