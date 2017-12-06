@@ -151,7 +151,7 @@ class VisualizeDir(object):
         self._image_dir = self._args['image_dir']
         self._data_dir = self._args['data_dir']
         self._raw_data_dir = self._args['raw_data_dir']
-        self._SCF = self._hyper.B * self._hyper.num_gpus * 1.0 / (64.0)  # conflation factor
+        self._SCF = self._hyper.B * self._hyper.num_towers * 1.0 / (64.0)  # conflation factor
 
         self._data_props = pd.read_pickle(os.path.join(self._raw_data_dir, 'data_props.pkl'))
         self._word2id = self._data_props['word2id']
@@ -586,20 +586,31 @@ class DiffParams(object):
         one, two = self.get(filename, to_str)
         dtc.pprint(dlc.diff_dict(one, two))
     
-    def _table(self, filename):
+    def _table(self, filename, show=True, filter_head=None, filter_tail=None):
         one, two = self.get(filename, False)
         head, tail = dlc.diff_table(one, two)
-        display(pd.DataFrame(head))
-        display(pd.DataFrame(tail))
+        head = pd.DataFrame(head)
+        tail = pd.DataFrame(tail)
+
+        if filter_head is not None:
+            head = head[head[0].str.contains(filter_head)]
+        if filter_tail is not None:
+            tail = tail[tail[0].str.contains(filter_tail)]
+
+        if show:
+            display(head)
+            display(tail)
+        return head, tail
         
-    def args(self, to_str=True):
-        self._table('args.pkl')        
+    def args(self, show=True, filter_head=None, filter_tail=None):
+        return self._table('args.pkl', show=show, filter_head=filter_head, filter_tail=filter_tail)
         
-    def hyper(self, to_str=True):
-        self._table('hyper.pkl')
+    def hyper(self, show=True, filter_head=None, filter_tail=None):
+        return self._table('hyper.pkl', show=show, filter_head=filter_head, filter_tail=filter_tail)
     
     def get_args(self):
         return self.get('args.pkl', to_str=True)
+
     def get_hyper(self):
         return self.get('hyper.pkl', to_str=True)
     

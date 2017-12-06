@@ -52,7 +52,7 @@ def build_vgg_context(params, image_batch):
         for layer in convnet.layers:
             layer.trainable = False
 
-        print 'convnet output_shape = ', convnet.output_shape
+        # print 'convnet output_shape = ', convnet.output_shape
         ## a = convnet(image_batch)
         a = convnet.output
         assert K.int_shape(a)[1:] == (params.H, params.W, params.D)
@@ -316,8 +316,11 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     ## one additional output layer for each of the h and c LSTM states. So if you had
                     ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
                     ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
+
+                    # TODO: Taking a mean of the context seems arbitrary. Perhaps we need to feed the full
+                    # context to the MLP here but that would blow up the #weights by a factor of 136
                     a = K.mean(a, axis=1) # final shape = (B, D)
-                    ## DROPOUT: The paper has a dropout layer after each hidden layer
+                    # DROPOUT: The paper has a dropout layer after each hidden layer
                     if ('init_model_hidden' in self.C) and (self.C.init_model_hidden is not None):
                         a = tfc.MLPStack(self.C.init_model_hidden)(a)
 
@@ -520,8 +523,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     with tf.variable_scope('Regularization_Cost'):
                         if (self.C.weights_regularizer is not None) and self.C.rLambda > 0:
                             reg_loss = self.C.rLambda * tf.reduce_sum(
-                                [self.C.weights_regularizer(t) for t in
-                                 tf.get_collection("REGULARIZED_WEIGHTS")])
+                                [self.C.weights_regularizer(var) for var in tf.get_collection("REGULARIZED_WEIGHTS")])
                             _reg_wt_names = [var.name for var in tf.get_collection("REGULARIZED_WEIGHTS")]
                             assert len(dlc.get_dupes(_reg_wt_names)) == 0, \
                                 'Some regularization weights seem to have been double-counted.%s' % dlc.get_dupes(
@@ -778,254 +780,6 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'predicted_ids': ctc_decoded_ids,  # (B,T)
                     'predicted_lens': ctc_decoded_lens  # (B,)
                 })
-
-
-
-#     def _optimizer(self, yLogits, alpha, beta, y_s, sequence_lengths, y_ctc, ctc_len):
-#         with tf.variable_scope(self.outer_scope) as var_scope:
-#             with tf.name_scope(var_scope.original_name_scope):
-#                 B = self.C.B
-#                 Kv =self.C.K
-#                 L = self.C.L
-#                 N = self._num_calstm_layers
-#                 H = self.C.H
-#                 W = self.C.W
-#                 T = None
-#
-#                 assert K.int_shape(yLogits) == (B, None, Kv) # (B, T, K)
-#                 assert K.int_shape(alpha) == (N, B, None, L) # (N, B, T, L)
-#                 assert K.int_shape(beta) == (N, B, None, 1) # (N, B, T, 1)
-#                 assert K.int_shape(y_s) == (B, None)  # (B, T)
-#                 assert K.int_shape(sequence_lengths) == (B,)
-#                 assert K.int_shape(y_ctc) == (B, None)  # (B, T)
-#                 assert K.int_shape(ctc_len) == (B,)
-#                 tf_T = tf.shape(yLogits)[1]
-#
-#                 ################ Loss Calculations ################
-#                 with tf.variable_scope('Loss_Calculations'):
-#
-#                     ################ Regularization Cost ################
-#                     with tf.variable_scope('Regularization_Cost'):
-#                         if (self.C.weights_regularizer is not None) and self.C.rLambda > 0:bin_len
-#                             reg_loss = self.C.rLambda * tf.reduce_sum([self.C.weights_regularizer(t) for t in tf.get_collection("REGULARIZED_WEIGHTS")])
-#                             _reg_wt_names = [var.name for var in tf.get_collection("REGULARIZED_WEIGHTS")]
-#                             assert len(dlc.get_dupes(_reg_wt_names)) == 0, \
-#                                 'Some regularization weights seem to have been double-counted.%s'%dlc.get_dupes(_reg_wt_names)
-#                         else:
-#                             reg_loss = tf.constant(0, dtype=self.C.dtype)
-#
-#                     ################ Build LogLoss ################
-#                     with tf.variable_scope('LogLoss'):
-#                         sequence_mask = tf.sequence_mask(sequence_lengths,
-#                                                          maxlen=tf_T,
-#                                                          dtype=self.C.dtype,
-#                                                          name='sequence_mask')  # (B, T)
-#                         assert K.int_shape(sequence_mask) == (B,None) # (B,T)
-#
-#                         ## Masked negative log-likelihood of the sequence.
-#                         ## Note that log(product(p_t)) = sum(log(p_t)) therefore taking log of
-#                         ## joint-sequence-probability is same as taking sum of log of probability at each time-step
-#
-#                         ################ Compute Sequence Log-Loss / Log-Likelihood  ################
-#                         #####             == -Log( product(p_t) ) == -sum(Log(p_t))             #####
-#                         if self.C.sum_logloss:
-#                             ## Here we do not normalize the log-loss across time-steps because the
-#                             ## paper as well as it's source-code do not do that.
-#                             log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-#                                                                         targets=y_s,
-#                                                                         weights=sequence_mask,
-#                                                                         average_across_timesteps=False,
-#                                                                         average_across_batch=False,
-#                                                                         name='log_losses'
-#                                                                         )
-#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-#                             log_losses = tf.reduce_sum(log_losses, axis=1, name='total log-loss') # sum along time dimension => (B,)
-#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-#                             log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerSentence') # scalar
-#                         else: ## Standard log perplexity (average per-word log perplexity)
-#                             log_losses = tf.contrib.seq2seq.sequence_loss(logits=yLogits,
-#                                                                         targets=y_s,
-#                                                                         weights=sequence_mask,
-#                                                                         average_across_timesteps=True,
-#                                                                         average_across_batch=False)
-#                             # print 'shape of loss_vector = %s'%(K.int_shape(log_losses),)
-#                             log_likelihood = tf.reduce_mean(log_losses, axis=0, name='CrossEntropyPerWord')
-#                         assert K.int_shape(log_likelihood) == tuple()
-#
-#                     ################   Calculate the alpha penalty:   ################
-#                     #### lambda * sum_over_i&b(square(C/L - sum_over_t(alpha_i))) ####
-#                     with tf.variable_scope('AlphaPenalty'):
-#                         alpha_mask = tf.expand_dims(sequence_mask, axis=2)  # (B, T, 1)
-#                         if self.C.MeanSumAlphaEquals1:
-#                             mean_sum_alpha_over_t = 1.0
-#                         else:
-#                             mean_sum_alpha_over_t = tf.div(tf.cast(sequence_lengths, dtype=self.C.dtype), tf.cast(self.C.L, dtype=self.C.dtype)) # (B,)
-#                             mean_sum_alpha_over_t = tf.expand_dims(mean_sum_alpha_over_t, axis=1) # (B, 1)
-#
-#                         #    sum_over_t = tf.reduce_sum(tf.multiply(alpha,sequence_mask), axis=1, keep_dims=False)# (B, L)
-#                         #    squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t) # (B, L)
-#                         #    alpha_penalty = self.C.pLambda * tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-#                         sum_over_t = tf.reduce_sum(tf.multiply(alpha, alpha_mask), axis=2, keep_dims=False)# (N, B, L)
-#                         squared_diff = tf.squared_difference(sum_over_t, mean_sum_alpha_over_t)  # (N, B, L)
-#                         abs_diff = tf.abs(tf.subtract(sum_over_t, mean_sum_alpha_over_t))  # (N, B, L)
-#
-#                         alpha_squared_error = tf.reduce_sum(squared_diff, axis=2, keep_dims=False)  # (N, B)
-#                         alpha_abs_error = tf.reduce_sum(abs_diff,  axis=2, keep_dims=False)  # (N, B)
-#                         # alpha_squared_error = tf.reduce_sum(squared_diff, keep_dims=False) # scalar
-#                         # alpha_penalty = self.C.pLambda * alpha_squared_error # scalar
-#
-#                         ## Max theoretical value of alpha_squared_error = C^2 * (L-1)/L. We'll use this to normalize alpha to a value between 0 and 1
-#                         ase_max = tf.constant((L-1.0) / L*1.0) * tf.square(tf.cast(sequence_lengths, dtype=self.C.dtype))  # (B,)
-#                         assert K.int_shape(ase_max) == (B,)
-#                         ase_max = tf.expand_dims(ase_max, axis=0)  # (1, B) ~ C^2 who's average value is 5000 for our dataset
-#
-#                         # Max theoretical value of alpha_abs_error = 2C * (L-1)/L
-#                         aae_max = tf.constant(2. * (L-1.0) / (L*1.0)) * tf.cast(sequence_lengths, dtype=self.C.dtype)  # (B,)
-#                         assert K.int_shape(aae_max) == (B,)
-#                         aae_max = tf.expand_dims(aae_max, axis=0)  # (1, B)
-#
-#                         normalized_ase = alpha_squared_error * 100. / ase_max  # (N, B) all values lie between 0. and 100.
-#                         mean_norm_ase = tf.reduce_mean(normalized_ase)  # scalar between 0. and 100.0
-#
-#                         normalized_aae = alpha_abs_error * 100. / aae_max  # (N, B) all values lie between 0. and 100.
-#                         mean_norm_aae = tf.reduce_mean(normalized_aae)  # scalar between 0. and 100.
-#
-#                         if self.C.pLambda > 0:
-#                             alpha_penalty = tf.identity(self.C.pLambda * tf.abs(mean_norm_ase - self.C.target_ase),
-#                                                         name='alpha_penalty')  # scalar
-#                         else:
-#                             alpha_penalty = tf.constant(0.0, name='no_alpha_penalty')
-#
-#                         mean_seq_len = tf.reduce_mean(tf.cast(sequence_lengths, dtype=tf.float32))
-#                         # mean_sum_alpha_over_t = tf.reduce_mean(mean_sum_alpha_over_t)
-#                         # mean_sum_alpha_over_t2 = tf.reduce_mean(sum_over_t)
-#                         assert K.int_shape(alpha_penalty) == tuple()
-#
-#                         # Reshape alpha for debugging output
-#                         alpha_out = tf.reshape(alpha, (N, B, -1, H, W)) #(N, B, T, L) -> (N, B, T, H, W)
-#                         alpha_out = tf.transpose(alpha_out, perm=(0,1,3,4,2), name='alpha_out') # (N, B, T, H, W)->(N, B, H, W, T)
-#                         assert K.int_shape(alpha_out) == (N, B, H, W, T)
-#
-#                         # Beta metrics for logging
-#                         beta  # (N, B, T, 1)
-#                         alpha_mask  # (B, T, 1)
-#                         beta_out = tf.squeeze(tf.multiply(beta, alpha_mask), axis=3)  # (N, B, T)
-#                         seq_lens = tf.cast(tf.expand_dims(sequence_lengths, axis=0), dtype=self.C.dtype)  # (N, B)
-#                         beta_mean = tf.divide(tf.reduce_sum(beta_out, axis=2, keep_dims=False),  seq_lens, name='beta_mean')  # (N, B)
-#                         beta_mean_tiled = tf.tile(tf.expand_dims(beta_mean, axis=2), [1, 1, tf_T])  # (N, B, T)
-#                         beta_mask = tf.expand_dims(sequence_mask, axis=0)  # (1, B, T)
-#                         beta_mean_tiled = tf.multiply(beta_mean_tiled, beta_mask)  # (N, B, T)
-#                         beta_std_dev = tf.sqrt(tf.reduce_sum(tf.squared_difference(beta_out, beta_mean_tiled), axis=2, keep_dims=False) / seq_lens, name='beta_std_dev')  # (N, B)
-#
-#
-#                     ################ Build CTC Cost Function ################
-#                     ## Compute CTC loss/score with intermediate blanks removed. We've removed all spaces/blanks in the
-#                     ## target sequences (y_ctc). Hence the target (y_ctc_ sequences are shorter than the inputs (y_s/x_s).
-#                     ## Using CTC loss will have the following side-effect:
-#                     ##  1) The network will be told that it is okay to omit blanks (spaces) or emit multiple blanks
-#                     ##     since CTC will ignore those. This makes the learning easier, but we'll need to insert blanks
-#                     ##     between tokens when printing out the predicted markup.
-#                     with tf.variable_scope('CTC_Cost'):
-#                         ## sparse tensor
-#                     #    y_idx =    tf.where(tf.not_equal(y_ctc, 0)) ## null-terminator/EOS is removed :((
-#                         ctc_mask = tf.sequence_mask(ctc_len, maxlen=tf.shape(y_ctc)[1], dtype=tf.bool)
-#                         assert K.int_shape(ctc_mask) == (B,None) # (B,T)
-#                         y_idx =    tf.where(ctc_mask)
-#                         y_vals =   tf.gather_nd(y_ctc, y_idx)
-#                         y_sparse = tf.SparseTensor(y_idx, y_vals, tf.shape(y_ctc, out_type=tf.int64))
-#                         ctc_losses = tf.nn.ctc_loss(y_sparse,
-#                                                 yLogits,
-#                                                 sequence_lengths,
-#                                                 ctc_merge_repeated=(not self.C.no_ctc_merge_repeated),
-#                                                 time_major=False)
-#                         ## print 'shape of ctc_losses = %s'%(K.int_shape(ctc_losses),)
-#                         assert K.int_shape(ctc_losses) == (B, )
-#                         if self.C.sum_logloss:
-#                             ctc_loss = tf.reduce_mean(ctc_losses, axis=0, name='CTCSentenceLoss') # scalar
-#                         else: # mean loss per word
-#                             ctc_loss = tf.div(tf.reduce_sum(ctc_losses, axis=0), tf.reduce_sum(tf.cast(ctc_mask, dtype=self.C.dtype)), name='CTCWordLoss') # scalar
-#                         assert K.int_shape(ctc_loss) == tuple()
-#                     if self.C.use_ctc_loss:
-#                         cost = ctc_loss + alpha_penalty + reg_loss
-#                     else:
-#                         cost = log_likelihood + alpha_penalty + reg_loss
-#
-#                 ################ CTC Beamsearch Decoding ################
-#                 with tf.variable_scope('Accuracy_Calculation'):
-#                     if (self.C.CTCBlankTokenID is not None) or (self.C.SpaceTokenID is not None):
-#                         yLogits_s = K.permute_dimensions(yLogits, [1,0,2])  # (T, B, K)
-#                         ## ctc_beam_search_decoder sometimes produces ID values = -1
-#                         ## Note: returns sparse tensor therefore no EOS tokens are padded to the sequences.
-#                         decoded_ids_sparse, _ = tf.nn.ctc_beam_search_decoder(yLogits_s, sequence_lengths, beam_width=self.C.ctc_beam_width,
-#                                                                               top_paths=1, merge_repeated=(not self.C.no_ctc_merge_repeated))
-#                         # print 'shape of ctc_decoded_ids = ', decoded_ids_sparse[0].get_shape().as_list()
-#
-#                         ## Pad EOS_Tokens to the end of the sequences. (and convert to dense form).
-#                         ctc_decoded_ids = tf.sparse_tensor_to_dense(decoded_ids_sparse[0], default_value=self.C.NullTokenID) # (B, T)
-#                         ctc_decoded_ids.set_shape((B,None))
-#                         ## get seq-lengths including eos_token (as is the case with tf.dynamic_decode as well as our input sequences)
-#                         ctc_decoded_lens = tfc.seqlens(ctc_decoded_ids)
-#     #                    ctc_squashed_ids, ctc_squashed_lens = tfc.squash_2d(B,
-#     #                                                                        ctc_decoded_ids,
-#     #                                                                        sequence_lengths,
-#     #                                                                        self.C.SpaceTokenID,
-#     #                                                                        padding_token=0) # ((B,T), (B,))
-#     #                    ctc_ed = tfc.edit_distance2D(B, ctc_squashed_ids, ctc_squashed_lens, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len, self.C.CTCBlankTokenID, self.C.SpaceTokenID)
-#                         # ctc_ed = tfc.edit_distance2D_sparse(B, decoded_ids_sparse, tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len) #(B,)
-#                         ctc_ed = tfc.edit_distance2D(B,
-#                                                      ctc_decoded_ids, ctc_decoded_lens,
-#                                                      tf.cast(self._y_ctc, dtype=tf.int64), self._ctc_len,
-#                                                      self.C.CTCBlankTokenID, self.C.SpaceTokenID, self.C.NullTokenID)
-#                         mean_ctc_ed = tf.reduce_mean(ctc_ed) # scalar
-#                         num_hits = tf.reduce_sum(tf.to_float(tf.equal(ctc_ed, 0)))
-#     #                    pred_len_ratio = tf.divide(ctc_squashed_lens,ctc_len)
-#                         pred_len_ratio = tf.divide( tf.cast(ctc_decoded_lens, self.C.dtype), tf.cast(ctc_len, self.C.dtype) )
-#                         # target_and_predicted_ids = tf.stack([tf.cast(self._y_ctc, dtype=tf.int64), ctc_squashed_ids], axis=1)
-#                     else:
-#                         ctc_ed = None
-#                         mean_ctc_ed = None
-#                         pred_len_ratio = None
-#                         num_hits = None
-#                         ctc_decoded_ids = None
-#                         ctc_decoded_lens = None
-#
-#                 ################ Optimizer ################
-#                 if self._opt is not None:
-#                     with tf.variable_scope('Optimizer'):
-#                         grads = self._opt.compute_gradients(cost)
-#                 else:
-#                     grads = tf.constant(0)
-#
-#                 return dlc.Properties({
-#                         'grads': grads,
-#                         'alpha':  alpha_out, #(N, B, H, W, T)
-#                         'beta_mean': beta_mean,  # (N, B)
-#                         'beta_std_dev': beta_std_dev,  # (N, B)
-#                         # 'train': train,
-#                         # 'global_step':global_step, # scalar
-#                         'log_likelihood': log_likelihood, # scalar
-#                         'ctc_loss': ctc_loss, # scalar
-#                         'loss': ctc_loss if self.C.use_ctc_loss else log_likelihood,
-#                         'alpha_penalty': alpha_penalty, # scalar
-#                         'reg_loss': reg_loss, # scalar
-#                         'cost': cost, # scalar
-#                         'ctc_ed': ctc_ed, #(B,)
-#                         'mean_ctc_ed': mean_ctc_ed, # scalar
-#                         'sequence_lengths': sequence_lengths,  # (B,)
-#                         'ctc_len': ctc_len, # (B,)
-# #                        'pred_squash_lens': ctc_squashed_lens, # (B,)
-#                         'pred_len_ratio': pred_len_ratio, # (B,)
-#                         'num_hits': num_hits,
-#                         'mean_norm_ase': mean_norm_ase, # scalar between 0. and 100.0
-#                         'mean_norm_aae': mean_norm_aae, # scalar between 0. and 100.0
-#                         # 'mean_sum_alpha_i': mean_sum_alpha_over_t,
-#                         # 'mean_sum_alpha_i2': mean_sum_alpha_i2,
-#                         'mean_seq_len': mean_seq_len, # scalar
-#                         'predicted_ids': ctc_decoded_ids, # (B,T)
-#                         'predicted_lens': ctc_decoded_lens, #(B,)
-# #                        'predicted_squashed_ids': ctc_squashed_ids #(B,T)
-#                         })
-
 
     def _beamsearch(self):
         """ Build the prediction graph of the model using beamsearch """
@@ -1286,6 +1040,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             cost_log = log_likelihood + alpha_penalty + reg_loss
 
         if optimizer is not None:
+            # print gather('grads')
             grads = average_gradients(gather('grads'))
             with tf.variable_scope('optimizer'):
                 apply_grads = optimizer.apply_gradients(grads, global_step=global_step)
@@ -1306,6 +1061,11 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
 
 #            tb_logs = tf.summary.merge(tf.get_collection('training'))
 
+            logs = []
+            for var in tf.trainable_variables():
+                logs.append(tf.summary.histogram('%s/step/%s/'%(run_tag, var.name), var))
+            tb_step_logs = tf.summary.merge(logs)
+
             ## Placeholder for injecting training-time from outside
             ph_train_time = tf.placeholder(hyper.dtype)
             ph_bleu_scores = tf.placeholder(hyper.dtype)
@@ -1317,7 +1077,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             ph_costs = tf.placeholder(hyper.dtype)
             ph_mean_norm_ases = tf.placeholder(hyper.dtype)
             ph_mean_norm_aaes = tf.placeholder(hyper.dtype)
-            ph_beta_mean = tf.placeholder(hyper.dtype)  # (num_steps, N, B*num_gpus)
+            ph_beta_mean = tf.placeholder(hyper.dtype)  # (num_steps, N, B*num_towers)
             ph_beta_std_dev = tf.placeholder(hyper.dtype)
             ph_pred_len_ratios = tf.placeholder(hyper.dtype)
             ph_num_hits = tf.placeholder(hyper.int_type)
@@ -1356,11 +1116,12 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             aggs.append(tf.summary.histogram('%s/pred_len_ratio_dist/'%run_tag, ph_pred_len_ratios))
             mean_hits = tf.reduce_mean(tf.cast(ph_num_hits, hyper.dtype))
             aggs.append(tf.summary.scalar('%s/num_hits/'%run_tag, mean_hits))
-            aggs.append(tf.summary.scalar('%s/accuracy/'%run_tag, mean_hits / tf.constant(hyper.num_gpus*hyper.B*1.0)))
+            aggs.append(tf.summary.scalar('%s/accuracy/'%run_tag, mean_hits / tf.constant(hyper.num_towers * hyper.B*1.0)))
             aggs.append(tf.summary.scalar('%s/regLoss/'%run_tag, tf.reduce_mean(ph_reg_losses)))
             if hyper.build_scanning_RNN:
                 aggs.append(tf.summary.scalar('%s/scanLen/'%run_tag, tf.reduce_mean(tf.cast(ph_scan_lens, dtype=hyper.dtype))))
                 aggs.append(tf.summary.histogram('%s/scanLen_dist/'%run_tag, ph_scan_lens))
+
 
             tb_agg_logs = tf.summary.merge(aggs)
 
@@ -1372,22 +1133,22 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
                 predicted_ids_list = zero
                 predicted_lens = zero
             else:
-                ctc_ed = concat('ctc_ed') # (num_gpus*B,)
-                pred_len_ratio = concat('pred_len_ratio') # (num_gpus*B,)
-                num_hits = get_sum('num_hits') # scalar
+                ctc_ed = concat('ctc_ed') # (num_towers*B,)
+                pred_len_ratio = concat('pred_len_ratio') # (num_towers*B,)
+                num_hits = get_sum('num_hits')  # scalar
                 predicted_ids_list = gather('predicted_ids')  # [(B,T), ...]
-                predicted_lens = concat('predicted_lens')  # (num_gpus*B,)
+                predicted_lens = concat('predicted_lens')  # (num_towers*B,)
 
             if hyper.build_scanning_RNN:
-                scan_len = concat('scan_len')  # (num_gpus*B,)
+                scan_len = concat('scan_len')  # (num_towers*B,)
             else:
                 scan_len = zero
 
         return dlc.Properties({
             'train': apply_grads,  # op
             'image_name_list': gather('image_name'),  # [(B,), ...]
-            'alpha': concat('alpha', axis=1),  # (N, num_gpus*B, H, W, T)
-            'beta': concat('beta', axis=1),  # (N, num_gpus*B, T)
+            'alpha': concat('alpha', axis=1),  # (N, num_towers*B, H, W, T)
+            'beta': concat('beta', axis=1),  # (N, num_towers*B, T)
             'log_likelihood': log_likelihood,  # scalar
             'ph_loglosses': ph_loglosses,  # (num_steps,)
             'ctc_loss': ctc_loss,  # scalar
@@ -1399,33 +1160,34 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             'ph_mean_norm_ases': ph_mean_norm_ases,  # (num_steps,)
             'mean_norm_aae': get_mean('mean_norm_aae'),  # scalar between 0. and 100.
             'ph_mean_norm_aaes': ph_mean_norm_aaes,  # (num_steps,)
-            'beta_mean': concat('beta_mean', axis=1),  # (N, B*num_gpus)
-            'ph_beta_mean': ph_beta_mean,  # (num_steps, N, B*num_gpus)
-            'beta_std_dev': concat('beta_std_dev', axis=1),  # (N, B*num_gpus)
-            'ph_beta_std_dev': ph_beta_std_dev,  # (num_steps, N, B*num_gpus)
+            'beta_mean': concat('beta_mean', axis=1),  # (N, B*num_towers)
+            'ph_beta_mean': ph_beta_mean,  # (num_steps, N, B*num_towers)
+            'beta_std_dev': concat('beta_std_dev', axis=1),  # (N, B*num_towers)
+            'ph_beta_std_dev': ph_beta_std_dev,  # (num_steps, N, B*num_towers)
             'num_hits': num_hits,  # scalar
             'ph_num_hits': ph_num_hits,  # (num_steps,)
             'reg_loss': reg_loss,  # scalar
-            'ph_reg_losses': ph_reg_losses, # (num_steps,)
+            'ph_reg_losses': ph_reg_losses,  # (num_steps,)
             'cost': cost_log,  # scalar
             'ph_costs': ph_costs,  # (num_steps,)
-            'ctc_ed': ctc_ed,  # (num_gpus*B,)
-            'ph_ctc_eds': ph_ctc_eds,  # (num_steps*num_gpus*B,)
-            'predicted_ids_list': predicted_ids_list, # [(B,T), ...]
-            'predicted_lens': predicted_lens,  # (num_gpus*B,)
-            'pred_len_ratio': pred_len_ratio,  # (num_gpus*B,)
-            'ph_pred_len_ratios': ph_pred_len_ratios, # (num_steps*num_gpus*B,)
+            'ctc_ed': ctc_ed,  # (num_towers*B,)
+            'ph_ctc_eds': ph_ctc_eds,  # (num_steps*num_towers*B,)
+            'predicted_ids_list': predicted_ids_list,  # [(B,T), ...]
+            'predicted_lens': predicted_lens,  # (num_towers*B,)
+            'pred_len_ratio': pred_len_ratio,  # (num_towers*B,)
+            'ph_pred_len_ratios': ph_pred_len_ratios,  # (num_steps*num_towers*B,)
             'x_s_list': gather('x_s'),  # [(B,T),...] or [(B,S,3),...]
             'y_s_list': gather('y_s'),  # [(B,T),...]
             'y_ctc_list': gather('y_ctc'),  # [(B,T),...]
-            'ctc_len': concat('ctc_len'),  # (num_gpus*B,)
-            'scan_len': scan_len,  # (num_gpus*B,)
-            'bin_len': stack('bin_len'),  # (num_gpus*B,)
-            'ph_scan_lens': ph_scan_lens,  # (num_steps*num_gpus*B,)
+            'ctc_len': concat('ctc_len'),  # (num_towers*B,)
+            'scan_len': scan_len,  # (num_towers*B,)
+            'bin_len': stack('bin_len'),  # (num_towers*B,)
+            'ph_scan_lens': ph_scan_lens,  # (num_steps*num_towers*B,)
             'ph_train_time': ph_train_time,  # scalar
-            'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_gpus*B,)
+            'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_towers*B,)
             'ph_bleu_score2': ph_bleu_score2,  # scalar
-            'tb_agg_logs': tb_agg_logs  # summary string
+            'tb_agg_logs': tb_agg_logs,  # summary string
+            'tb_step_logs': tb_step_logs, # summary string
         })
 
 def sync_testing_towers(hyper, tower_ops, run_tag='validation'):

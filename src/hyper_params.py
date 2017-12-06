@@ -181,7 +181,7 @@ class GlobalParams(dlc.HyperParams):
             '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
             'See paper or model description.',
             integer(1),
-            512),
+            128),
         PD(
             'H', 'Height of feature-map produced fed to the decoder.',
             integer(1),
@@ -482,7 +482,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         PD(
             'input_queue_capacity', 'Capacity of input queue.',
             integer(1),
-            LambdaVal(lambda _, d: d.num_gpus * 3)
+            LambdaVal(lambda _, d: d.num_towers * 3)
         ),
         PD(
             'DecodingSlack',
@@ -568,9 +568,24 @@ class Im2LatexModelParams(dlc.HyperParams):
             integer(1)
         ),
         PD(
+            'towers_per_gpu',
+            """
+            Number of towers per GPU running concurrently. Multiple towers per gpu are 
+            needed in order to circumvent OOM errors.""",
+            integer(1)
+        ),
+        PD(
+            'num_towers',
+            """
+            Number of towers per GPU running concurrently. Multiple towers per gpu are 
+            needed in order to circumvent OOM errors.""",
+            integer(1),
+            LambdaVal(lambda _, p: p.num_gpus * p.towers_per_gpu)
+        ),
+        PD(
             'data_reader_B', 'batch_size for the data_reader',
             integer(1),
-            LambdaVal(lambda _, d: d.B * d.num_gpus)
+            LambdaVal(lambda _, d: d.B * d.num_towers)
         ),
         ### Embedding Layer ###
         PD(
@@ -818,23 +833,45 @@ def make_hyper(initVals={}, freeze=True):
             'op_name': 'Convnet',
             'tb': globals.tb,
             'layers': (
-                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels': 256, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+                # ConvLayerParams(convnet_common).updated({'output_channels': 512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
                 MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
                 ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
                 MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
                 MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
 
-                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
                 MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
 
-                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
                 MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
             )
         }).freeze()
+
+        # CONVNET = ConvStackParams({
+        #     'op_name': 'Convnet',
+        #     'tb': globals.tb,
+        #     'layers': (
+        #         ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+        #         # ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+        #
+        #         ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+        #
+        #         ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+        #
+        #         ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
+        #
+        #         ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+        #     )
+        # }).freeze()
 
     # else: ## VGG16 architecture
     #     convnet_common = {

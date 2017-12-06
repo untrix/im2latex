@@ -25,6 +25,7 @@ Created on Tue Jul 25 13:41:32 2017
 Tested on python 2.7
 """
 import time
+import pprint
 import numpy as np
 import tensorflow as tf
 import tf_commons as tfc
@@ -56,9 +57,11 @@ def printVars(logger):
     total_calstm = 0
     total_lstm_0 = 0
     total_lstm_1 = 0
+    total_att1 = 0
     total_calstm2 = 0
     total_lstm2_0 = 0
     total_lstm2_1 = 0
+    total_att2 = 0
     total_output = 0
     total_embedding = 0
 
@@ -76,12 +79,16 @@ def printVars(logger):
                 total_lstm_0 += n
             elif 'multi_rnn_cell/cell_1' in var.name:
                 total_lstm_1 += n
+            elif 'AttentionModel' in var.name:
+                total_att1 += n
         elif 'CALSTM_2' in var.name:
             total_calstm2 += n
             if 'multi_rnn_cell/cell_0' in var.name:
                 total_lstm2_0 += n
             elif 'multi_rnn_cell/cell_1' in var.name:
                 total_lstm2_1 += n
+            elif 'AttentionModel' in var.name:
+                total_att2 += n
         elif 'I2L_RNN/Output_Layer/' in var.name:
             total_output += n
         elif 'Initializer_MLP/' in var.name:
@@ -99,9 +106,12 @@ def printVars(logger):
     logger.info( 'CALSTM_1: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
     logger.info( 'LSTM1_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
     logger.info( 'LSTM1_1: %d (%2.2f%%)'%(total_lstm_1, total_lstm_1*100./total_n))
-    logger.info( 'CALSTM_2: %d (%2.2f%%)'%(total_calstm2, total_calstm2*100./total_n))
-    logger.info( 'LSTM2_0: %d (%2.2f%%)'%(total_lstm2_0, total_lstm2_0*100./total_n))
-    logger.info( 'LSTM2_1: %d (%2.2f%%)'%(total_lstm2_1, total_lstm2_1*100./total_n))
+    logger.info( 'AttentionModel1: %d (%2.2f%%)'%(total_att1, total_att1*100./total_n))
+    if total_calstm2 > 0:
+        logger.info( 'CALSTM_2: %d (%2.2f%%)'%(total_calstm2, total_calstm2*100./total_n))
+        logger.info( 'LSTM2_0: %d (%2.2f%%)'%(total_lstm2_0, total_lstm2_0*100./total_n))
+        logger.info( 'LSTM2_1: %d (%2.2f%%)'%(total_lstm2_1, total_lstm2_1*100./total_n))
+        logger.info( 'AttentionModel2: %d (%2.2f%%)'%(total_att2, total_att2*100./total_n))
     logger.info( 'Output Layer: %d (%2.2f%%)'%(total_output, total_output*100./total_n))
     logger.info( 'Embedding Matrix: %d (%2.2f%%)'%(total_embedding, total_embedding*100./total_n))
 
@@ -212,6 +222,9 @@ def main(raw_data_folder,
         qrs = []
         ##### Training Graphs
         train_tower_ops = []; train_ops = None
+        trainable_vars_n = 0
+        toplevel_var_scope = tf.get_variable_scope()
+        reuse_vars = False
         with tf.name_scope('Training'):
             tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
             if hyper.optimizer == 'adam':
@@ -219,25 +232,27 @@ def main(raw_data_folder,
             else:
                 raise Exception('Unsupported optimizer - %s - configured.' % (hyper.optimizer,))
 
-        if args.doTrain:
-            with tf.name_scope('Training'):
+            if args.doTrain:
                 with tf.variable_scope('InputQueue'):
                     train_q = tf.FIFOQueue(hyper.input_queue_capacity, train_it.out_tup_types)
-                    tf_enqueue_train_queue = train_q.enqueue_many(train_it.get_pyfunc_with_split(hyper.num_gpus))
+                    tf_enqueue_train_queue = train_q.enqueue_many(train_it.get_pyfunc_with_split(hyper.num_towers))
                     tf_close_train_queue = train_q.close(cancel_pending_enqueues=True)
-                for i in range(args.num_gpus):
-                    with tf.name_scope('gpu_%d'%i):
-                        with tf.device('/gpu:%d'%i):
-                            model = Im2LatexModel(hyper, train_q, opt=opt, reuse=(False if (i == 0) else True))
-                            train_tower_ops.append(model.build_training_tower())
-                            if i == 0:
-                                trainable_vars_n = num_trainable_vars() # 8544670 or 8547670
-                                hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
-                                ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
-                                ## assert trainable_vars_n == 23261206 if hyper.build_image_context
-                            else:
-                                assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
+                for i in range(hyper.num_gpus):
+                    for j in range(hyper.towers_per_gpu):
+                        with tf.name_scope('gpu_%d'%i + ('/tower_%d'%j if hyper.towers_per_gpu > 1 else '')):
+                            with tf.device('/gpu:%d'%i):
+                                model = Im2LatexModel(hyper, train_q, opt=opt, reuse=reuse_vars)
+                                train_tower_ops.append(model.build_training_tower())
+                                if not reuse_vars:
+                                    trainable_vars_n = num_trainable_vars()  # 8544670 or 8547670
+                                    hyper.logger.info('Num trainable variables = %d', trainable_vars_n)
+                                    reuse_vars = True
+                                    ## assert trainable_vars_n == 8547670 if hyper.use_peephole else 8544670
+                                    ## assert trainable_vars_n == 23261206 if hyper.build_image_context
+                                else:
+                                    assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d'%(num_trainable_vars(), trainable_vars_n)
                 train_ops = sync_training_towers(hyper, train_tower_ops, tf_train_step, optimizer=opt)
+        if args.doTrain:
             qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
             qrs.append(qr1)
 
@@ -248,25 +263,30 @@ def main(raw_data_folder,
                 hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.variable_scope('InputQueue'):
                     valid_q = tf.FIFOQueue(hyper.input_queue_capacity, valid_it.out_tup_types)
-                    enqueue_op2 = valid_q.enqueue_many(valid_it.get_pyfunc_with_split(hyper.num_gpus))
+                    enqueue_op2 = valid_q.enqueue_many(valid_it.get_pyfunc_with_split(hyper.num_towers))
                     close_queue2 = valid_q.close(cancel_pending_enqueues=True)
                 for i in range(args.num_gpus):
-                    with tf.name_scope('gpu_%d'%i):
-                        with tf.device('/gpu:%d'%i):
-                            reuse_vars = False if ((i==0) and (not args.doTrain)) else True
-                            if hyper.build_scanning_RNN:
-                                model_predict = Im2LatexModel(hyper_predict,
-                                                              valid_q,
-                                                              reuse=reuse_vars)
-                                valid_tower_ops.append(model_predict.build_training_tower())
-                            else:
-                                model_predict = Im2LatexModel(hyper_predict,
-                                                              valid_q,
-                                                              seq2seq_beam_width=hyper.seq2seq_beam_width,
-                                                              reuse=reuse_vars)
-                                valid_tower_ops.append(model_predict.build_testing_tower())
-                            if not reuse_vars:
-                                trainable_vars_n = num_trainable_vars()
+                    for j in range(args.towers_per_gpu):
+                        with tf.name_scope('gpu_%d' % i + ('/tower_%d' % j if hyper.towers_per_gpu > 1 else '')):
+                            with tf.device('/gpu:%d'%i):
+                                if hyper.build_scanning_RNN:
+                                    model_predict = Im2LatexModel(hyper_predict,
+                                                                  valid_q,
+                                                                  reuse=reuse_vars)
+                                    valid_tower_ops.append(model_predict.build_training_tower())
+                                else:
+                                    model_predict = Im2LatexModel(hyper_predict,
+                                                                  valid_q,
+                                                                  seq2seq_beam_width=hyper.seq2seq_beam_width,
+                                                                  reuse=reuse_vars)
+                                    valid_tower_ops.append(model_predict.build_testing_tower())
+                                if not reuse_vars:
+                                    trainable_vars_n = num_trainable_vars()
+                                    reuse_vars = True
+                                else:
+                                    assert num_trainable_vars() == trainable_vars_n, 'trainable_vars %d != expected %d' % (
+                                        num_trainable_vars(), trainable_vars_n)
+
                 hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
                 assert num_trainable_vars() == trainable_vars_n, 'num_trainable_vars(%d) != %d'%(num_trainable_vars(), trainable_vars_n)
                 if hyper.build_scanning_RNN:
@@ -284,7 +304,7 @@ def main(raw_data_folder,
         #             model_predict2 = Im2LatexModel(hyper_predict, hyper.seq2seq_beam_width, reuse=True)
         #             tr_acc_ops = model_predict2.test()
         #         with tf.variable_scope('QueueOps'):
-        #             enqueue_op3 = tr_acc_ops.inp_q.enqueue_many(tr_acc_it.get_pyfunc_with_split(hyper.num_gpus))
+        #             enqueue_op3 = tr_acc_ops.inp_q.enqueue_many(tr_acc_it.get_pyfunc_with_split(hyper.num_towers))
         #             close_queue3 = tr_acc_ops.inp_q.close(cancel_pending_enqueues=True)
         #         assert(num_trainable_vars() == trainable_vars_n)
         #     qr3 = tf.train.QueueRunner(tr_acc_ops.inp_q, [enqueue_op3], cancel_op=[close_queue3])
@@ -367,6 +387,7 @@ def main(raw_data_folder,
                         'beta',
                         'image_name_list',
                         'x_s_list',
+                        'tb_step_logs'
                     )
                     accum = Accumulator()
                     while not coord.should_stop():
@@ -379,7 +400,7 @@ def main(raw_data_folder,
                             batch_ops = TFOpNames(ops_accum + ops_log, None)
 
                         batch_ops.run_ops(session, train_ops)
-                        ## Accumulate Metrics
+                        # Accumulate Metrics
                         accum.append(batch_ops)
                         train_time = time.time()-step_start_time
                         bleu = sentence_bleu_scores(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
@@ -406,8 +427,12 @@ def main(raw_data_folder,
                                 storer.write('scan_len', batch_ops.scan_len, np.float32)
                                 storer.write('x', batch_ops.x_s_list, np.float32)
 
+                            # per-step metrics
+                            tf_sw.add_summary(batch_ops.tb_step_logs, global_step=standardized_step(step))
+                            tf_sw.flush()
+
+                            # aggregate metrics
                             agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc)
-                            # Calculate aggregated training metrics
                             tb_agg_logs = session.run(train_ops.tb_agg_logs, feed_dict={
                                 train_ops.ph_train_time: train_time_per100,
                                 train_ops.ph_bleu_scores: accum.bleu_scores,
@@ -489,9 +514,9 @@ def sentence_bleu_scores(hyper, pred_ar_list, pred_lens, target_ar_list, target_
     """
     :param hyper:
     :param pred_ar_list: list of np-array of predicted word/id-sequences. shape = [(B,T), ...]
-    :param pred_lens: np-array of integers representing lengths of the predicted sequences. shape = (num_gpus*B,)
+    :param pred_lens: np-array of integers representing lengths of the predicted sequences. shape = (num_towers*B,)
     :param target_ar_list: list of np-array of target word/id-sequences. shape = [(B,T), ...]
-    :param target_lens: np-array of integers representing lengths of the target sequences. shape = (num_gpus*B,)
+    :param target_lens: np-array of integers representing lengths of the target sequences. shape = (num_towers*B,)
     :return:
     """
     assert len(pred_ar_list) == len(target_ar_list)
@@ -516,9 +541,9 @@ def sentence_bleu_scores(hyper, pred_ar_list, pred_lens, target_ar_list, target_
 
 def squash_and_concat(seq_batch_list, seq_len_batch, remove_val1=None, remove_val2=None, eos_token=None):
     """
-    Gathers all word/id sequences into one list of size num_gpus*B. Optionally Squashes and trims the sequences.
+    Gathers all word/id sequences into one list of size num_towers*B. Optionally Squashes and trims the sequences.
     :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
-    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_towers*B,)
     :param remove_val1:
     :param remove_val2:
     :param eos_token:
@@ -543,10 +568,10 @@ def squash_and_concat(seq_batch_list, seq_len_batch, remove_val1=None, remove_va
 
 def squashed_seq_list(hyper, seq_batch_list, seq_len_batch):
     """
-    Squashes and trims word/id sequences and puts them all into one list of size num_gpus*B
+    Squashes and trims word/id sequences and puts them all into one list of size num_towers*B
     :param hyper: HyperParams
     :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
-    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_towers*B,)
     :return: a list of word/id lists
     """
     return squash_and_concat(seq_batch_list, seq_len_batch,
@@ -557,10 +582,10 @@ def squashed_seq_list(hyper, seq_batch_list, seq_len_batch):
 
 def trimmed_seq_list(hyper, seq_batch_list, seq_len_batch):
     """
-    Trims word/id sequences and puts them all into one list of size num_gpus*B
+    Trims word/id sequences and puts them all into one list of size num_towers*B
     :param hyper: HyperParams
     :param seq_batch_list: list of np-array of word/id-sequences. shape = [(B,T), ...]
-    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_gpus*B,)
+    :param seq_len_batch: np-array of integers representing lengths of the above sequences. shape = (num_towers*B,)
     :return: a list of word/id lists
     """
     return squash_and_concat(seq_batch_list, seq_len_batch, eos_token=hyper.NullTokenID)
@@ -611,7 +636,7 @@ def ids2str3D(ids, hyper):
 
 class TrainingLogic(object):
     full_validation_steps = [3000]
-    fv_score = 0.75
+    fv_score = 0.7
 
     @classmethod
     def do_validate(cls, step, args, train_it, valid_it, score=None):
@@ -623,23 +648,24 @@ class TrainingLogic(object):
             num_valid_batches = valid_it.epoch_size
         elif (args.valid_epochs <= 0):  # smart validation
             assert score is not None, 'score must be supplied if valid_epochs <= 0'
-            if (score - cls.fv_score) >= 0.01:
-                doValidate = True
-                num_valid_batches = valid_it.epoch_size
-                do_save = True
-                cls.full_validation_steps.append(step)
-                cls.fv_score = score
-                logger.info('TrainingLogic: fv_score set to %f at step %d'%(score, step))
-            elif (score > (cls.fv_score * 0.95)):
-                if (step - cls.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
-                    doValidate = do_save = True
+            if score > cls.fv_score:
+                if (score > 0.8) or ((score - cls.fv_score) >= 0.01):
+                    doValidate = True
                     num_valid_batches = valid_it.epoch_size
+                    do_save = True
                     cls.full_validation_steps.append(step)
-                    logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
-                else:
-                    doValidate = False
-                    do_save = False
-                    num_valid_batches = 0
+                    cls.fv_score = score
+                    logger.info('TrainingLogic: fv_score set to %f at step %d'%(score, step))
+                elif score > (cls.fv_score * 0.95):
+                    if (step - cls.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
+                        doValidate = do_save = True
+                        num_valid_batches = valid_it.epoch_size
+                        cls.full_validation_steps.append(step)
+                        logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
+                    else:
+                        doValidate = False
+                        do_save = False
+                        num_valid_batches = 0
             elif (step - cls.full_validation_steps[-1]) >= (2 * train_it.epoch_size):
                 doValidate = do_save = True
                 num_valid_batches = valid_it.epoch_size
@@ -653,21 +679,6 @@ class TrainingLogic(object):
             period = int(epoch_frac * train_it.epoch_size)
             doValidate = do_save = (step % period == 0) or (step == train_it.max_steps)
             num_valid_batches = valid_it.epoch_size if doValidate else 0
-
-        # if doValidate:
-        #     if args.valid_epochs > 0:
-        #         num_valid_batches = valid_it.epoch_size
-        #     else:  # smart validation
-        #         if len(cls.full_validation_steps) == 0:
-        #             num_valid_batches = valid_it.epoch_size
-        #             cls.full_validation_steps.append(step)
-        #         elif (step - cls.full_validation_steps[-1]) > (0.95 * train_it.epoch_size):
-        #             num_valid_batches = valid_it.epoch_size
-        #             cls.full_validation_steps.append(step)
-        #         else:
-        #             num_valid_batches = 5
-        # else:
-        #     num_valid_batches = 0
 
         return doValidate, num_valid_batches, do_save
 
@@ -770,7 +781,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):
     hyper.logger.info('validation cycle starting at step %d for %d steps', step, num_steps)
     while n < num_steps:
         n += 1
-        if (n != print_batch_num):
+        if n != print_batch_num:
             l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
                                 valid_ops.top1_len_ratio,
                                 valid_ops.top1_mean_ed,
