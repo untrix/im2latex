@@ -181,7 +181,7 @@ class GlobalParams(dlc.HyperParams):
             '(integer): number of features coming out of the conv-net. Depth/channels of the last conv-net layer.'
             'See paper or model description.',
             integer(1),
-            128),
+            512),
         PD(
             'H', 'Height of feature-map produced fed to the decoder.',
             integer(1),
@@ -668,6 +668,27 @@ class Im2LatexModelParams(dlc.HyperParams):
         ),
         ### Initializer MLP ###
         PD(
+            'build_init_model',
+            """ 
+            Boolean parameter specifying whether or not to build the LSTM init_state model. If set to False zero-state
+            will be used for init-state, otherwise a init-state model will be created based on other init_model_*
+            params.
+            """,
+            boolean,
+            True
+        ),
+        PD(
+            'init_model_input_transform',
+            """
+            Transform to apply to the image-context input to the init model. Only applies if build_init_model == True.
+            'mean' implies take a mean across the 'L' image-locations and produce an input of size (batchsize, D).
+            'full' implies take in all the 'L' features and produce an input tensor of shape (batchsize, L*D).
+                Note that with this option the # of parameters in the first layer will go up by a factor of L i.e.
+                around 100x.
+            """,
+            ('mean', 'full')
+        ),
+        PD(
             'init_model_hidden',
             'MLP stack for hidden layers of the init_state model. In addition to the stack specified here, an additional FC '
             "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
@@ -765,13 +786,12 @@ class Im2LatexModelParams(dlc.HyperParams):
         else:
             self.output_layers = MLPParams(self).updated({
                 'op_name': 'yLogits_MLP',
-                # 'activation_fn': tf.nn.relu,
                 'layers': (
-                    ## paper has activation set to relu for all but the softmax layer
-                    ## paper has all hidden layers with num_units = m.
-                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.relu}).freeze(),
-                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.relu}).freeze(),
-                    ## Last layer must have num_units = K and activation_fn=None because it outputs logits.
+                    # paper has activation set to relu for all but the softmax layer
+                    # paper has all hidden layers with num_units = m.
+                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.tanh}).freeze(),
+                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.tanh}).freeze(),
+                    # Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )
                 }).freeze()
@@ -782,18 +802,18 @@ class Im2LatexModelParams(dlc.HyperParams):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         ######## Init Model ########
-        if True: ## No hidden init layers by default in the Show&Tell paper
+        if True: # No hidden init layers by default in the Show&Tell paper
             self.init_model_hidden = MLPParams(self).updated({
                 'layers': (
-                    ## paper sets hidden activations=relu and final=tanh
-                    ## The paper's source sets all hidden units to D
-                    FCLayerParams(self).updated({'num_units': min(self.D, 512), 'activation_fn': tf.nn.relu}).freeze(),
+                    # paper sets hidden activations=relu
+                    # The paper's source sets all hidden units to D
+                    FCLayerParams(self).updated({'num_units': min(self.D, 100), 'activation_fn': tf.nn.tanh}).freeze(),
                 )
                 }).freeze()
 
         self.init_model_final_layers = FCLayerParams(self).updated({
             ## num_units to be set dynamically in the code
-            ## paper sets hidden activations=relu and final=tanh
+            ## paper sets final=tanh
             'activation_fn': tf.nn.tanh,
             'dropout': None
             }).freeze()
@@ -825,53 +845,53 @@ def make_hyper(initVals={}, freeze=True):
             'biases_initializer': globals.biases_initializer,
             'weights_regularizer': globals.weights_regularizer,
             'biases_regularizer': globals.biases_regularizer,
-            'activation_fn': tf.nn.relu,
+            'activation_fn': tf.nn.tanh,  # vgg16 has tf.nn.relu
             'padding': 'SAME',
         }
-
-        CONVNET = ConvStackParams({
-            'op_name': 'Convnet',
-            'tb': globals.tb,
-            'layers': (
-                ConvLayerParams(convnet_common).updated({'output_channels': 256, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-                # ConvLayerParams(convnet_common).updated({'output_channels': 512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
-                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
-
-                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
-                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
-
-                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
-                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
-
-                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
-                MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
-
-                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
-                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
-            )
-        }).freeze()
 
         # CONVNET = ConvStackParams({
         #     'op_name': 'Convnet',
         #     'tb': globals.tb,
         #     'layers': (
-        #         ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
-        #         # ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         ConvLayerParams(convnet_common).updated({'output_channels': 256, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+        #         # ConvLayerParams(convnet_common).updated({'output_channels': 512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
         #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
         #
         #         ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
         #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
         #
-        #         ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
         #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
         #
-        #         ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
         #         MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
         #
-        #         ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+        #         ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
         #         MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
         #     )
         # }).freeze()
+
+        CONVNET = ConvStackParams({
+            'op_name': 'Convnet',
+            'tb': globals.tb,
+            'layers': (
+                ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1), 'padding':'VALID'}).freeze(),
+                # ConvLayerParams(convnet_common).updated({'output_channels': 64, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+
+                ConvLayerParams(convnet_common).updated({'output_channels':128, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+
+                ConvLayerParams(convnet_common).updated({'output_channels':256, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape': (2, 2), 'stride': (2, 2)}).freeze(),
+
+                ConvLayerParams(convnet_common).updated({'output_channels':512, 'kernel_shape':(3,3), 'stride':(1,1)}).freeze(),
+                MaxpoolParams(convnet_common).updated({'kernel_shape':(2,2), 'stride':(2,2)}).freeze(),
+            )
+        }).freeze()
 
     # else: ## VGG16 architecture
     #     convnet_common = {

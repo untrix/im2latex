@@ -449,6 +449,8 @@ class ConvStack(object):
                             a = ConvLayer(layerParams)(a, i)
                         elif isinstance(layerParams, MaxpoolParams):
                             a = MaxpoolLayer(layerParams)(a, i)
+                        elif isinstance(layerParams, DropoutParams):
+                            a = DropoutLayer(layerParams)(a, i)
                         else:
                             raise AttributeError('Unsupported params class (%s) found in ConvStackParams.layers'%layerParams.__class__.__name__)
                 return a

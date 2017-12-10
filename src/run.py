@@ -188,7 +188,7 @@ def main():
                                     'tf_session_allow_growth': True,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
-                                    'towers_per_gpu': 4,
+                                    'towers_per_gpu': 1,
                                     'beamsearch_length_penalty': 1.0,
                                     'doValidate': args.doValidate,
                                     'doTrain': not args.doValidate,
@@ -200,7 +200,8 @@ def main():
                                     'output_reuse_embeddings': False,
                                     'REGROUP_IMAGE': (4, 1),  # None  # (4,2)
                                     'build_att_modulator': False,  # turn off beta-MLP
-                                    'build_scanning_RNN': False
+                                    'build_scanning_RNN': False,
+                                    'init_model_input_transform': 'full'
                                     })
 
     if args.batch_size is not None:

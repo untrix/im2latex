@@ -301,50 +301,56 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
     def _init_state(self):
         ################ Initializer MLP ################
         with tf.variable_scope(self.outer_scope):
-            ## ugly, but only option to get pretty tensorboard visuals
             with tf.name_scope(self.outer_scope.original_name_scope):
-                with tf.variable_scope('Initializer_MLP'):
+                zero_state = self.zero_state(self.RuntimeBatchSize, dtype=self.C.dtype)
+                if self.C.build_init_model:
+                    with tf.variable_scope('Initializer_MLP'):
 
-                    ## Broadcast im_context to Seq2SeqBeamWidth
-                    if self.Seq2SeqBeamWidth > 1:
-                        a = tf.contrib.seq2seq.tile_batch(self._a, self.Seq2SeqBeamWidth)
-                        batchsize = self.RuntimeBatchSize
-                    else:
-                        a = self._a
-                        batchsize = self.C.B
-                    ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
-                    ## one additional output layer for each of the h and c LSTM states. So if you had
-                    ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
-                    ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
+                        ## Broadcast im_context to Seq2SeqBeamWidth
+                        if self.Seq2SeqBeamWidth > 1:
+                            a = tf.contrib.seq2seq.tile_batch(self._a, self.Seq2SeqBeamWidth)
+                        else:
+                            a = self._a
+                        ## As per the paper, this is a multi-headed MLP. It has a base stack of common layers, plus
+                        ## one additional output layer for each of the h and c LSTM states. So if you had
+                        ## configured - say 3 CALSTM-stacks with 2 LSTM cells per CALSTM-stack you would end-up with
+                        ## 6 top-layers on top of the base MLP stack. Base MLP stack is specified in param 'init_model_hidden'
 
-                    # TODO: Taking a mean of the context seems arbitrary. Perhaps we need to feed the full
-                    # context to the MLP here but that would blow up the #weights by a factor of 136
-                    a = K.mean(a, axis=1) # final shape = (B, D)
-                    # DROPOUT: The paper has a dropout layer after each hidden layer
-                    if ('init_model_hidden' in self.C) and (self.C.init_model_hidden is not None):
-                        a = tfc.MLPStack(self.C.init_model_hidden)(a)
+                        if self.C.init_model_input_transform == 'mean':  # take mean of the context-tensor across L
+                            a = K.mean(a, axis=1)  # (self.RuntimeBatchSize, D)
+                        elif self.C.init_model_input_transform == 'full':  # use the entire context tensor
+                            a = tf.reshape(a, shape=(self.RuntimeBatchSize, self.C.L*self.C.D))
+                        else:
+                            raise ValueError('Unsupported value of param init_model_input: %s'%self.C.init_model_input)
 
-                    counter = itertools.count(0)
-                    def zero_to_init_state(zs, counter):
-                        assert isinstance(zs, Im2LatexState)
-                        cs = zs.calstm_states
-                        assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
-                        lst = []
-                        for i in xrange(len(cs)):
-                            assert isinstance(cs[i], CALSTMState)
-                            lst.append(self._recur_init_FCLayers(cs[i],
-                                                                 counter,
-                                                                 self.C.init_model_final_layers,
-                                                                 a))
+                        # DROPOUT: The paper has a dropout layer after each hidden layer
+                        if ('init_model_hidden' in self.C) and (self.C.init_model_hidden is not None):
+                            a = tfc.MLPStack(self.C.init_model_hidden)(a)
 
-                        cs = tuple(lst)
+                        counter = itertools.count(0)
 
-                        return zs._replace(calstm_states=cs)
+                        def zero_to_init_state(zs, counter):
+                            assert isinstance(zs, Im2LatexState)
+                            cs = zs.calstm_states
+                            assert isinstance(cs, tuple) and not isinstance(cs, CALSTMState)
+                            lst = []
+                            for i in xrange(len(cs)):
+                                assert isinstance(cs[i], CALSTMState)
+                                lst.append(self._recur_init_FCLayers(cs[i],
+                                                                     counter,
+                                                                     self.C.init_model_final_layers,
+                                                                     a))
 
-                    with tf.variable_scope('Top_Layers'):
-                        self._init_FC_scope = tf.get_variable_scope()
-                        zero_state = self.zero_state(batchsize, dtype=self.C.dtype)
-                        init_state = zero_to_init_state(zero_state, counter)
+                            cs = tuple(lst)
+
+                            return zs._replace(calstm_states=cs)
+
+                        with tf.variable_scope('Top_Layers'):
+                            self._init_FC_scope = tf.get_variable_scope()
+                            # zero_state = self.zero_state(self.RuntimeBatchSize, dtype=self.C.dtype)
+                            init_state = zero_to_init_state(zero_state, counter)
+                else:
+                    init_state = zero_state
 
         return init_state
 
