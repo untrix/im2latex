@@ -1197,7 +1197,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
         })
 
 def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
-    n = len(tower_ops)
+    # n = len(tower_ops)
     BW = hyper.seq2seq_beam_width
     k = min([hyper.k, BW])
 

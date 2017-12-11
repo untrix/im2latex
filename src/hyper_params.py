@@ -134,8 +134,8 @@ class GlobalParams(dlc.HyperParams):
             'n',
             "The variable n in the paper. The number of units in the decoder_lstm cell(s). "
             "The paper uses a value of 1000.",
-            integer(),
-            1000
+            (1000, 1500),
+            1500
         ),
         PD(
             'm',
@@ -454,7 +454,7 @@ class CALSTMParams(dlc.HyperParams):
             'B': self.B,
             'i': self.D if (self.build_scanning_RNN and self.no_clock_to_lstm) else self.m + self.D,  # size of Ex_t + size of z_t.
                 # show-and-tell paper uses a value of n=1000
-            'layers_units': (self.n, self.n, self.n),
+            'layers_units': (self.n, self.n),
             ## 'dropout': None # No dropout in LSTM
             }).freeze()
 
@@ -550,6 +550,18 @@ class Im2LatexModelParams(dlc.HyperParams):
             'adam_alpha', '(float or None): alpha value (step, learning_rate) of adam optimizer.',
             instanceof(float),
             # 0.0001 # default in tf.train.AdamOptimizer is 0.001
+        ),
+        PD(
+            'adam_beta1',
+            'beta1 value of adam-optimizer. If undefined here, the default in tf.train.AdamOptimizer is is 0.9.',
+            decimal(0., 1.),
+            0.5
+        ),
+        PD(
+            'adam_beta2',
+            'beta2 value of adam-optimizer. If undefined here, the default in tf.train.AdamOptimizer is is 0.999.',
+            decimal(0., 1.),
+            0.9
         ),
         PD(
             'optimizer',

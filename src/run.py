@@ -185,7 +185,7 @@ def main():
                                     'make_training_accuracy_graph': False,
                                     # 'use_ctc_loss': args.use_ctc_loss,
                                     "swap_memory": args.swap_memory,
-                                    'tf_session_allow_growth': True,
+                                    'tf_session_allow_growth': False,
                                     'restore_from_checkpoint': args.restore_logdir is not None,
                                     'num_gpus': 2,
                                     'towers_per_gpu': 1,

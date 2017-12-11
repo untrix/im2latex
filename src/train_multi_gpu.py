@@ -228,7 +228,7 @@ def main(raw_data_folder,
         with tf.name_scope('Training'):
             tf_train_step = tf.get_variable('global_step', dtype=hyper.int_type, trainable=False, initializer=0)
             if hyper.optimizer == 'adam':
-                opt = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha)
+                opt = tf.train.AdamOptimizer(learning_rate=hyper.adam_alpha, beta1=hyper.adam_beta1, beta2=hyper.adam_beta2)
             else:
                 raise Exception('Unsupported optimizer - %s - configured.' % (hyper.optimizer,))
 
