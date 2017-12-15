@@ -687,7 +687,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             params.
             """,
             boolean,
-            True
+            False
         ),
         PD(
             'init_model_input_transform',
@@ -802,7 +802,7 @@ class Im2LatexModelParams(dlc.HyperParams):
                     # paper has activation set to relu for all but the softmax layer
                     # paper has all hidden layers with num_units = m.
                     FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.tanh}).freeze(),
-                    FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.tanh}).freeze(),
+                    # FCLayerParams(self).updated({'num_units': 358, 'activation_fn':tf.nn.tanh}).freeze(),
                     # Last layer must have num_units = K and activation_fn=None because it outputs logits.
                     FCLayerParams(self).updated({'num_units': self.K, 'activation_fn': None, 'dropout': None}).freeze(),
                     )

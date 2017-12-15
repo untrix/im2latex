@@ -181,10 +181,10 @@ class VGGProcessor(object):
 
 
 def make_batch_list(df_, batch_size_, assert_whole_batch=True):
-    ## Shuffle the dataframe
+    # Shuffle the dataframe
     df_ = df_.sample(frac=1)
 
-    ## Make a list of batches indices
+    # Make a list of batches indices
     bin_lens = sorted(df_.bin_len.unique())
     bin_counts = [df_[df_.bin_len==l].shape[0] for l in bin_lens]
     batch_list = []
@@ -478,7 +478,7 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
     elif validation_frac is not None and validation_size is not None:
         raise ValueError('Either validation_frac or validation_size must be specified, but not both.')
     elif validation_frac is not None:
-        assert validation_frac <1.0 and validation_frac >=0
+        assert 1.0 > validation_frac >= 0
         validation_size = int(df_.shape[0] * validation_frac)
     num_val_batches = validation_size // batch_size_
     validation_size = num_val_batches * batch_size_
@@ -498,13 +498,13 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
     else:
         logger.info('split_dataset: generating a new train/validate split')
 
-        ## Shuffle the dataframe
+        # Shuffle the dataframe
         df_ = df_.sample(frac=1)
 
-        ## Make overall list of batches
+        # Make overall list of batches
         batch_list = make_batch_list(df_, batch_size_, assert_whole_batch)
-        ## Since batch_list is already randomized, just take num_batch_list
-        ## values from it.
+        # Since batch_list is already randomized, just take num_batch_list
+        # values from it.
         val_batches = batch_list[:num_val_batches]
 
         def get_bin_counts(batch_list):
@@ -516,7 +516,7 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
                     bin_counts[batch_idx[0]] = 1
             return bin_counts
 
-        ## Separate out the training and validation samples
+        # Separate out the training and validation samples
         df_train = df_
         df_validation = None
         if (num_val_batches > 0):
@@ -530,7 +530,8 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         else:
             assert df_train.shape[0] == df_.shape[0]
 
-        store_state({'batch_size': batch_size_, 'num_val_batches': num_val_batches}, df_train, df_validation, args.logdir, 'split_state.pkl')
+        store_state({'batch_size': batch_size_, 'num_val_batches': num_val_batches},
+                    df_train, df_validation, args.logdir, 'split_state.pkl')
         return df_train, df_validation
 
 

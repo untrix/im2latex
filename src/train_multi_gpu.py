@@ -35,12 +35,9 @@ import hyper_params
 from data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
 import dl_commons as dlc
 import data_commons as dtc
-# import nltk
-# from nltk.util import ngrams
+import signal
 
 logger = None
-
-
 def num_trainable_vars():
     total_n = 0
     for var in tf.trainable_variables():
@@ -312,6 +309,8 @@ def main(raw_data_folder,
         tr_acc_ops = None
 
         coord = tf.train.Coordinator()
+        training_logic = TrainingLogic(args, coord, train_it, valid_it)
+
         # print train_ops
 
         printVars(logger)
@@ -356,44 +355,44 @@ def main(raw_data_folder,
             try:
                 start_time = time.time()
                 ############################# Training (with Validation) Cycle ##############################
+                ops_accum = (
+                    'train',
+                    'predicted_ids_list',
+                    'predicted_lens',
+                    'y_ctc_list',
+                    'ctc_len',
+                    'ctc_ed',
+                    'log_likelihood',
+                    'ctc_loss',
+                    'alpha_penalty',
+                    'cost',
+                    'mean_norm_ase',
+                    'mean_norm_aae',
+                    'beta_mean',
+                    'beta_std_dev',
+                    'pred_len_ratio',
+                    'num_hits',
+                    'reg_loss',
+                    'scan_len',
+                    'bin_len',
+                )
+
+                ops_log = (
+                    'y_s_list',
+                    'predicted_ids_list',
+                    'alpha',
+                    'beta',
+                    'image_name_list',
+                    'x_s_list',
+                    'tb_step_logs'
+                )
                 if args.doTrain:
                     logger.info('Starting training')
-                    ops_accum = (
-                        'train',
-                        'predicted_ids_list',
-                        'predicted_lens',
-                        'y_ctc_list',
-                        'ctc_len',
-                        'ctc_ed',
-                        'log_likelihood',
-                        'ctc_loss',
-                        'alpha_penalty',
-                        'cost',
-                        'mean_norm_ase',
-                        'mean_norm_aae',
-                        'beta_mean',
-                        'beta_std_dev',
-                        'pred_len_ratio',
-                        'num_hits',
-                        'reg_loss',
-                        'scan_len',
-                        'bin_len',
-                    )
-
-                    ops_log = (
-                        'y_s_list',
-                        'predicted_ids_list',
-                        'alpha',
-                        'beta',
-                        'image_name_list',
-                        'x_s_list',
-                        'tb_step_logs'
-                    )
                     accum = Accumulator()
-                    while not coord.should_stop():
+                    while not training_logic.should_stop():
                         step_start_time = time.time()
                         step += 1
-                        doLog = do_log(step, args, train_it, valid_it)
+                        doLog = training_logic.do_log(step)
                         if not doLog:
                             batch_ops = TFOpNames(ops_accum, None)
                         else:
@@ -455,13 +454,15 @@ def main(raw_data_folder,
                             tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(step))
                             tf_sw.flush()
 
-                            doValidate, num_validation_batches, do_save = TrainingLogic.do_validate(step, args, train_it, valid_it, (agg_bleu2 if (args.valid_epochs <= 0) else None))
+                            doValidate, num_validation_batches, do_save = training_logic.do_validate(step, (agg_bleu2 if (args.valid_epochs <= 0) else None))
                             if do_save:
                                 saver.save(session, args.logdir + '/snapshot', global_step=step,
                                            latest_filename='checkpoints_list')
                             if doValidate:
                                 if hyper.build_scanning_RNN:
-                                    accuracy_res = validate_scanning_RNN(args, hyper, session, valid_ops, ops_accum, ops_log, step, num_validation_batches, tf_sw)
+                                    accuracy_res = evaluate_scanning_RNN(args, hyper, session, valid_ops, ops_accum,
+                                                                         ops_log, step, num_validation_batches, tf_sw,
+                                                                         training_logic)
                                 else:
                                     accuracy_res = evaluate(
                                         session,
@@ -471,7 +472,8 @@ def main(raw_data_folder,
                                         args,
                                         step,
                                         num_validation_batches,
-                                        tf_sw)
+                                        tf_sw,
+                                        training_logic)
                                 logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f, validation-time-per-100 = %f'%(
                                     step,
                                     time.time()-start_time,
@@ -489,15 +491,21 @@ def main(raw_data_folder,
                 ############################# Validation Only ##############################
                 elif args.doValidate:
                     logger.info('Starting Validation Cycle')
-                    evaluate(
-                            session,
-                            dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
-                            dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                            hyper,
-                            args,
-                            step,
-                            valid_it.epoch_size,
-                            tf_sw)
+                    if hyper.build_scanning_RNN:
+                        accuracy_res = evaluate_scanning_RNN(args, hyper, session, valid_ops, ops_accum,
+                                                             ops_log, step, valid_it.epoch_size, tf_sw,
+                                                             training_logic)
+                    else:
+                        evaluate(
+                                session,
+                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
+                                dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                                hyper,
+                                args,
+                                step,
+                                valid_it.epoch_size,
+                                tf_sw,
+                                training_logic)
 
             except tf.errors.OutOfRangeError, StopIteration:
                 logger.info('Done training -- epoch limit reached')
@@ -594,7 +602,8 @@ def trimmed_seq_list(hyper, seq_batch_list, seq_len_batch):
 def ids2str_list(target_ids, predicted_ids, hyper):
     """
     Same as id2str, except this works on multiple batches. The arguments are lists of numpy arrays
-    instead of straight numpy arrays as in the case of id2str.
+    instead of straight numpy arrays as in the case of id2str.2017-12-11 12:16:58,468 - INFO - Elapsed time for 6 steps = 142.974565
+
     """
     l = []
     for i in range(len(target_ids)):
@@ -636,69 +645,100 @@ def ids2str3D(ids, hyper):
 
 class TrainingLogic(object):
     full_validation_steps = [3000]
-    fv_score = 0.7
+    fv_score = 0.9
+    stop_training = False
+    validate_next = False
+    validate_then_stop = False
 
-    @classmethod
-    def do_validate(cls, step, args, train_it, valid_it, score=None):
-        if valid_it is None:
+    def __init__(self, args, coord, train_it, valid_it):
+        self._coord = coord
+        self._args = args
+        self._train_it = train_it
+        self._valid_it = valid_it
+        self._setup_signal_handler()
+
+    def _setup_signal_handler(self):
+        def validate_then_stop(signum, frame):
+            logger.critical('Received signal %d. Will run validation cycle then stop.', signum)
+            self.validate_then_stop = True
+
+        def validate_next(signum, frame):
+            logger.critical('Received signal %d. Will run validation cycle at next step.', signum)
+            self.validate_next = True
+
+        def stop_training(signum, frame):
+            logger.critical('Received signal %d. Stopping training.', signum)
+            self.stop_training = True
+
+        signal.signal(signal.SIGTERM, validate_then_stop)
+        signal.signal(signal.SIGINT, validate_next)
+        signal.signal(signal.SIGUSR1, stop_training)
+
+    def _set_flags_after_validation(self):
+        if self.validate_then_stop:
+            self.validate_then_stop = False
+            self.stop_training = True
+        if self.validate_next:
+            self.validate_next = False
+
+    def should_stop(self):
+        return self._coord.should_stop() or self.stop_training
+
+    def do_validate(self, step, score=None):
+        if self._valid_it is None:
             doValidate = do_save = False
             num_valid_batches = 0
-        elif args.doValidate:  # Validation-only run
+        elif self._args.doValidate:  # Validation-only run
             doValidate = do_save = True
-            num_valid_batches = valid_it.epoch_size
-        elif (args.valid_epochs <= 0):  # smart validation
+            num_valid_batches = self._valid_it.epoch_size
+        elif self.validate_next or self.validate_then_stop:
+            doValidate = do_save = True
+            num_valid_batches = self._valid_it.epoch_size
+        elif self._args.valid_epochs <= 0:  # smart validation
             assert score is not None, 'score must be supplied if valid_epochs <= 0'
-            if score > cls.fv_score:
-                if (score > 0.8) or ((score - cls.fv_score) >= 0.01):
-                    doValidate = True
-                    num_valid_batches = valid_it.epoch_size
-                    do_save = True
-                    cls.full_validation_steps.append(step)
-                    cls.fv_score = score
-                    logger.info('TrainingLogic: fv_score set to %f at step %d'%(score, step))
-                elif score > (cls.fv_score * 0.95):
-                    if (step - cls.full_validation_steps[-1]) >= (1 * train_it.epoch_size):
-                        doValidate = do_save = True
-                        num_valid_batches = valid_it.epoch_size
-                        cls.full_validation_steps.append(step)
-                        logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
-                    else:
-                        doValidate = False
-                        do_save = False
-                        num_valid_batches = 0
-            elif (step - cls.full_validation_steps[-1]) >= (2 * train_it.epoch_size):
+            if (score > self.fv_score) and ((score > 0.9) or ((score - self.fv_score) >= 0.01)):
+                doValidate = True
+                num_valid_batches = self._valid_it.epoch_size
+                do_save = True
+                self.full_validation_steps.append(step)
+                self.fv_score = score
+                logger.info('TrainingLogic: fv_score set to %f at step %d'%(score, step))
+            elif (score > 0.9) and ((step - self.full_validation_steps[-1]) >= (1 * self._train_it.epoch_size)):
                 doValidate = do_save = True
-                num_valid_batches = valid_it.epoch_size
-                cls.full_validation_steps.append(step)
+                num_valid_batches = self._valid_it.epoch_size
+                self.full_validation_steps.append(step)
+                logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
+            elif (step - self.full_validation_steps[-1]) >= (2 * self._train_it.epoch_size):
+                doValidate = do_save = True
+                num_valid_batches = self._valid_it.epoch_size
+                self.full_validation_steps.append(step)
                 logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
             else:
                 doValidate = do_save = False
                 num_valid_batches = 0
         else:
-            epoch_frac = args.valid_epochs if (args.valid_epochs is not None) else 1
-            period = int(epoch_frac * train_it.epoch_size)
-            doValidate = do_save = (step % period == 0) or (step == train_it.max_steps)
-            num_valid_batches = valid_it.epoch_size if doValidate else 0
+            epoch_frac = self._args.valid_epochs if (self._args.valid_epochs is not None) else 1
+            period = int(epoch_frac * self._train_it.epoch_size)
+            doValidate = do_save = (step % period == 0) or (step == self._train_it.max_steps)
+            num_valid_batches = self._valid_it.epoch_size if doValidate else 0
 
         return doValidate, num_valid_batches, do_save
 
-
-def do_log(step, args, train_it, valid_it):
-    # validate, _ = do_validate(step, args, train_it, valid_it)
-    do_log = (step % args.print_steps == 0) or (step == train_it.max_steps)
-    if (args.valid_epochs <= 0 ):  # do_validate synchronizes with do_log
-        # score = np.mean(accum.bleu_scores) if (args.valid_epochs == 'smart') else None
-        return do_log
-    else:
-        validate, _, _ = TrainingLogic.do_validate(step, args, train_it, valid_it, None)
-        return do_log or validate
+    def do_log(self, step):
+        do_log = (step % self._args.print_steps == 0) or (step == self._train_it.max_steps) or self.validate_then_stop or self.validate_next
+        if self._args.valid_epochs <= 0:  # do_validate synchronizes with do_log
+            return do_log
+        else:
+            validate, _, _ = self.do_validate(step, None)
+            return do_log or validate
 
 
 def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
 
 
-def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step, num_steps, tf_sw):
+def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step, num_steps, tf_sw, training_logic):
+    training_logic._set_flags_after_validation()
     start_time = time.time()
     ############################# Training (with Validation) Cycle ##############################
     hyper.logger.info('validation cycle starting at step %d for %d steps', tr_step, num_steps)
@@ -766,8 +806,9 @@ def validate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
     tf_sw.flush()
     return dlc.Properties({'valid_time_per100': valid_time_per100})
 
-def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw):
-    # validate, num_steps = do_validate(step, args, batch_its.train_it, batch_its.valid_it)
+
+def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, training_logic):
+    training_logic._set_flags_after_validation()
     valid_start_time = time.time()
 
     valid_ops = ops.valid_ops
