@@ -867,7 +867,8 @@ def squashed_seq_list(np_seq_batch, seq_lens, remove_val1=None, remove_val2=None
         if remove_val2 is not None:
             trunc = trunc[trunc != remove_val2]
 
-        sq_list.append(trunc.tolist())
+        # sq_list.append(trunc.tolist())
+        sq_list.append(trunc)
 
     return sq_list
 

@@ -98,9 +98,9 @@ def main():
                              implies 'smart' validation - which will result in selectively 
                              capturing snapshots around max_scoring peaks (based on training/bleu2).""",
                         default=1.0)
-    parser.add_argument("--print-batch",  dest="print_batch", action='store_true',
-                        help="(Boolean): Only for debugging. Prints more stuff once in a while. Defaults to True.",
-                        default=True)
+    parser.add_argument("--save-all-eval",  dest="save_all_eval", action='store_true',
+                        help="(Boolean): False => Save only one random validation/testing batch, True = > Save all validation/testing batches",
+                        default=False)
     parser.add_argument("--build-image-context", "-i", dest="build_image_context", type=int,
                         help="Sets value of hyper.build_image_context. Default is 2 => build my own convnet.",
                         default=2)
@@ -122,6 +122,9 @@ def main():
     #                     default=False)
     parser.add_argument("--validate", dest="doValidate", action='store_true',
                         help="Run validation cycle only. --restore option should be provided along with this.",
+                        default=False)
+    parser.add_argument("--test", dest="doTest", action='store_true',
+                        help="Run test cycle only but with training dataset. --restore option should be provided along with this.",
                         default=False)
     parser.add_argument("--squash-input-seq", dest="squash_input_seq", action='store_true',
                         help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
@@ -159,6 +162,11 @@ def main():
 
     if args.doValidate:
         assert args.restore_logdir is not None, 'Please specify --restore option along with --validate'
+        assert not args.doTest, '--test and --validate cannot be given together'
+
+    if args.doTest:
+        assert args.restore_logdir is not None, 'Please specify --restore option along with --test'
+        assert not args.doValidate, '--test and --validate cannot be given together'
 
     globalParams = dlc.Properties({
                                     'raw_data_dir': raw_data_folder,
@@ -176,7 +184,7 @@ def main():
                                     'seq2seq_beam_width': args.seq2seq_beam_width,
                                     'valid_frac': args.valid_frac,
                                     'valid_epochs': args.valid_epochs,
-                                    'print_batch': args.print_batch,
+                                    'save_all_eval': args.save_all_eval,
                                     'build_image_context':args.build_image_context,
                                     'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
@@ -191,7 +199,8 @@ def main():
                                     'towers_per_gpu': 1,
                                     'beamsearch_length_penalty': 1.0,
                                     'doValidate': args.doValidate,
-                                    'doTrain': not args.doValidate,
+                                    'doTest': args.doTest,
+                                    'doTrain': not (args.doValidate or args.doTest),
                                     'squash_input_seq': args.squash_input_seq,
                                     'att_model': 'MLP_full', # '1x1_conv', 'MLP_shared', 'MLP_full'
                                     'weights_regularizer': tf.contrib.layers.l2_regularizer(scale=1.0, scope='L2_Regularizer'),

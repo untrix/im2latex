@@ -297,13 +297,14 @@ class BatchImageIterator1(ShuffleIterator):
     def __init__(self, raw_data_dir_, image_dir_,
                  hyper,
                  image_processor,
-                 df):
+                 df,
+                 seq_fname='raw_seq_train.pkl'):
 
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'data_props.pkl'))['padded_image_dim']
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
-        self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
-        df = df ## pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+        self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, seq_fname))
+
         ShuffleIterator.__init__(self, df, hyper)
 
     def next(self):
@@ -339,7 +340,7 @@ class BatchImageIterator2(ShuffleIterator):
         self._padded_im_dim = pd.read_pickle(os.path.join(raw_data_dir_, 'data_props.pkl'))['padded_image_dim']
         self._image_dir = image_dir_
         self._image_processor = image_processor ## ImageProcessor(hyper)
-        df = df ## pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs)
 
     def next(self):
@@ -363,19 +364,22 @@ class BatchImageIterator3(ShuffleIterator):
     def __init__(self,
                  df,
                  raw_data_dir_,
+                 seq_fname,  # ='raw_seq_train.pkl',
+                 sq_seq_fname,  # ='raw_seq_sq_train.pkl',
                  hyper,
                  num_steps=-1,
                  num_epochs=-1,
                  image_processor_=None,
-                 name='BatchImageIterator'):
+                 name='BatchImageIterator'
+                 ):
         self._hyper = hyper
         self._raw_data_dir = raw_data_dir_
         assert image_processor_ is not None
         self._image_processor = image_processor_
         image_shape = hyper.image_shape
         self._padded_im_dim = {'height': image_shape[0], 'width': image_shape[1]}
-        self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_train.pkl'))
-        self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, 'raw_seq_sq_train.pkl'))
+        self._seq_data = pd.read_pickle(os.path.join(raw_data_dir_, seq_fname))
+        self._ctc_seq_data = pd.read_pickle(os.path.join(raw_data_dir_, sq_seq_fname))
         ShuffleIterator.__init__(self, df, hyper, num_steps, num_epochs, name)
 
     def next(self):
@@ -454,13 +458,15 @@ class BatchContextIterator(BatchImageIterator3):
     def __init__(self,
                  df,
                  raw_data_dir_,
+                 seq_fname,  # ='raw_seq_train.pkl',
+                 sq_seq_fname,  # ='raw_seq_sq_train.pkl',
                  image_feature_dir_,
                  hyper,
                  num_steps=-1,
                  num_epochs=-1,
                  image_processor_=None,
                  name='BatchContextIterator'):
-        BatchImageIterator3.__init__(self, df, raw_data_dir_, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
+        BatchImageIterator3.__init__(self, df, raw_data_dir_, seq_fname, sq_seq_fname, hyper, num_steps, num_epochs, image_processor_ or VGGProcessor(image_feature_dir_), name)
 
 
 def restore_state(*paths):
@@ -496,7 +502,7 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         else:
             return df_
     else:
-        logger.info('split_dataset: generating a new train/validate split')
+        logger.warn('split_dataset: generating a new train/validate split')
 
         # Shuffle the dataframe
         df_ = df_.sample(frac=1)
@@ -535,119 +541,183 @@ def split_dataset(df_, batch_size_, logger, args, assert_whole_batch=True, valid
         return df_train, df_validation
 
 
+def _get_data(hyper, args, raw_data_dir_):
+    df_train = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    df_test = pd.read_pickle(os.path.join(raw_data_dir_, 'df_test.pkl'))
+    ret_props = dlc.Properties({
+        'df_train': df_train,
+        'df_test': df_test,
+        'train_seq_fname': 'raw_seq_train.pkl',
+        'train_sq_seq_fname': 'raw_seq_sq_train.pkl',
+        'valid_seq_fname': 'raw_seq_train.pkl',
+        'valid_sq_seq_fname': 'raw_seq_sq_train.pkl',
+        'test_seq_fname': 'raw_seq_test.pkl',
+        'test_sq_seq_fname': 'raw_seq_sq_test.pkl'
+    })
+
+    if os.path.exists(os.path.join(raw_data_dir_, 'df_valid.pkl')):
+        df_valid = pd.read_pickle(os.path.join(raw_data_dir_, 'df_valid.pkl'))
+        ret_props.valid_seq_fname = 'raw_seq_valid.pkl'
+        ret_props.valid_sq_seq_fname = 'raw_seq_sq_valid.pkl'
+    else:
+        hyper.logger.warn("Didn't find df_valid.pkl. Will split df_train into df_train and df_valid.")
+        df_train, df_valid = split_dataset(df_train,
+                                           hyper.data_reader_B,
+                                           hyper.logger,
+                                           args,
+                                           hyper.assert_whole_batch,
+                                           validation_frac=args.valid_frac)
+    ret_props.df_valid = df_valid
+
+    hyper.logger.info('df_train.shape=%s, df_valid.shape=%s, df_test.shape=%s'%(df_train.shape, df_valid.shape, df_test.shape))
+    return ret_props
+
+
 def create_context_iterators(raw_data_dir_,
                              image_feature_dir_,
                              hyper,
                              args,
                              image_processor_=None):
-    df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-    df_train, df_valid = split_dataset(df, 
-                                       hyper.data_reader_B,
-                                       hyper.logger,
-                                       args,
-                                       hyper.assert_whole_batch,
-                                       validation_frac=args.valid_frac)
-    batch_iterator_train = BatchContextIterator(df_train,
-                                                raw_data_dir_,
-                                                image_feature_dir_,
-                                                hyper,
-                                                args.num_steps,
-                                                args.num_epochs,
-                                                image_processor_,
-                                                'TrainingIterator')
-    batch_iterator_tr_acc = BatchContextIterator(df_train,
-                                                raw_data_dir_,
-                                                image_feature_dir_,
-                                                hyper,
-                                                num_steps=-1,
-                                                num_epochs=-1,
-                                                image_processor_=image_processor_,
-                                                name='TrainingAccuracyIterator')
-    if df_valid is not None:
-        batch_iterator_valid = BatchContextIterator(df_valid,
+    # df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    # df_train, df_valid = split_dataset(df,
+    #                                    hyper.data_reader_B,
+    #                                    hyper.logger,
+    #                                    args,
+    #                                    hyper.assert_whole_batch,
+    #                                    validation_frac=args.valid_frac)
+    data_p = _get_data(hyper, args, raw_data_dir_)
+
+    batch_iterator_train = batch_iterator_eval = None
+    if not (args.doTest or args.doValidate):
+        batch_iterator_train = BatchContextIterator(data_p.df_train,
                                                     raw_data_dir_,
+                                                    data_p.train_seq_fname,
+                                                    data_p.train_sq_seq_fname,
+                                                    image_feature_dir_,
+                                                    hyper,
+                                                    args.num_steps,
+                                                    args.num_epochs,
+                                                    image_processor_,
+                                                    'TrainingIterator')
+
+    if args.doTest:
+        batch_iterator_eval =  BatchContextIterator(data_p.df_test,
+                                                    raw_data_dir_,
+                                                    data_p.test_seq_fname,
+                                                    data_p.test_sq_seq_fname,
                                                     image_feature_dir_,
                                                     hyper,
                                                     num_steps=-1,
                                                     num_epochs=-1,
                                                     image_processor_=image_processor_,
-                                                    name='ValidationIterator')
-    else:
-        batch_iterator_valid = None
+                                                    name='TestIterator')
+    elif args.doValidate or args.doTrain:
+        batch_iterator_eval = BatchContextIterator(data_p.df_valid,
+                                                   raw_data_dir_,
+                                                   data_p.valid_seq_fname,
+                                                   data_p.valid_sq_seq_fname,
+                                                   image_feature_dir_,
+                                                   hyper,
+                                                   num_steps=-1,
+                                                   num_epochs=-1,
+                                                   image_processor_=image_processor_,
+                                                   name='ValidationIterator')
 
-    return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
+    return batch_iterator_train, batch_iterator_eval
 
 
 def create_imagenet_iterators(raw_data_dir_, hyper, args):
-    df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-    df_train, df_valid = split_dataset(df, 
-                                       hyper.data_reader_B, 
-                                       hyper.logger, 
-                                       args,
-                                       hyper.assert_whole_batch,
-                                       validation_frac=args.valid_frac)
-    image_processor = ImagenetProcessor3(hyper, args.image_dir)
-    batch_iterator_train = BatchImageIterator3(df_train,
-                                                raw_data_dir_,
-                                                hyper,
-                                                args.num_steps,
-                                                args.num_epochs,
-                                                image_processor,
-                                                'TrainingIterator')
-    batch_iterator_tr_acc = BatchImageIterator3(df_train,
-                                                raw_data_dir_,
-                                                hyper,
-                                                num_steps=-1,
-                                                num_epochs=-1,
-                                                image_processor_=image_processor,
-                                                name='TrainingAccuracyIterator')
+    # df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    # df_train, df_valid = split_dataset(df,
+    #                                    hyper.data_reader_B,
+    #                                    hyper.logger,
+    #                                    args,
+    #                                    hyper.assert_whole_batch,
+    #                                    validation_frac=args.valid_frac)
 
-    if df_valid is not None:
-        batch_iterator_valid = BatchImageIterator3(df_valid,
-                                                    raw_data_dir_,
-                                                    hyper,
-                                                    num_steps=-1,
-                                                    num_epochs=-1,
-                                                    image_processor_=image_processor,
-                                                    name='ValidationIterator')
-    else:
-        batch_iterator_valid = None
-    return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
+    data_p = _get_data(hyper, args, raw_data_dir_)
+    image_processor = ImagenetProcessor3(hyper, args.image_dir)
+
+    batch_iterator_train = batch_iterator_eval = None
+    if not (args.doTest or args.doValidate):
+        batch_iterator_train = BatchImageIterator3(data_p.df_train,
+                                                   raw_data_dir_,
+                                                   data_p.train_seq_fname,
+                                                   data_p.train_sq_seq_fname,
+                                                   hyper,
+                                                   args.num_steps,
+                                                   args.num_epochs,
+                                                   image_processor,
+                                                   'TrainingIterator')
+
+    if args.doTest:
+        batch_iterator_eval = BatchImageIterator3(data_p.df_test,
+                                                  raw_data_dir_,
+                                                  data_p.test_seq_fname,
+                                                  data_p.test_sq_seq_fname,
+                                                  hyper,
+                                                  num_steps=-1,
+                                                  num_epochs=-1,
+                                                  image_processor_=image_processor,
+                                                  name='TestIterator')
+    elif args.doValidate or args.doTrain:
+        batch_iterator_eval = BatchImageIterator3(data_p.df_valid,
+                                                  raw_data_dir_,
+                                                  data_p.valid_seq_fname,
+                                                  data_p.valid_sq_seq_fname,
+                                                  hyper,
+                                                  num_steps=-1,
+                                                  num_epochs=-1,
+                                                  image_processor_=image_processor,
+                                                  name='ValidationIterator')
+
+    return batch_iterator_train, batch_iterator_eval
 
 
 def create_BW_image_iterators(raw_data_dir_, hyper, args):
-    df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
-    df_train, df_valid = split_dataset(df, 
-                                       hyper.data_reader_B, 
-                                       hyper.logger,
-                                       args,
-                                       hyper.assert_whole_batch,
-                                       validation_frac=args.valid_frac)
+    # df = pd.read_pickle(os.path.join(raw_data_dir_, 'df_train.pkl'))
+    # df_train, df_valid = split_dataset(df,
+    #                                    hyper.data_reader_B,
+    #                                    hyper.logger,
+    #                                    args,
+    #                                    hyper.assert_whole_batch,
+    #                                    validation_frac=args.valid_frac)
+
+    data_p = _get_data(hyper, args, raw_data_dir_)
 
     image_processor = ImageProcessor3_BW(hyper, args.image_dir)
-    batch_iterator_train = BatchImageIterator3(df_train,
-                                                raw_data_dir_,
-                                                hyper,
-                                                args.num_steps,
-                                                args.num_epochs,
-                                                image_processor,
-                                                'TrainingIterator')
-    batch_iterator_tr_acc = BatchImageIterator3(df_train,
-                                                raw_data_dir_,
-                                                hyper,
-                                                num_steps=-1,
-                                                num_epochs=-1,
-                                                image_processor_=image_processor,
-                                                name='TrainingAccuracyIterator')
 
-    if df_valid is not None:
-        batch_iterator_valid = BatchImageIterator3(df_valid,
-                                                    raw_data_dir_,
-                                                    hyper,
-                                                    num_steps=-1,
-                                                    num_epochs=-1,
-                                                    image_processor_=image_processor,
-                                                    name='ValidationIterator')
-    else:
-        batch_iterator_valid = None
-    return batch_iterator_train, batch_iterator_valid, batch_iterator_tr_acc
+    batch_iterator_train = batch_iterator_eval = None
+    if not (args.doTest or args.doValidate):
+        batch_iterator_train = BatchImageIterator3(data_p.df_train,
+                                                   raw_data_dir_,
+                                                   data_p.train_seq_fname,
+                                                   data_p.train_sq_seq_fname,
+                                                   hyper,
+                                                   args.num_steps,
+                                                   args.num_epochs,
+                                                   image_processor,
+                                                   'TrainingIterator')
+
+    if args.doTest:
+        batch_iterator_eval = BatchImageIterator3(data_p.df_test,
+                                                  raw_data_dir_,
+                                                  data_p.test_seq_fname,
+                                                  data_p.test_sq_seq_fname,
+                                                  hyper,
+                                                  num_steps=-1,
+                                                  num_epochs=-1,
+                                                  image_processor_=image_processor,
+                                                  name='TestIterator')
+    elif args.doValidate or args.doTrain:
+        batch_iterator_eval = BatchImageIterator3(data_p.df_valid,
+                                                  raw_data_dir_,
+                                                  data_p.valid_seq_fname,
+                                                  data_p.valid_sq_seq_fname,
+                                                  hyper,
+                                                  num_steps=-1,
+                                                  num_epochs=-1,
+                                                  image_processor_=image_processor,
+                                                  name='ValidationIterator')
+
+    return batch_iterator_train, batch_iterator_eval
