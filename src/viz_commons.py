@@ -359,7 +359,7 @@ class VisualizeDir(object):
                 data = {'edit_distance': df1.ed, key: ar1, key2: ar2}
                 index = df1.index
             df = pd.DataFrame(data=data, index=index)
-            return df
+            return df/home/sumeet/im2latex/src
     
     # def strs(self, graph, step, key, key2=None, mingle=False, trim=False):
     #     df_words, sr_ed = self._words(graph, step, key, _get_ed=True)
@@ -419,7 +419,7 @@ class VisualizeDir(object):
 
         plotImages(image_details, dpi=200)
 
-    def alpha(self, graph, step, sample_num=0, invert_alpha=True):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=True, max_words=None):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         sample_idx = df_all.iloc[sample_num].name ## Top index in sort order
         nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
@@ -428,6 +428,8 @@ class VisualizeDir(object):
         nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx]  # (N,B,H,W,T) --> (H,W,T)
         image_name = self.nd(graph, step, 'image_name')[sample_idx]  #(B,) --> (,)
         T = len(nd_words)
+        if max_words is not None:
+            T = min(T, max_words)
         assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
         df = self._df_train_image
         image_data = self._image_processor.get_one(image_name,
@@ -558,8 +560,8 @@ class VisualizeStep():
     def strs(self, key, key2=None, mingle=True, trim=False):
         return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim)
 
-    def alpha(self, sample_num=0, invert_alpha=True):
-        return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha)
+    def alpha(self, sample_num=0, invert_alpha=True, max_words=None):
+        return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha, max_words=max_words)
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):

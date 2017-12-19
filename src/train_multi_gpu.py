@@ -203,18 +203,18 @@ def main(raw_data_folder,
     graph = tf.Graph()
     with graph.as_default():
         if hyper.build_image_context == 1:
-            train_it, valid_it, tr_acc_it = create_imagenet_iterators(raw_data_folder,
-                                                hyper,
-                                                args)
+            train_it, eval_it = create_imagenet_iterators(raw_data_folder,
+                                                          hyper,
+                                                          args)
         elif hyper.build_image_context == 2:
-            train_it, valid_it, tr_acc_it = create_BW_image_iterators(raw_data_folder,
-                                                hyper,
-                                                args)
+            train_it, eval_it = create_BW_image_iterators(raw_data_folder,
+                                                          hyper,
+                                                          args)
         else:
-            train_it, valid_it, tr_acc_it = create_context_iterators(raw_data_folder,
-                                                vgg16_folder,
-                                                hyper,
-                                                args)
+            train_it, eval_it = create_context_iterators(raw_data_folder,
+                                                         vgg16_folder,
+                                                         hyper,
+                                                         args)
 
         qrs = []
         ##### Training Graphs
@@ -253,30 +253,30 @@ def main(raw_data_folder,
             qr1 = tf.train.QueueRunner(train_q, [tf_enqueue_train_queue], cancel_op=[tf_close_train_queue])
             qrs.append(qr1)
 
-        ##### Validation Graph
-        valid_tower_ops = []; valid_ops = None
-        if valid_it and (args.doTrain or args.doValidate):
-            with tf.name_scope('Validation'):
+        ##### Validation/Testing Graph
+        eval_tower_ops = []; eval_ops = None
+        if eval_it and (args.doTrain or args.doValidate):
+            with tf.name_scope('Validation' if not args.doTest else 'Testing'):
                 hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.variable_scope('InputQueue'):
-                    valid_q = tf.FIFOQueue(hyper.input_queue_capacity, valid_it.out_tup_types)
-                    enqueue_op2 = valid_q.enqueue_many(valid_it.get_pyfunc_with_split(hyper.num_towers))
-                    close_queue2 = valid_q.close(cancel_pending_enqueues=True)
+                    eval_q = tf.FIFOQueue(hyper.input_queue_capacity, eval_it.out_tup_types)
+                    enqueue_op2 = eval_q.enqueue_many(eval_it.get_pyfunc_with_split(hyper.num_towers))
+                    close_queue2 = eval_q.close(cancel_pending_enqueues=True)
                 for i in range(args.num_gpus):
                     for j in range(args.towers_per_gpu):
                         with tf.name_scope('gpu_%d' % i + ('/tower_%d' % j if hyper.towers_per_gpu > 1 else '')):
                             with tf.device('/gpu:%d'%i):
                                 if hyper.build_scanning_RNN:
                                     model_predict = Im2LatexModel(hyper_predict,
-                                                                  valid_q,
+                                                                  eval_q,
                                                                   reuse=reuse_vars)
-                                    valid_tower_ops.append(model_predict.build_training_tower())
+                                    eval_tower_ops.append(model_predict.build_training_tower())
                                 else:
                                     model_predict = Im2LatexModel(hyper_predict,
-                                                                  valid_q,
+                                                                  eval_q,
                                                                   seq2seq_beam_width=hyper.seq2seq_beam_width,
                                                                   reuse=reuse_vars)
-                                    valid_tower_ops.append(model_predict.build_testing_tower())
+                                    eval_tower_ops.append(model_predict.build_testing_tower())
                                 if not reuse_vars:
                                     trainable_vars_n = num_trainable_vars()
                                     reuse_vars = True
@@ -287,10 +287,10 @@ def main(raw_data_folder,
                 hyper.logger.info('Num trainable variables = %d', num_trainable_vars())
                 assert num_trainable_vars() == trainable_vars_n, 'num_trainable_vars(%d) != %d'%(num_trainable_vars(), trainable_vars_n)
                 if hyper.build_scanning_RNN:
-                    valid_ops = sync_training_towers(hyper, valid_tower_ops, global_step=None, run_tag='validation')
+                    eval_ops = sync_training_towers(hyper, eval_tower_ops, global_step=None, run_tag='validation' if not args.doTest else 'testing')
                 else:
-                    valid_ops = sync_testing_towers(hyper, valid_tower_ops)
-            qr2 = tf.train.QueueRunner(valid_q, [enqueue_op2], cancel_op=[close_queue2])
+                    eval_ops = sync_testing_towers(hyper, eval_tower_ops, run_tag='validation' if not args.doTest else 'testing')
+            qr2 = tf.train.QueueRunner(eval_q, [enqueue_op2], cancel_op=[close_queue2])
             qrs.append(qr2)
 
         # ##### Training Accuracy Graph
@@ -309,7 +309,7 @@ def main(raw_data_folder,
         tr_acc_ops = None
 
         coord = tf.train.Coordinator()
-        training_logic = TrainingLogic(args, coord, train_it, valid_it)
+        training_logic = TrainingLogic(args, coord, train_it, eval_it)
 
         # print train_ops
 
@@ -460,14 +460,14 @@ def main(raw_data_folder,
                                            latest_filename='checkpoints_list')
                             if doValidate:
                                 if hyper.build_scanning_RNN:
-                                    accuracy_res = evaluate_scanning_RNN(args, hyper, session, valid_ops, ops_accum,
+                                    accuracy_res = evaluate_scanning_RNN(args, hyper, session, eval_ops, ops_accum,
                                                                          ops_log, step, num_validation_batches, tf_sw,
                                                                          training_logic)
                                 else:
                                     accuracy_res = evaluate(
                                         session,
-                                        dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
-                                        dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
+                                        dlc.Properties({'eval_ops':eval_ops}),
+                                        dlc.Properties({'train_it':train_it, 'eval_it':eval_it}),
                                         hyper,
                                         args,
                                         step,
@@ -478,34 +478,34 @@ def main(raw_data_folder,
                                     step,
                                     time.time()-start_time,
                                     train_time_per100,
-                                    accuracy_res.valid_time_per100))
+                                    accuracy_res.eval_time_per100))
                             else:
                                 logger.info('Time for %d steps, elapsed = %f, training-time-per-100 = %f'%(
                                     step,
                                     time.time()-start_time,
                                     train_time_per100))
 
-                            ## Reset Metrics
+                            # Reset Metrics
                             accum.reset()
 
-                ############################# Validation Only ##############################
-                elif args.doValidate:
-                    logger.info('Starting Validation Cycle')
+                ############################# Validation/Testing Only ##############################
+                elif args.doValidate or args.doTest:
+                    logger.info('Starting %s Cycle'%('Validation' if args.doValidate else 'Testing',))
                     if hyper.build_scanning_RNN:
-                        accuracy_res = evaluate_scanning_RNN(args, hyper, session, valid_ops, ops_accum,
-                                                             ops_log, step, valid_it.epoch_size, tf_sw,
-                                                             training_logic)
+                        evaluate_scanning_RNN(args, hyper, session, eval_ops, ops_accum,
+                                              ops_log, step, eval_it.epoch_size, tf_sw,
+                                              training_logic)
                     else:
-                        evaluate(
-                                session,
-                                dlc.Properties({'valid_ops':valid_ops, 'tr_acc_ops':tr_acc_ops}),
-                                dlc.Properties({'train_it':train_it, 'valid_it':valid_it, 'tr_acc_it':tr_acc_it}),
-                                hyper,
-                                args,
-                                step,
-                                valid_it.epoch_size,
-                                tf_sw,
-                                training_logic)
+                        evaluate(session,
+                                 dlc.Properties({'eval_ops': eval_ops}),
+                                 dlc.Properties({'train_it': train_it, 'eval_it': eval_it}),
+                                 hyper,
+                                 args,
+                                 step,
+                                 eval_it.epoch_size,
+                                 tf_sw,
+                                 training_logic)
+
 
             except tf.errors.OutOfRangeError, StopIteration:
                 logger.info('Done training -- epoch limit reached')
@@ -650,11 +650,11 @@ class TrainingLogic(object):
     validate_next = False
     validate_then_stop = False
 
-    def __init__(self, args, coord, train_it, valid_it):
+    def __init__(self, args, coord, train_it, eval_it):
         self._coord = coord
         self._args = args
         self._train_it = train_it
-        self._valid_it = valid_it
+        self._eval_it = eval_it
         self._setup_signal_handler()
 
     def _setup_signal_handler(self):
@@ -685,44 +685,49 @@ class TrainingLogic(object):
         return self._coord.should_stop() or self.stop_training
 
     def do_validate(self, step, score=None):
-        if self._valid_it is None:
+        if self._eval_it is None:
             doValidate = do_save = False
-            num_valid_batches = 0
+            num_eval_batches = 0
         elif self._args.doValidate:  # Validation-only run
             doValidate = do_save = True
-            num_valid_batches = self._valid_it.epoch_size
+            num_eval_batches = self._eval_it.epoch_size
         elif self.validate_next or self.validate_then_stop:
             doValidate = do_save = True
-            num_valid_batches = self._valid_it.epoch_size
+            num_eval_batches = self._eval_it.epoch_size
         elif self._args.valid_epochs <= 0:  # smart validation
-            assert score is not None, 'score must be supplied if valid_epochs <= 0'
+            assert score is not None, 'score must be supplied if eval_epochs <= 0'
             if (score > self.fv_score) and ((score > 0.9) or ((score - self.fv_score) >= 0.01)):
                 doValidate = True
-                num_valid_batches = self._valid_it.epoch_size
+                num_eval_batches = self._eval_it.epoch_size
                 do_save = True
                 self.full_validation_steps.append(step)
                 self.fv_score = score
                 logger.info('TrainingLogic: fv_score set to %f at step %d'%(score, step))
             elif (score > 0.9) and ((step - self.full_validation_steps[-1]) >= (1 * self._train_it.epoch_size)):
                 doValidate = do_save = True
-                num_valid_batches = self._valid_it.epoch_size
+                num_eval_batches = self._eval_it.epoch_size
                 self.full_validation_steps.append(step)
                 logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
-            elif (step - self.full_validation_steps[-1]) >= (2 * self._train_it.epoch_size):
+            elif (step - self.full_validation_steps[-1]) >= (4 * self._train_it.epoch_size):
                 doValidate = do_save = True
-                num_valid_batches = self._valid_it.epoch_size
+                num_eval_batches = self._eval_it.epoch_size
                 self.full_validation_steps.append(step)
                 logger.info('TrainingLogic: Running full validation at score %f at step %d' % (score, step))
             else:
                 doValidate = do_save = False
-                num_valid_batches = 0
+                num_eval_batches = 0
         else:
             epoch_frac = self._args.valid_epochs if (self._args.valid_epochs is not None) else 1
             period = int(epoch_frac * self._train_it.epoch_size)
             doValidate = do_save = (step % period == 0) or (step == self._train_it.max_steps)
-            num_valid_batches = self._valid_it.epoch_size if doValidate else 0
+            num_eval_batches = self._eval_it.epoch_size if doValidate else 0
 
-        return doValidate, num_valid_batches, do_save
+        # Save snapshot every 2 epochs so that we may restore runs at the beginning of full epochs because that's
+        # when the batch-iterators reshuffle the samples.
+        if step % int(2 * self._train_it.epoch_size) == 0:
+            do_save = True
+
+        return doValidate, num_eval_batches, do_save
 
     def do_log(self, step):
         do_log = (step % self._args.print_steps == 0) or (step == self._train_it.max_steps) or self.validate_then_stop or self.validate_next
@@ -737,16 +742,17 @@ def format_ids(predicted_ids, target_ids):
     np.apply_along_axis
 
 
+# Note: This function has not been tested after it was retrofitted to dump all samples if args.save_all_eval==True
 def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step, num_steps, tf_sw, training_logic):
     training_logic._set_flags_after_validation()
     start_time = time.time()
-    ############################# Training (with Validation) Cycle ##############################
+    ############################# Validation Or Test Cycle ##############################
     hyper.logger.info('validation cycle starting at step %d for %d steps', tr_step, num_steps)
     accum = Accumulator()
-    print_batch_num = np.random.randint(1, num_steps + 1) if args.print_batch else -1
+    print_batch_num = np.random.randint(1, num_steps + 1) if not args.save_all_eval else None
     for batch in range(1, 1+num_steps):
         step_start_time = time.time()
-        doLog = (print_batch_num == batch)
+        doLog = (print_batch_num == batch) or args.save_all_eval
         if not doLog:
             batch_ops = TFRun(session, ops, ops_accum, None)
         else:
@@ -765,12 +771,21 @@ def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
         accum.extend({'bleu_scores': bleu})
         accum.extend({
             'sq_predicted_ids': squashed_seq_list(hyper, batch_ops.predicted_ids_list, batch_ops.predicted_lens),
-            'sq_y_ctc': trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len)
+            'sq_y_ctc': trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len),
+            'predicted_ids': batch_ops.predicted_ids_list,
+            'y': batch_ops.y_s_list,
+            'alpha': batch_ops.alpha,
+            'beta': batch_ops.beta,
+            'image_name': batch_ops.image_name_list,
+            'ctc_ed': batch_ops.ctc_ed,
+            'bin_len': batch_ops.bin_len,
+            'scan_len': batch_ops.scan_len,
+            'x': batch_ops.x_s_list
         })
         accum.append({'batch_time': batch_time})
 
         if doLog:
-            with dtc.Storer(args, 'validation', tr_step) as storer:
+            with dtc.Storer(args, 'test' if args.doTest else 'validation', tr_step) as storer:
                 storer.write('predicted_ids', batch_ops.predicted_ids_list, np.int16)
                 storer.write('y', batch_ops.y_s_list, np.int16)
                 storer.write('alpha', batch_ops.alpha, np.float32, batch_axis=1)
@@ -782,10 +797,23 @@ def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
                 storer.write('scan_len', batch_ops.scan_len, np.float32)
                 storer.write('x', batch_ops.x_s_list, np.float32)
 
+    if args.save_all_eval:
+        with dtc.Storer(args, 'test' if args.doTest else 'validation', tr_step) as storer:
+            storer.write('predicted_ids', accum.predicted_ids, np.int16)
+            storer.write('y', accum.y, np.int16)
+            storer.write('alpha', accum.alpha, np.float32, batch_axis=1)
+            storer.write('beta', accum.beta, np.float32, batch_axis=1)
+            storer.write('image_name', accum.image_name, dtype=np.unicode_)
+            storer.write('ed', accum.ctc_ed, np.float32)
+            storer.write('bleu', accum.bleu_scores, np.float32)
+            storer.write('bin_len', accum.bin_len, np.float32)
+            storer.write('scan_len', accum.scan_len, np.float32)
+            storer.write('x', accum.x, np.float32)
+
     # Calculate aggregated validation metrics
-    valid_time_per100 = np.mean(batch_time) * 100. / hyper.data_reader_B
+    eval_time_per100 = np.mean(batch_time) * 100. / hyper.data_reader_B
     tb_agg_logs = session.run(ops.tb_agg_logs, feed_dict={
-        ops.ph_train_time: valid_time_per100,
+        ops.ph_train_time: eval_time_per100,
         ops.ph_bleu_scores: accum.bleu_scores,
         ops.ph_bleu_score2: dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.sq_y_ctc),
         ops.ph_ctc_eds: accum.ctc_ed,
@@ -804,70 +832,77 @@ def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
     })
     tf_sw.add_summary(tb_agg_logs, global_step=standardized_step(tr_step))
     tf_sw.flush()
-    return dlc.Properties({'valid_time_per100': valid_time_per100})
+    return dlc.Properties({'eval_time_per100': eval_time_per100})
 
 
 def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, training_logic):
     training_logic._set_flags_after_validation()
-    valid_start_time = time.time()
+    eval_start_time = time.time()
 
-    valid_ops = ops.valid_ops
-    batch_it = batch_its.valid_it
+    eval_ops = ops.eval_ops
+    batch_it = batch_its.eval_it
     batch_size = batch_it.batch_size
-    epoch_size = batch_it.epoch_size
-    ## Print a batch randomly
-    print_batch_num = np.random.randint(1, num_steps+1) if args.print_batch else -1
+    # Print a batch randomly
+    print_batch_num = np.random.randint(1, num_steps+1) if not args.save_all_eval else None
     accum = Accumulator()
     n = 0
-    hyper.logger.info('validation cycle starting at step %d for %d steps', step, num_steps)
+    hyper.logger.info('evaluation cycle starting at step %d for %d steps', step, num_steps)
     while n < num_steps:
         n += 1
-        if n != print_batch_num:
-            l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
-                                valid_ops.top1_len_ratio,
-                                valid_ops.top1_mean_ed,
-                                valid_ops.top1_accuracy,
-                                valid_ops.top1_num_hits,
-                                valid_ops.top1_ids_list,
-                                valid_ops.top1_lens,
-                                valid_ops.y_ctc_list,
-                                valid_ops.ctc_len
+        if (n == print_batch_num) or args.save_all_eval:
+            l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
+                                eval_ops.top1_len_ratio,
+                                eval_ops.top1_mean_ed,
+                                eval_ops.top1_accuracy,
+                                eval_ops.top1_num_hits,
+                                eval_ops.top1_ids_list,
+                                eval_ops.top1_lens,
+                                eval_ops.y_ctc_list,
+                                eval_ops.ctc_len,
+                                eval_ops.y_s_list,
+                                eval_ops.top1_alpha_list,
+                                eval_ops.top1_beta_list,
+                                eval_ops.image_name_list,
+                                eval_ops.top1_ed
+                                ))
+            if args.save_all_eval:
+                accum.extend({'y': y_s_list,
+                              'top1_ids': top1_ids_list,
+                              'alpha': top1_alpha_list,
+                              'beta': top1_beta_list,
+                              'image_name': image_name_list,
+                              'ed': top1_ed
+                              })
+        else:
+            l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
+                                eval_ops.top1_len_ratio,
+                                eval_ops.top1_mean_ed,
+                                eval_ops.top1_accuracy,
+                                eval_ops.top1_num_hits,
+                                eval_ops.top1_ids_list,
+                                eval_ops.top1_lens,
+                                eval_ops.y_ctc_list,
+                                eval_ops.ctc_len
                                 ))
             y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
-        else:
-            l, ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
-                                valid_ops.top1_len_ratio,
-                                valid_ops.top1_mean_ed,
-                                valid_ops.top1_accuracy,
-                                valid_ops.top1_num_hits,
-                                valid_ops.top1_ids_list,
-                                valid_ops.top1_lens,
-                                valid_ops.y_ctc_list,
-                                valid_ops.ctc_len,
-                                valid_ops.y_s_list,
-                                valid_ops.top1_alpha_list,
-                                valid_ops.top1_beta_list,
-                                valid_ops.image_name_list,
-                                valid_ops.top1_ed
-                                ))
 
         bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
         accum.extend({'bleus': bleu})
-        accum.extend({'predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
-        accum.extend({'target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
+        accum.extend({'sq_predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
+        accum.extend({'trim_target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
         accum.append({'lens': l})
-        accum.append({'eds': ed})
+        accum.append({'mean_eds': mean_ed})
         accum.append({'accuracies': accuracy})
         accum.append({'hits': num_hits})
 
         if n == print_batch_num:
             # logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
-            # logger.info('prediction mean_ed=%f', ed)
+            # logger.info('prediction mean_ed=%f', mean_ed)
             # logger.info('prediction accuracy=%f', accuracy)
             # logger.info('prediction hits=%d', num_hits)
             # bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
 
-            with dtc.Storer(args, 'validation', step) as storer:
+            with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
                 storer.write('predicted_ids', top1_ids_list, np.int16)
                 storer.write('y', y_s_list, np.int16)
                 storer.write('alpha', top1_alpha_list, dtype=np.float32, batch_axis=1)
@@ -875,25 +910,34 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                 storer.write('image_name', image_name_list, dtype=np.unicode_)
                 storer.write('ed', top1_ed, dtype=np.float32)
                 storer.write('bleu', bleu, dtype=np.float32)
-
             # logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
+    if args.save_all_eval:
+        assert len(accum.y) == len(accum.top1_ids) == len(accum.alpha) == len(accum.beta) == len(accum.bleus) == len(accum.image_name) == len(accum.ed)
+        with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
+            storer.write('predicted_ids', accum.top1_ids, np.int16)
+            storer.write('y', accum.y, np.int16)
+            storer.write('alpha', accum.alpha, dtype=np.float32, batch_axis=1)
+            storer.write('beta', accum.beta, dtype=np.float32, batch_axis=1)
+            storer.write('image_name', accum.image_name, dtype=np.unicode_)
+            storer.write('ed', accum.ed, dtype=np.float32)
+            storer.write('bleu', accum.bleus, dtype=np.float32)
 
-    valid_time_per100 = (time.time() - valid_start_time) * 100. / (num_steps * batch_size)
-    agg_bleu2 = dlc.corpus_bleu_score(accum.predicted_ids, accum.target_ids)
-    logs_agg_top1 = session.run(valid_ops.logs_agg_top1,
+    agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.trim_target_ids)
+    eval_time_per100 = (time.time() - eval_start_time) * 100. / (num_steps * batch_size)
+    logs_agg_top1 = session.run(eval_ops.logs_agg_top1,
                                 feed_dict={
-                                    valid_ops.ph_top1_len_ratio: accum.lens,
-                                    valid_ops.ph_edit_distance: accum.eds,
-                                    valid_ops.ph_num_hits: accum.hits,
-                                    valid_ops.ph_accuracy: accum.accuracies,
-                                    valid_ops.ph_valid_time: valid_time_per100,
-                                    valid_ops.ph_bleus: accum.bleus,
-                                    valid_ops.ph_bleu2: agg_bleu2,
-                                    valid_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
+                                    eval_ops.ph_top1_len_ratio: accum.lens,
+                                    eval_ops.ph_edit_distance: accum.mean_eds,
+                                    eval_ops.ph_num_hits: accum.hits,
+                                    eval_ops.ph_accuracy: accum.accuracies,
+                                    eval_ops.ph_valid_time: eval_time_per100,
+                                    eval_ops.ph_bleus: accum.bleus,
+                                    eval_ops.ph_bleu2: agg_bleu2,
+                                    eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
                                 })
 
     tf_sw.add_summary(logs_agg_top1, standardized_step(step))
     tf_sw.flush()
     hyper.logger.info('validation cycle finished. bleu2 = %f', agg_bleu2)
-    return dlc.Properties({'valid_time_per100': valid_time_per100})
+    return dlc.Properties({'eval_time_per100': eval_time_per100})

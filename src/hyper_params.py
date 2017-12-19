@@ -561,7 +561,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             'adam_beta2',
             'beta2 value of adam-optimizer. If undefined here, the default in tf.train.AdamOptimizer is is 0.999.',
             decimal(0., 1.),
-            0.999
+            0.9
         ),
         PD(
             'optimizer',
@@ -706,7 +706,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             "layer will be forked off at the top for each 'c' and 'h' state in the RNN Im2LatexDecoderRNN state."
             "Hence, this is a 'multi-headed' MLP because it has multiple top-layers."
             "By default their implementation has num_hidden_layers==0 (i.e. n_layers_init==1).",
-            instanceofOrNone(MLPParams),
+            instanceof(MLPParams),
             ## Value set dynamically inside self._trickledown()
         ),
         PD(
@@ -814,7 +814,8 @@ class Im2LatexModelParams(dlc.HyperParams):
             assert len(self.output_layers.layers) >= 2, "Need one hidden layer at least to match the paper's complexity."
 
         ######## Init Model ########
-        if True: # No hidden init layers by default in the Show&Tell paper
+        if self.build_init_model:
+            # Note: There are no hidden init layers by default in the Show&Tell paper
             self.init_model_hidden = MLPParams(self).updated({
                 'layers': (
                     # paper sets hidden activations=relu
@@ -823,12 +824,11 @@ class Im2LatexModelParams(dlc.HyperParams):
                 )
                 }).freeze()
 
-        self.init_model_final_layers = FCLayerParams(self).updated({
-            ## num_units to be set dynamically in the code
-            ## paper sets final=tanh
-            'activation_fn': tf.nn.tanh,
-            'dropout': None
-            }).freeze()
+            self.init_model_final_layers = FCLayerParams(self).updated({
+                # Show&Tell paper sets final=tanh
+                'activation_fn': tf.nn.tanh,
+                'dropout': None
+                }).freeze()
 
     def __copy__(self):
         ## Shallow copy
