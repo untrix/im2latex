@@ -194,7 +194,7 @@ def main(raw_data_folder,
     """
     Start training the model.
     """
-    dtc.initialize(args.generated_data_dir, hyper)
+    dtc.initialize(args.raw_data_dir, hyper)
     global logger
     logger = hyper.logger
     global standardized_step

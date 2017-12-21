@@ -58,10 +58,6 @@ class GlobalParams(dlc.HyperParams):
             'Filesystem path of raw_data_folder from where the pre-processed data is stored.',
             dlc.instanceof(str)
         ),
-        PD('dataset', 'Dataset id, 2 or 3',
-           (2, 3),
-           3
-           ),
         PD(
             'image_shape_unframed',
             'Shape of input images. Should be a python sequence.'
@@ -80,7 +76,7 @@ class GlobalParams(dlc.HyperParams):
         PD(
             'K',
             'Vocabulary size including zero. Value is loaded from the dataset and is not configurable.',
-            (358, 557),
+            (358, 557, 339),
             # Set dynamically based on dataset.
             # LambdaVal(lambda _, d: 557+1 if d.use_ctc_loss else 557) #get_vocab_size(data_folder) + 1 for Blank-Token
         ),
@@ -106,7 +102,7 @@ class GlobalParams(dlc.HyperParams):
         PD(
             'StartTokenID',
             'ID of the begin-sequence token. The value is loaded from the dataset and is not configurable.',
-            range(1, 557),
+            (1,),
             # Set dynamically based on dataset.
         ),
         ###############################
@@ -158,16 +154,21 @@ class GlobalParams(dlc.HyperParams):
             """,
             issequenceofOrNone(int),
         ),
+        PD('image_size',
+           'Older image-size was "small". Newer one is "big"',
+           ('small', 'big'),
+           'big'
+           ),
         PD(
             'H0', 'Height of feature-map produced by conv-net. Specific to the dataset image size.',
             integer(1),
-            LambdaVal(lambda _, p: 4 if (p.dataset == 3) else 3)
+            LambdaVal(lambda _, p: 4 if (p.image_size == 'big') else 3)
             # LambdaVal(lambda _, p: 8 if (p.build_image_context == 2) else (4 if p.dataset == 3 else 3))
         ),
         PD(
             'W0', 'Width of feature-map produced by conv-net. Specific to the dataset image size.',
             integer(1),
-            LambdaVal(lambda _, p: 34 if (p.dataset == 3) else 33)
+            LambdaVal(lambda _, p: 34 if (p.image_size == 'big') else 33)
             # LambdaVal(lambda _, p: 68 if (p.build_image_context == 2) else (34 if p.dataset == 3 else 33))
         ),
         PD(

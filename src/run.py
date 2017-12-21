@@ -37,7 +37,6 @@ import hyper_params
 
 def main():
     logger = dtc.makeLogger(set_global=True)
-    _data_folder = '../data/dataset3'
 
     parser = argparse.ArgumentParser(description='train model')
     parser.add_argument("--num-steps", "-n", dest="num_steps", type=int,
@@ -60,7 +59,7 @@ def main():
                         default=100)
     parser.add_argument("--keep-prob", "-k", dest="keep_prob", type=float,
                         help="Dropout 'keep' probability. Defaults to 0.5",
-                        default=0.5)
+                        default=1.0)
     parser.add_argument("--adam_alpha", "-a", dest="alpha", type=float,
                         help="Alpha (step / learning-rate) value of adam optimizer.",
                         default=0.0001)
@@ -68,10 +67,10 @@ def main():
                         help="Sets value of rLambda - lambda value used for regularization. Defaults to 0.00005.",
                         default=0.00005)
     parser.add_argument("--data-folder", "-d", dest="data_folder", type=str,
-                        help="Data folder. If unspecified, defaults to " + _data_folder,
-                        default=_data_folder)
+                        help="Data folder. If unspecified, defaults to raw_data_folder/..",
+                        default=None)
     parser.add_argument("--raw-data-folder", dest="raw_data_folder", type=str,
-                        help="Raw data folder. If unspecified, defaults to data_folder/training",
+                        help="Raw data folder. Must be specified.",
                         default=None)
     parser.add_argument("--vgg16-folder", dest="vgg16_folder", type=str,
                         help="vgg16 data folder. If unspecified, defaults to data_folder/vgg16_features",
@@ -127,24 +126,25 @@ def main():
                         help="Run test cycle only but with training dataset. --restore option should be provided along with this.",
                         default=False)
     parser.add_argument("--squash-input-seq", dest="squash_input_seq", action='store_true',
-                        help="(boolean) Set value of squash_input_seq hyper param. Defaults to False.",
-                        default=False)
+                        help="(boolean) Set value of squash_input_seq hyper param. Defaults to True.",
+                        default=True)
     parser.add_argument("--num-snapshots", dest="num_snapshots", type=int,
                         help="Number of latest snapshots to save. Defaults to 100 if unspecified",
                         default=100)
 
-
     args = parser.parse_args()
-    data_folder = args.data_folder
+
+    raw_data_folder = args.raw_data_folder
+    if args.data_folder:
+        data_folder = args.data_folder
+    else:
+        data_folder = os.path.join(raw_data_folder, '..')
+
     if args.image_folder:
         image_folder = args.image_folder
     else:
         image_folder = os.path.join(data_folder, 'formula_images')
 
-    if args.raw_data_folder:
-        raw_data_folder = args.raw_data_folder
-    else:
-        raw_data_folder = os.path.join(data_folder, 'training')
 
     if args.vgg16_folder:
         vgg16_folder = args.vgg16_folder

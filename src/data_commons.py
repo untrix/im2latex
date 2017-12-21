@@ -33,12 +33,15 @@ dict_id2word = None
 i2w_ufunc = None
 logger = logging
 
+
 def setLogLevel(logger_, level):
     logging_levels = (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG)
     logger_.setLevel(logging_levels[level - 1])
 
+
 def makeFormatter():
     return logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
 
 def makeLogger(logging_level=3, name='default', set_global=False):
     global logger
@@ -51,12 +54,13 @@ def makeLogger(logging_level=3, name='default', set_global=False):
         logger = logger_
     return logger_
 
-def initialize(data_dir, params):
+
+def initialize(training_data_dir, params):
     global i2w_ufunc, dict_id2word
     # if logger is None:
     #     logger = params.logger
     if i2w_ufunc is None:
-        data_props = load(data_dir, 'training', 'data_props.pkl')
+        data_props = load(training_data_dir, 'data_props.pkl')
         dict_id2word = data_props['id2word']
         K = len(dict_id2word.keys())
         CTCBlankTokenID = params.CTCBlankTokenID
@@ -72,6 +76,7 @@ def initialize(data_dir, params):
         i2w_ufunc = np.frompyfunc(i2w, 1, 1)
     return i2w_ufunc
 
+
 def seq2str(arr, label, separator=None):
     """
     Converts a matrix of id-sequences - shaped (B,T) - to an array of strings shaped (B,).
@@ -86,8 +91,10 @@ def seq2str(arr, label, separator=None):
         func1d = lambda vec: label + u" " + unicode(separator).join(vec)
     return [func1d(vec) for vec in str_arr]
 
+
 def join(*paths):
     return os.path.join(*paths)
+
 
 def dump(ar, *paths):
     path = join(*paths)
@@ -95,9 +102,11 @@ def dump(ar, *paths):
     with open(path, 'wb') as f:
         pickle.dump(ar, f, pickle.HIGHEST_PROTOCOL)
 
+
 def load(*paths):
     with open(join(*paths), 'rb') as f:
         return pickle.load(f)
+
 
 class Storer(object):
     def __init__(self, args, prefix, step):
@@ -155,6 +164,7 @@ class Storer(object):
             # logger.info('row=%d, slice=%s', row, s)
             dataset[s] = ar
 
+
 def makeLogfileName(logdir, name):
     prefix, ext = os.path.splitext(os.path.basename(name))
     filenames = os.listdir(logdir)
@@ -167,8 +177,10 @@ def makeLogfileName(logdir, name):
 
     raise Exception('logfile number limit (100) reached.')
 
+
 def exists(*paths):
     return os.path.exists(os.path.join(*paths))
+
 
 def makeLogDir(root, dirname):
     dirpath = makeLogfileName(root, dirname)
