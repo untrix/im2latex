@@ -694,9 +694,10 @@ class TrainingLogic(object):
         elif self.validate_next or self.validate_then_stop:
             doValidate = do_save = True
             num_eval_batches = self._eval_it.epoch_size
-        elif self._args.valid_epochs <= 0:  # smart validation
-            assert score is not None, 'score must be supplied if eval_epochs <= 0'
-            if (score > self.fv_score) and ((score > 0.9) or ((score - self.fv_score) >= 0.01)):
+        # elif self._args.valid_epochs <= 0:  # smart validation
+        #     assert score is not None, 'score must be supplied if eval_epochs <= 0'
+        elif (self._args.valid_epochs <= 0) and (score is not None):  # smart validation
+            if (score > self.fv_score) and ((step - self.full_validation_steps[-1]) >= (0.25 * self._train_it.epoch_size)):
                 doValidate = True
                 num_eval_batches = self._eval_it.epoch_size
                 do_save = True
@@ -725,17 +726,18 @@ class TrainingLogic(object):
         # Save snapshot every 2 epochs so that we may restore runs at the beginning of full epochs because that's
         # when the batch-iterators reshuffle the samples.
         if step % int(2 * self._train_it.epoch_size) == 0:
+            logger.info('Saving state at epoch boundary (step=%d)'%step)
             do_save = True
 
         return doValidate, num_eval_batches, do_save
 
     def do_log(self, step):
         do_log = (step % self._args.print_steps == 0) or (step == self._train_it.max_steps) or self.validate_then_stop or self.validate_next
-        if self._args.valid_epochs <= 0:  # do_validate synchronizes with do_log
-            return do_log
-        else:
-            validate, _, _ = self.do_validate(step, None)
-            return do_log or validate
+        # if self._args.valid_epochs <= 0:  # do_validate synchronizes with do_log
+        #     return do_log
+        # else:
+        validate, _, _ = self.do_validate(step, None)
+        return do_log or validate
 
 
 def format_ids(predicted_ids, target_ids):

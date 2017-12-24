@@ -559,6 +559,8 @@ def _get_data(hyper, args, raw_data_dir_):
         df_valid = pd.read_pickle(os.path.join(raw_data_dir_, 'df_valid.pkl'))
         ret_props.valid_seq_fname = 'raw_seq_valid.pkl'
         ret_props.valid_sq_seq_fname = 'raw_seq_sq_valid.pkl'
+        hyper.logger.info('Loaded dataframes from %s df_train.shape=%s, df_valid.shape=%s, df_test.shape=%s' % (
+            raw_data_dir_, df_train.shape, df_valid.shape, df_test.shape))
     else:
         hyper.logger.warn("Didn't find df_valid.pkl. Will split df_train into df_train and df_valid.")
         df_train, df_valid = split_dataset(df_train,
@@ -567,9 +569,10 @@ def _get_data(hyper, args, raw_data_dir_):
                                            args,
                                            hyper.assert_whole_batch,
                                            validation_frac=args.valid_frac)
+        hyper.logger.info('Split dataframes from %s df_train.shape=%s, df_valid.shape=%s, df_test.shape=%s' % (
+            raw_data_dir_, df_train.shape, df_valid.shape, df_test.shape))
     ret_props.df_valid = df_valid
 
-    hyper.logger.info('df_train.shape=%s, df_valid.shape=%s, df_test.shape=%s'%(df_train.shape, df_valid.shape, df_test.shape))
     return ret_props
 
 
