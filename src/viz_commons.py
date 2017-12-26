@@ -85,7 +85,7 @@ class CustomConvnetImageProcessor(ImageProcessor3_BW):
         print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape_unframed = %s'%(image_batch.shape, self._params.image_shape_unframed)
         image_batch /= 255.0
         num_channels = image_batch.shape[3]
-        if num_channels == 1: ## Need all three RGB channels so that we can layer on alpha channel to get RGBA
+        if num_channels == 1:  # Need all three RGB channels so that we can layer on alpha channel to get RGBA
             image_batch = np.repeat(image_batch, 3, axis=3)
 
         return image_batch
@@ -181,11 +181,17 @@ class VisualizeDir(object):
 
 
         ## Train/Test DataFrames
-        self._df_train_image = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
-        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self._df_train_image.shape) )
-        # self._df_train_image = self._df_train.copy()
-        self._df_train_image.index = self._df_train_image.image
-        # self._df_test = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))
+        self.df_train_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
+        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape) )
+        # self.df_train_images = self._df_train.copy()
+        self.df_train_images.index = self.df_train_images.image
+        self._df_test_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))[['image', 'height', 'width']]
+        self._df_test_images.index = self._df_test_images.image
+        try:
+            self._df_valid_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_valid.pkl'))[['image', 'height', 'width']]
+            self._df_valid_images.index = self._df_valid_images.image
+        except IOError:  # df_valid.pkl is absent implies df_valid data is included within df_train
+            self._df_valid_images = self._df_train_images
         # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
         self._padded_im_dim = {'height': self._hyper.image_shape_unframed[0], 'width': self._hyper.image_shape_unframed[1]}
 
@@ -256,10 +262,11 @@ class VisualizeDir(object):
     def nd(self, graph, step, key):
         """
         Args:
-            graph: 'training' or 'validation'
+            graph: 'training', 'validation' or 'test'
             step:  step who's output is to be fetched
             key:   key of object to fetch - e.g. 'predicted_ids'
         """
+        assert graph in ['training', 'validation', 'test']
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph, step))) as h5:
             return h5[key][...]
     
@@ -361,31 +368,6 @@ class VisualizeDir(object):
             df = pd.DataFrame(data=data, index=index)
             return df/home/sumeet/im2latex/src
     
-    # def strs(self, graph, step, key, key2=None, mingle=False, trim=False):
-    #     df_words, sr_ed = self._words(graph, step, key, _get_ed=True)
-    #     df_words2 = self.words(graph, step, key2) if (key2 is not None) else None
-        
-    #     ## each token's string version - excepting backslash - has a space appended to it,
-    #     ## therefore the string output should be compile if the prediction was syntactically correct
-    #     ar1 = ["".join(row) for row in df_words.itertuples(index=False)]
-    #     if key2 == None:
-    #         return pd.DataFrame({'edit_distance':sr_ed, key: ar1}, index=df_words.index)
-    #     else:
-    #         ar2 = ["".join(row) for row in df_words2.itertuples(index=False)]
-    #         if mingle:
-    #             # d = [(i,e) for i,t in enumerate(zip(ar1, ar2)) for e in t]
-    #             # d = zip(*d)
-    #             # index = d[0]
-    #             # data = {'%s / %s   %s_%d   [%s]'%(key, key2, graph, step, self._storedir): d[1]}
-    #             d = [e for t in zip(ar1, ar2) for e in t]
-    #             data = {'%s/%s'%(key, key2): d}
-    #             index = ['%s (%s)'%(i,l) for i in df_words.index for l in ('k1', 'k2')]
-    #         else:
-    #             data = {'edit_distance':sr_ed, key: ar1, key2: ar2}
-    #             index = df_words.index
-    #         df = pd.DataFrame(data=data, index=index)
-    #         return df
-
     PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
     @staticmethod
     def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True):
@@ -421,17 +403,17 @@ class VisualizeDir(object):
 
     def alpha(self, graph, step, sample_num=0, invert_alpha=True, max_words=None):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
-        sample_idx = df_all.iloc[sample_num].name ## Top index in sort order
-        nd_ids = df_all.loc[sample_idx].ids # (B,T) --> (T,)
-        nd_words = df_all.loc[sample_idx].words # (B,T) --> (T,)
+        sample_idx = df_all.iloc[sample_num].name  # Top index in sort order
+        nd_ids = df_all.loc[sample_idx].ids  # (B,T) --> (T,)
+        nd_words = df_all.loc[sample_idx].words  # (B,T) --> (T,)
         ## Careful with sample_idx
         nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx]  # (N,B,H,W,T) --> (H,W,T)
-        image_name = self.nd(graph, step, 'image_name')[sample_idx]  #(B,) --> (,)
+        image_name = self.nd(graph, step, 'image_name')[sample_idx]  # (B,) --> (,)
         T = len(nd_words)
         if max_words is not None:
             T = min(T, max_words)
         assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
-        df = self._df_train_image
+        df = self.df_train_images if graph == 'training' else self._df_valid_images if graph == 'validation' else self._df_test_images
         image_data = self._image_processor.get_one(image_name,
                                                    df.height.loc[image_name],
                                                    df.width.loc[image_name],

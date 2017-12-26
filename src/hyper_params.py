@@ -688,7 +688,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             params.
             """,
             boolean,
-            True
+            False
         ),
         PD(
             'init_model_input_transform',

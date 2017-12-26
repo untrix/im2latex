@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--queue-capacity", "-q", dest="queue_capacity", type=int,
                         help="Capacity of input queue. Defaults to hyperparam defaults if unspecified.",
                         default=None)
-    parser.add_argument("--logging-level", "-l", dest="logging_level", type=int,
+    parser.add_argument("--logging-level", "-l", dest="logging_level", type=int, choices=range(1,6),
                         help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
                         default=4)
     parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
