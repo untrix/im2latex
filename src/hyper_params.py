@@ -146,7 +146,7 @@ class GlobalParams(dlc.HyperParams):
         PD(
             'REGROUP_IMAGE',
             """
-            Only applies when build_image_ctx==0. Specifies how the image feature vectors should be grouped together 
+            Specifies how the image feature vectors should be grouped together 
             along Height and Width axes. For e.g. if the original dimension of the context feature map was (3,33,512) 
             - i.e. original H=3, original W=33 and D=512- and if REGROUP_IMAGE was (3,3) then the new 
             context-map would have shape (1, 11, 512*3*3) resulting in H=1, W=33, D=4608 and L=33.
@@ -687,8 +687,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             will be used for init-state, otherwise a init-state model will be created based on other init_model_*
             params.
             """,
-            boolean,
-            False
+            boolean
         ),
         PD(
             'init_model_input_transform',

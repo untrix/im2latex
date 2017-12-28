@@ -102,7 +102,8 @@ def plotImage(image_detail, axes, cmap=None):
     image_data = image_detail[1]
     title = os.path.splitext(os.path.basename(path))[0]
     axes.set_title(title)
-    # axes.set_xlim(-10,1500)
+    axes.set_ylim(image_data.shape[0], 0)
+    axes.set_xlim(0, image_data.shape[1])
     # print 'image %s %s'%(title, image_data.shape)
     if cmap is not None:
         axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
@@ -128,8 +129,9 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
 
     orig_dpi = plt.rcParams['figure.dpi']
     with mpl.rc_context(rc={'figure.dpi': dpi or orig_dpi}):
-        fig = plt.figure(figsize=(10.,2.*len(image_details)))
-        grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L", aspect=False)
+        fig = plt.figure(figsize=(10., 2.*len(image_details)))
+        grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L",
+                         aspect=True)
         for i in range(len(image_details)):
             plotImage(image_details[i], grid[i], cmap)
 
@@ -182,14 +184,17 @@ class VisualizeDir(object):
 
         ## Train/Test DataFrames
         self.df_train_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
-        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape) )
-        # self.df_train_images = self._df_train.copy()
         self.df_train_images.index = self.df_train_images.image
+        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
+
         self._df_test_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))[['image', 'height', 'width']]
         self._df_test_images.index = self._df_test_images.image
+        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_test.pkl'), self._df_test_images.shape))
+
         try:
             self._df_valid_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_valid.pkl'))[['image', 'height', 'width']]
             self._df_valid_images.index = self._df_valid_images.image
+            print('Loaded %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
         except IOError:  # df_valid.pkl is absent implies df_valid data is included within df_train
             self._df_valid_images = self._df_train_images
         # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
@@ -346,18 +351,25 @@ class VisualizeDir(object):
     def words(self, graph, step, key):
         return self._words(graph, step, key, _get_ids=False, _get_ed=False)
 
-    def strs(self, graph, step, key, key2=None, mingle=False, trim=True):
+    def strs(self, graph, step, key, key2=None, mingle=False, trim=True, wrap_strs=False):
         df1 = self.df_ids(graph, step, key, trim=trim)
         df2 = self.df_ids(graph, step, key2, trim=trim) if (key2 is not None) else None
         
         # each token's string version - excepting backslash - has a space appended to it,
         # therefore the string output should be compile if the prediction was syntactically correct
-        ar1 = ["".join(row) for row in df1.words.values]
+        if not wrap_strs:
+            ar1 = ["".join(row) for row in df1.words.values]
+        else:
+            ar1 = ['$%s$'%("".join(row)) for row in df1.words.values]
         if key2 is None:
-            ar1_len = [len(s) for s in ar1]
+            # ar1_len = [len(s) for s in ar1]
+            ar1_len = [len(seq) for seq in df1.words]
             return pd.DataFrame({'edit_distance':df1.ed, 'len': ar1_len, key: ar1, '_id': range(df1.shape[0])}, index=df1.index)
         else:
-            ar2 = ["".join(row) for row in df2.words.values]
+            if not wrap_strs:
+                ar2 = ["".join(row) for row in df2.words.values]
+            else:
+                ar2 = ['$%s$'%("".join(row)) for row in df2.words.values]
             if mingle:
                 d = [e for t in zip(ar1, ar2) for e in t]
                 data = {'%s/%s'%(key, key2): d}
@@ -366,22 +378,34 @@ class VisualizeDir(object):
                 data = {'edit_distance': df1.ed, key: ar1, key2: ar2}
                 index = df1.index
             df = pd.DataFrame(data=data, index=index)
-            return df/home/sumeet/im2latex/src
+            return df
     
     PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
     @staticmethod
-    def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True):
+    def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True,
+                       gamma_correction=1):
         pa = np.repeat(alpha_t, repeats=pool_factor.h, axis=0)
         pa = np.repeat(pa, pool_factor.w, axis=1)
         pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
         if invert:
             pa = 1.0 - pa
+
+        if gamma_correction != 1:
+            pa = np.power(pa, gamma_correction)  # gamma correction
+
         if expand_dims:
-            pa = np.expand_dims(pa, axis=2) #(H,W,1)
+            pa = np.expand_dims(pa, axis=2) # (H,W,1)
         return pa
 
-    def _composit_image(self, image_data, alpha_t, pool_factor, pad_0, pad_1, invert_alpha=True):
-        return np.concatenate((image_data, self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha)), axis=2)
+    def _blend_image(self, image_data, alpha_t, pool_factor, pad_0, pad_1, invert_alpha=True, gamma_correction=1):
+        alpha = self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha,
+                                    gamma_correction=gamma_correction)
+        # alpha = np.tile(alpha, 3)
+        # alpha[:, :, 0] = 1.  # Fix Red channel to 1.0
+        # alpha[:, :, 1] = 1.  # Fix Green channel to 1.0
+        # alpha[:, :, 2] = 1.  # Fix Blue channel to 1.0
+        return image_data * alpha
+        # return np.concatenate((image_data, self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha)), axis=2)
 
     def test_alpha_viz(self):
         H = self._hyper.H
@@ -401,7 +425,7 @@ class VisualizeDir(object):
 
         plotImages(image_details, dpi=200)
 
-    def alpha(self, graph, step, sample_num=0, invert_alpha=True, max_words=None):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=True, max_words=None, wrap_strs=True, gamma_correction=1):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         sample_idx = df_all.iloc[sample_num].name  # Top index in sort order
         nd_ids = df_all.loc[sample_idx].ids  # (B,T) --> (T,)
@@ -422,17 +446,21 @@ class VisualizeDir(object):
         pad_0 = self._hyper.image_shape_unframed[0] - nd_alpha.shape[0]*pool_factor.h
         pad_1 = self._hyper.image_shape_unframed[1] - nd_alpha.shape[1]*pool_factor.w
 
-        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
+        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True, wrap_strs=wrap_strs).loc[sample_idx].predicted_ids
         y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
         display(Math(predicted_ids))
         print(predicted_ids)
         display(Math(y))
         print(y)
         
-        image_details = [(image_name, image_data), ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1, expand_dims=False))]
+        image_details =[(image_name, image_data),
+                        ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1, expand_dims=False,
+                                                        gamma_correction=gamma_correction))]
+        # image_details = [(image_name, image_data),]
         for t in xrange(T):
-            ## Project alpha onto image
-            composit = self._composit_image(image_data, nd_alpha[:,:,t], pool_factor, pad_0, pad_1, invert_alpha=invert_alpha)
+            ## Blend alpha and image
+            composit = self._blend_image(image_data, nd_alpha[:, :, t], pool_factor, pad_0, pad_1,
+                                         invert_alpha=invert_alpha, gamma_correction=gamma_correction)
             image_details.append((nd_words[t], composit))
             if nd_ids[t] == 0:
                 break
@@ -539,11 +567,12 @@ class VisualizeStep():
     def words(self, key):
         return self._visualizer.words(self._graph, self._step, key)
 
-    def strs(self, key, key2=None, mingle=True, trim=False):
-        return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim)
+    def strs(self, key, key2=None, mingle=True, trim=False, wrap_strs=False):
+        return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim, wrap_strs)
 
-    def alpha(self, sample_num=0, invert_alpha=True, max_words=None):
-        return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha, max_words=max_words)
+    def alpha(self, sample_num=0, invert_alpha=True, max_words=None, gamma_correction=1):
+        return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
+                                      max_words=max_words, gamma_correction=gamma_correction)
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):
@@ -553,13 +582,17 @@ class DiffParams(object):
     def get(self, filename, to_str):
         try:
             one = dtc.load(self._dir1, 'store', filename)
+            print('Loaded %s'%os.path.join(self._dir1, 'store'))
         except:
             one = dtc.load(self._dir1, filename)
+            print('Loaded %s' % self._dir1)
 
         try:
             two = dtc.load(self._dir2, 'store', filename)
+            print('Loaded %s' % os.path.join(self._dir2, 'store'))
         except:
             two = dtc.load(self._dir2, filename)
+            print('Loaded %s' % self._dir2)
 
         if (to_str):
             one = dlc.to_picklable_dict(one)
