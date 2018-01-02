@@ -556,7 +556,6 @@ class Im2LatexModelParams(dlc.HyperParams):
             'adam_beta1',
             'beta1 value of adam-optimizer. If undefined here, the default in tf.train.AdamOptimizer is is 0.9.',
             decimal(0., 1.),
-            0.5
         ),
         PD(
             'adam_beta2',

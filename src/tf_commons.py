@@ -405,6 +405,14 @@ class ConvLayerParams(HyperParams):
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
 
+    @classmethod
+    def get_kernel_half(cls, self_d):
+        # self_d is this class distilled into a dictionary
+        kernel_shape = self_d['kernel_shape']
+        assert (kernel_shape[0] % 2 == 1) and (kernel_shape[1] % 2 == 1)
+        return kernel_shape[0] // 2, kernel_shape[1] // 2
+
+
 ConvLayerParamsProto = ConvLayerParams().protoD
 
 
@@ -425,6 +433,46 @@ class ConvStackParams(HyperParams):
 
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
+        self.numConvLayers = self.get_numConvLayers(self)
+        self.numPoolLayers = self.get_numPoolLayers(self)
+
+    @staticmethod
+    def isConvLayer(layer_d):
+        # layer_d is *LayerParams distilled into a dict
+        return isinstance(layer_d, ConvLayerParams) or (
+                ('output_channels' in layer_d) and ('weights_initializer' in layer_d) and ('kernel_shape' in layer_d) and (
+                'stride' in layer_d) and ('padding' in layer_d))
+
+    @staticmethod
+    def isPoolLayer(layer_d):
+        # layer_d is *LayerParams distilled into a dict
+        return isinstance(layer_d, MaxpoolParams) or (
+                ('output_channels' not in layer_d) and ('weights_initializer' not in layer_d) and (
+                'kernel_shape' in layer_d) and ('stride' in layer_d) and ('padding' in layer_d))
+
+    @classmethod
+    def get_numConvLayers(cls, slf_d):
+        # slf_d is ConvStackParams distilled into a dict
+        if 'numConvLayers' in slf_d:
+            return slf_d['numConvLayers']
+        else:
+            n = 0
+            for layer in slf_d['layers']:
+                if cls.isConvLayer(layer):
+                    n += 1
+            return n
+
+    @classmethod
+    def get_numPoolLayers(cls, slf_d):
+        # slf_d is ConvStackParams distilled into a dict
+        if 'numPoolLayers' in slf_d:
+            return slf_d['numPoolLayers']
+        else:
+            n = 0
+            for layer in slf_d['layers']:
+                if cls.isPoolLayer(layer):
+                    n += 1
+            return n
 
 
 class ConvStack(object):

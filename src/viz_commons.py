@@ -35,6 +35,7 @@ from data_reader import ImagenetProcessor, ImageProcessor3_BW
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
 from IPython.display import Math, display
+import tf_commons as tfc
 
 class VGGnetProcessor(ImagenetProcessor):
     def __init__(self, params, image_dir_):
@@ -178,8 +179,10 @@ class VisualizeDir(object):
         else:
             raise Exception('No available ImageProcessor for this case (build_image_context=%s). You have not written one yet!'%self._hyper.build_image_context)
 
-        self._maxpool_factor = 32
+        # For alpha projection onto image
+        self._maxpool_factor = np.power(2, tfc.ConvStackParams.get_numPoolLayers(self._hyper['CONVNET']))
         self._image_pool_factor = self.PoolFactor(self._maxpool_factor*self._hyper.H0/self._hyper.H, self._maxpool_factor*self._hyper.W0/self._hyper.W)
+        self._alpha_bleed = self._get_alpha_bleed()
 
 
         ## Train/Test DataFrames
@@ -228,6 +231,18 @@ class VisualizeDir(object):
     @property
     def hyper(self):
         return self._hyper
+
+    def _get_alpha_bleed(self):
+        CONVNET = self._hyper['CONVNET']
+        n_h = n_w = 0
+        for layer in CONVNET['layers']:
+            if tfc.ConvStackParams.isConvLayer(layer):
+                k = tfc.ConvLayerParams.get_kernel_half(layer)
+                n_h += k[0]
+                n_w += k[1]
+            # else:
+            #     print('%s is not a ConvLayer'%layer)
+        return n_h, n_w
 
     def get_steps(self):
         steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
@@ -381,30 +396,89 @@ class VisualizeDir(object):
             return df
     
     PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
-    @staticmethod
-    def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True,
+
+    # @staticmethod
+    # def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True,
+    #                    gamma_correction=1):
+    #     pa = np.repeat(alpha_t, repeats=pool_factor.h, axis=0)
+    #     pa = np.repeat(pa, pool_factor.w, axis=1)
+    #     pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
+    #     if invert:
+    #         pa = 1.0 - pa
+    #
+    #     if gamma_correction != 1:
+    #         pa = np.power(pa, gamma_correction)  # gamma correction
+    #
+    #     if expand_dims:
+    #         pa = np.expand_dims(pa, axis=2)  # (H,W,1)
+    #     return pa
+
+    def _project_alpha(self, alpha_t, pool_factor, pad_h, pad_w, expand_dims=True, pad_value=0.0, invert=True,
                        gamma_correction=1):
+        # pa = np.zeros(alpha_t.shape)
         pa = np.repeat(alpha_t, repeats=pool_factor.h, axis=0)
         pa = np.repeat(pa, pool_factor.w, axis=1)
-        pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
+        pa = np.pad(pa, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=pad_value)
+
+        # project alpha_bleed
+        bleed_h = self._alpha_bleed[0]
+        bleed_w = self._alpha_bleed[1]
+        pad_t = pad_h // 2
+        pad_b = pad_h - pad_t
+        pad_l = pad_w // 2
+        pad_r = pad_w - pad_l
+        # print('bleed_h=%d, bleed_w=%d, pad_t=%d, pad_b=%d, pad_l=%d, pad_r=%d'%(bleed_h, bleed_w, pad_t, pad_b, pad_l, pad_r))
+        for h in range(alpha_t.shape[0]):
+            for w in range(alpha_t.shape[1]):
+                alpha = alpha_t[h,w]
+                l = w * pool_factor.w + pad_l
+                r = (w+1) * pool_factor.w - 1 + pad_r
+                t = h * pool_factor.h + pad_t
+                b = (h+1) * pool_factor.h - 1 + pad_b
+                t_ = max(0, t - bleed_h)
+                b_ = min(b + bleed_h, pa.shape[0])
+                l_ = max(0, l - bleed_w)
+                r_ = min(r + bleed_w, pa.shape[1])
+                # pa[t_:(b_+1), l_:l] += alpha / 2.0
+                # pa[t_:(b_+1), (r+1):(r_+1)] += alpha / 2.0
+                # pa[t_:t, l_:(r_+1)] += alpha / 2.0
+                # pa[(b+1):(b_+1), l_:(r_+1)] += alpha / 2.0
+                sl = pa[t_:(b_ + 1), l_:l]
+                sl[sl < alpha] = alpha
+                sl = pa[t_:(b_ + 1), (r + 1):(r_ + 1)]
+                sl[sl < alpha] = alpha
+                sl = pa[t_:t, l_:(r_ + 1)]
+                sl[sl < alpha] = alpha
+                sl = pa[(b + 1):(b_ + 1), l_:(r_ + 1)]
+                sl[sl < alpha] = alpha
+        pa[pa > 1.] = 1.0
+
         if invert:
             pa = 1.0 - pa
 
+        # gamma correction
         if gamma_correction != 1:
-            pa = np.power(pa, gamma_correction)  # gamma correction
+            alpha = np.power(alpha, gamma_correction)  # gamma correction
 
+        # expand dims
         if expand_dims:
-            pa = np.expand_dims(pa, axis=2) # (H,W,1)
+            pa = np.expand_dims(pa, axis=2)  # (H,W,1)
         return pa
 
     def _blend_image(self, image_data, alpha_t, pool_factor, pad_0, pad_1, invert_alpha=True, gamma_correction=1):
         alpha = self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha,
-                                    gamma_correction=gamma_correction)
+                                    gamma_correction=gamma_correction, expand_dims=False)
+        assert pad_0 == pad_1 == 0
         # alpha = np.tile(alpha, 3)
         # alpha[:, :, 0] = 1.  # Fix Red channel to 1.0
         # alpha[:, :, 1] = 1.  # Fix Green channel to 1.0
         # alpha[:, :, 2] = 1.  # Fix Blue channel to 1.0
-        return image_data * alpha
+        if image_data.ndim >= 3:
+            image = np.mean(image_data, axis=-1)  # collapse RGB dimensions into one
+        else:
+            image = image_data
+        image[image < 0.5] = 0.0  # set all text values to 0. Will render text better when blended with alpha.
+        return image * alpha
         # return np.concatenate((image_data, self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha)), axis=2)
 
     def test_alpha_viz(self):
@@ -425,12 +499,12 @@ class VisualizeDir(object):
 
         plotImages(image_details, dpi=200)
 
-    def alpha(self, graph, step, sample_num=0, invert_alpha=True, max_words=None, wrap_strs=True, gamma_correction=1):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         sample_idx = df_all.iloc[sample_num].name  # Top index in sort order
         nd_ids = df_all.loc[sample_idx].ids  # (B,T) --> (T,)
         nd_words = df_all.loc[sample_idx].words  # (B,T) --> (T,)
-        ## Careful with sample_idx
+        # Careful with sample_idx
         nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx]  # (N,B,H,W,T) --> (H,W,T)
         image_name = self.nd(graph, step, 'image_name')[sample_idx]  # (B,) --> (,)
         T = len(nd_words)
@@ -446,19 +520,21 @@ class VisualizeDir(object):
         pad_0 = self._hyper.image_shape_unframed[0] - nd_alpha.shape[0]*pool_factor.h
         pad_1 = self._hyper.image_shape_unframed[1] - nd_alpha.shape[1]*pool_factor.w
 
-        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True, wrap_strs=wrap_strs).loc[sample_idx].predicted_ids
-        y =  self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
+        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
+        y = self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
         display(Math(predicted_ids))
         print(predicted_ids)
         display(Math(y))
         print(y)
         
         image_details =[(image_name, image_data),
-                        ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1, expand_dims=False,
+                        ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1,
+                                                        invert=invert_alpha,
+                                                        expand_dims=False,
                                                         gamma_correction=gamma_correction))]
         # image_details = [(image_name, image_data),]
         for t in xrange(T):
-            ## Blend alpha and image
+            # Blend alpha and image
             composit = self._blend_image(image_data, nd_alpha[:, :, t], pool_factor, pad_0, pad_1,
                                          invert_alpha=invert_alpha, gamma_correction=gamma_correction)
             image_details.append((nd_words[t], composit))
@@ -478,7 +554,7 @@ class VisualizeDir(object):
         # nipy_spectral_r, ocean, ocean_r, pink, pink_r, plasma, plasma_r, prism, prism_r, rainbow, rainbow_r, seismic, seismic_r, 
         # spectral, spectral_r, spring, spring_r, summer, summer_r, terrain, terrain_r, viridis, viridis_r, winter, winter_r
         # plotImages(image_details, dpi=72, cmap='gray')
-        plotImages(image_details, dpi=200)
+        plotImages(image_details, dpi=200, cmap=cmap)
         return nd_alpha
 
     def prune_logs(self, save_epochs=1, dry_run=True):
@@ -570,9 +646,10 @@ class VisualizeStep():
     def strs(self, key, key2=None, mingle=True, trim=False, wrap_strs=False):
         return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim, wrap_strs)
 
-    def alpha(self, sample_num=0, invert_alpha=True, max_words=None, gamma_correction=1):
+    def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
-                                      max_words=max_words, gamma_correction=gamma_correction)
+                                      max_words=max_words, gamma_correction=gamma_correction,
+                                      cmap=cmap)
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):

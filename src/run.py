@@ -186,7 +186,7 @@ def main():
                                     'valid_epochs': args.valid_epochs,
                                     'save_all_eval': args.save_all_eval,
                                     'build_image_context':args.build_image_context,
-                                    'sum_logloss': False, ## setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
+                                    'sum_logloss': False,  # setting to true equalizes ctc_loss and log_loss if y_s == squashed_seq
                                     'dropout': None if args.keep_prob >= 1.0 else tfc.DropoutParams({'keep_prob': args.keep_prob}).freeze(),
                                     'MeanSumAlphaEquals1': False,
                                     'rLambda': args.rLambda,  # 0.0005, 0.00005
@@ -212,7 +212,8 @@ def main():
                                     'build_scanning_RNN': False,
                                     'init_model_input_transform': 'full',
                                     'build_init_model': False,
-                                    'adam_beta2': 0.6
+                                    'adam_beta1': 0.25,
+                                    'adam_beta2': 0.9
                                     })
 
     if args.batch_size is not None:
