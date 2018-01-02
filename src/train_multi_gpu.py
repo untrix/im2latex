@@ -659,16 +659,28 @@ class TrainingLogic(object):
 
     def _setup_signal_handler(self):
         def validate_then_stop(signum, frame):
-            logger.critical('Received signal %d. Will run validation cycle then stop.', signum)
-            self.validate_then_stop = True
+            if self.validate_then_stop:
+                logger.critical('Received signal %d. Unsetting validate_then_stop flag.', signum)
+                self.validate_then_stop = False
+            else:
+                logger.critical('Received signal %d. Will run validation cycle then stop.', signum)
+                self.validate_then_stop = True
 
         def validate_next(signum, frame):
-            logger.critical('Received signal %d. Will run validation cycle at next step.', signum)
-            self.validate_next = True
+            if self.validate_next:
+                logger.critical('Received signal %d. Unsetting validate_next flag.', signum)
+                self.validate_next = False
+            else:
+                logger.critical('Received signal %d. Will run validation cycle at next step.', signum)
+                self.validate_next = True
 
         def stop_training(signum, frame):
-            logger.critical('Received signal %d. Stopping training.', signum)
-            self.stop_training = True
+            if self.stop_training:
+                logger.critical('Received signal %d. Unsetting stop_training flag.', signum)
+                self.stop_training = False
+            else:
+                logger.critical('Received signal %d. Stopping training.', signum)
+                self.stop_training = True
 
         signal.signal(signal.SIGTERM, validate_then_stop)
         signal.signal(signal.SIGINT, validate_next)

@@ -212,7 +212,7 @@ def main():
                                     'build_scanning_RNN': False,
                                     'init_model_input_transform': 'full',
                                     'build_init_model': False,
-                                    'adam_beta1': 0.25,
+                                    'adam_beta1': 0.1,
                                     'adam_beta2': 0.9
                                     })
 

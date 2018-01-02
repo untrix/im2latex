@@ -433,8 +433,6 @@ class ConvStackParams(HyperParams):
 
     def __init__(self, initVals=None):
         HyperParams.__init__(self, self.proto, initVals)
-        self.numConvLayers = self.get_numConvLayers(self)
-        self.numPoolLayers = self.get_numPoolLayers(self)
 
     @staticmethod
     def isConvLayer(layer_d):
@@ -453,26 +451,26 @@ class ConvStackParams(HyperParams):
     @classmethod
     def get_numConvLayers(cls, slf_d):
         # slf_d is ConvStackParams distilled into a dict
-        if 'numConvLayers' in slf_d:
-            return slf_d['numConvLayers']
-        else:
-            n = 0
-            for layer in slf_d['layers']:
-                if cls.isConvLayer(layer):
-                    n += 1
-            return n
+        # if 'numConvLayers' in slf_d:
+        #     return slf_d['numConvLayers']
+        # else:
+        n = 0
+        for layer in slf_d['layers']:
+            if cls.isConvLayer(layer):
+                n += 1
+        return n
 
     @classmethod
     def get_numPoolLayers(cls, slf_d):
         # slf_d is ConvStackParams distilled into a dict
-        if 'numPoolLayers' in slf_d:
-            return slf_d['numPoolLayers']
-        else:
-            n = 0
-            for layer in slf_d['layers']:
-                if cls.isPoolLayer(layer):
-                    n += 1
-            return n
+        # if 'numPoolLayers' in slf_d:
+        #     return slf_d['numPoolLayers']
+        # else:
+        n = 0
+        for layer in slf_d['layers']:
+            if cls.isPoolLayer(layer):
+                n += 1
+        return n
 
 
 class ConvStack(object):
