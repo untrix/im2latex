@@ -375,6 +375,7 @@ def main(raw_data_folder,
                     'reg_loss',
                     'scan_len',
                     'bin_len',
+                    'global_step'
                 )
 
                 ops_log = (
@@ -399,6 +400,8 @@ def main(raw_data_folder,
                             batch_ops = TFOpNames(ops_accum + ops_log, None)
 
                         batch_ops.run_ops(session, train_ops)
+                        assert step == batch_ops.global_step, 'Step(%d) and global-step(%d) fell out of sync ! :((' % (step, batch_ops.global_step)
+
                         # Accumulate Metrics
                         accum.append(batch_ops)
                         train_time = time.time()-step_start_time
@@ -766,11 +769,11 @@ def evaluate_scanning_RNN(args, hyper, session, ops, ops_accum, ops_log, tr_step
     print_batch_num = np.random.randint(1, num_steps + 1) if not args.save_all_eval else None
     for batch in range(1, 1+num_steps):
         step_start_time = time.time()
-        doLog = (print_batch_num == batch) or args.save_all_eval
-        if not doLog:
-            batch_ops = TFRun(session, ops, ops_accum, None)
-        else:
+        doLog = (print_batch_num == batch)
+        if doLog or args.save_all_eval:
             batch_ops = TFRun(session, ops, ops_accum + ops_log, None)
+        else:
+            batch_ops = TFRun(session, ops, ops_accum, None)
 
         batch_ops.run_ops()
 
@@ -864,21 +867,23 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
     while n < num_steps:
         n += 1
         if (n == print_batch_num) or args.save_all_eval:
-            l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list, top1_beta_list, image_name_list, top1_ed = session.run((
-                                eval_ops.top1_len_ratio,
-                                eval_ops.top1_mean_ed,
-                                eval_ops.top1_accuracy,
-                                eval_ops.top1_num_hits,
-                                eval_ops.top1_ids_list,
-                                eval_ops.top1_lens,
-                                eval_ops.y_ctc_list,
-                                eval_ops.ctc_len,
-                                eval_ops.y_s_list,
-                                eval_ops.top1_alpha_list,
-                                eval_ops.top1_beta_list,
-                                eval_ops.image_name_list,
-                                eval_ops.top1_ed
-                                ))
+            (l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list,
+             top1_beta_list, image_name_list, top1_ed) = session.run(
+                (
+                    eval_ops.top1_len_ratio,
+                    eval_ops.top1_mean_ed,
+                    eval_ops.top1_accuracy,
+                    eval_ops.top1_num_hits,
+                    eval_ops.top1_ids_list,
+                    eval_ops.top1_lens,
+                    eval_ops.y_ctc_list,
+                    eval_ops.ctc_len,
+                    eval_ops.y_s_list,
+                    eval_ops.top1_alpha_list,
+                    eval_ops.top1_beta_list,
+                    eval_ops.image_name_list,
+                    eval_ops.top1_ed
+                ))
             if args.save_all_eval:
                 accum.extend({'y': y_s_list,
                               'top1_ids': top1_ids_list,
@@ -904,7 +909,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
         accum.extend({'bleus': bleu})
         accum.extend({'sq_predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
         accum.extend({'trim_target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
-        accum.append({'lens': l})
+        accum.append({'len_ratio': l})
         accum.append({'mean_eds': mean_ed})
         accum.append({'accuracies': accuracy})
         accum.append({'hits': num_hits})
@@ -926,6 +931,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                 storer.write('bleu', bleu, dtype=np.float32)
             # logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
 
+    agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.trim_target_ids)
+    eval_time_per100 = (time.time() - eval_start_time) * 100. / (num_steps * batch_size)
+
     if args.save_all_eval:
         assert len(accum.y) == len(accum.top1_ids) == len(accum.alpha) == len(accum.beta) == len(accum.bleus) == len(accum.image_name) == len(accum.ed)
         with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
@@ -937,11 +945,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
             storer.write('ed', accum.ed, dtype=np.float32)
             storer.write('bleu', accum.bleus, dtype=np.float32)
 
-    agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.trim_target_ids)
-    eval_time_per100 = (time.time() - eval_start_time) * 100. / (num_steps * batch_size)
     logs_agg_top1 = session.run(eval_ops.logs_agg_top1,
                                 feed_dict={
-                                    eval_ops.ph_top1_len_ratio: accum.lens,
+                                    eval_ops.ph_top1_len_ratio: accum.len_ratio,
                                     eval_ops.ph_edit_distance: accum.mean_eds,
                                     eval_ops.ph_num_hits: accum.hits,
                                     eval_ops.ph_accuracy: accum.accuracies,
@@ -950,6 +956,12 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                                     eval_ops.ph_bleu2: agg_bleu2,
                                     eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
                                 })
+    with dtc.Storer(args, 'test_metrics' if args.doTest else 'validation_metrics', step) as storer:
+        storer.write('edit_distance', np.mean(accum.mean_eds), np.float32)
+        storer.write('num_hits', np.sum(accum.hits), dtype=np.uint32)
+        storer.write('accuracy', np.mean(accum.accuracies), np.float32)
+        storer.write('bleu', np.mean(accum.bleus), dtype=np.float32)
+        storer.write('bleu2', agg_bleu2, dtype=np.float32)
 
     tf_sw.add_summary(logs_agg_top1, standardized_step(step))
     tf_sw.flush()

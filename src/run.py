@@ -224,24 +224,23 @@ def main():
     if args.alpha is not None:
         globalParams.adam_alpha = args.alpha
 
-    hyper = hyper_params.make_hyper(globalParams, freeze=False)
-
     if args.restore_logdir is not None:
         globalParams.logdir = args.restore_logdir
     else:
-        globalParams.logdir = tfc.makeTBDir(hyper.tb)
+        globalParams.logdir = dtc.makeTBDir(tb.tb_logdir, tb.logdir_tag)
 
+    # args
     globalParams.storedir = dtc.makeLogDir(globalParams.logdir, 'store')
     dtc.dump(globalParams, dtc.makeLogfileName(globalParams.storedir, 'args.pkl'))
 
-    # Add logging file handler now that we have instantiated hyperparams.
+    # Hyper Params
+    hyper = hyper_params.make_hyper(globalParams, freeze=False)
     if args.restore_logdir is not None:
         dtc.dump(hyper, dtc.makeLogfileName(globalParams.storedir, 'hyper.pkl'))
     else:
         dtc.dump(hyper, globalParams.storedir, 'hyper.pkl')
 
-    # globalParams.store = pd.HDFStore(dtc.makeLogfileName(globalParams.logdir, 'store.h5'), mode='a')
-    # globalParams.store = h5py.File(dtc.makeLogfileName(globalParams.logdir, 'store.h5py'), "w")
+    # Logger
     fh = logging.FileHandler(dtc.makeLogfileName(globalParams.storedir, 'training.log'))
     fh.setFormatter(dtc.makeFormatter())
     logger.addHandler(fh)

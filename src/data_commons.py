@@ -23,6 +23,7 @@ Created on Mon Jul 17 19:58:00 2017
 @author: Sumeet S Singh
 """
 import os
+import time
 import logging
 # from six.moves import cPickle as pickle
 import dill as pickle
@@ -134,7 +135,8 @@ class Storer(object):
     def _write(self, key, np_ar_list, dtype, batch_axis):
         """
         Stacks the tensors in the list along axis=batch_axis and writes them to disk.
-        Dimensions along axis=batch_axis are summed up. Other dimensions are padded to the maximum size
+        Dimensions along axis=batch_axis are summed up (since we're stacking along that dimension).
+        Other dimensions are padded to the maximum size
         with a dtype-suitable value (np.nan for float, -2 for integer)
         """
         ## Assuming all arrays have same rank, find the max dims
@@ -184,5 +186,15 @@ def exists(*paths):
 
 def makeLogDir(root, dirname):
     dirpath = makeLogfileName(root, dirname)
+    os.makedirs(dirpath)
+    return dirpath
+
+
+def makeTBDir(tb_logdir, logdir_tag=None):
+    if logdir_tag is None:
+        dirpath = os.path.join(tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z'))
+    else:
+        dirpath = os.path.join(tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z') + ' ' + logdir_tag)
+
     os.makedirs(dirpath)
     return dirpath

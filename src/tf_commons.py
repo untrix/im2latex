@@ -23,8 +23,6 @@ Tested on python 2.7
 
 @author: Sumeet S Singh
 """
-import os
-import time
 import numpy as np
 from data_commons import logger
 import dl_commons as dlc
@@ -901,15 +899,6 @@ class RNNWrapper(tf.nn.rnn_cell.RNNCell):
                                                       )
                 return cell
 
-
-def makeTBDir(params):
-    if params.logdir_tag is None:
-        dir = os.path.join(params.tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z'))
-    else:
-        dir = os.path.join(params.tb_logdir, time.strftime('%Y-%m-%d %H-%M-%S %Z') + ' ' + params.logdir_tag)
-
-    os.makedirs(dir)
-    return dir
 
 def sizeofVar(var):
     shape = K.int_shape(var)

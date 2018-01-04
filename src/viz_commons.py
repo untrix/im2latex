@@ -25,17 +25,21 @@ Created on Mon Jul 17 19:58:00 2017
 import os
 import itertools
 import collections
+import math
+import re
 import pandas as pd
 import numpy as np
 import data_commons as dtc
 import dl_commons as dlc
+import tf_commons as tfc
+import tensorflow as tf
 import h5py
 import matplotlib.pyplot as plt
 from data_reader import ImagenetProcessor, ImageProcessor3_BW
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
 from IPython.display import Math, display
-import tf_commons as tfc
+
 
 class VGGnetProcessor(ImagenetProcessor):
     def __init__(self, params, image_dir_):
@@ -106,11 +110,10 @@ def plotImage(image_detail, axes, cmap=None):
     axes.set_ylim(image_data.shape[0], 0)
     axes.set_xlim(0, image_data.shape[1])
     # print 'image %s %s'%(title, image_data.shape)
-    if cmap is not None:
-        axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
-    else:
-        axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear')
+    axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
+
     return
+
 
 def plotImages(image_details, fig=None, dpi=None, cmap=None):
     """ 
@@ -137,6 +140,7 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
             plotImage(image_details[i], grid[i], cmap)
 
     return
+
 
 class VisualizeDir(object):
     def __init__(self, storedir):
@@ -270,10 +274,11 @@ class VisualizeDir(object):
         print('all_steps = %s'%[(step, b*step / 64.) for step in all_steps])
 
     def standardize_step(self, step):
-        return (step * self._hyper['data_reader_B']*1.) / 64.
+        return (step * self._hyper['data_reader_B']) // 64
 
     def unstandardize_step(self, step):
-        return (step * 64.) / (self._hyper['data_reader_B']*1.)
+        # Since standardize rounds down, unstandardize rounds-up
+        return int(math.ceil((step * 64.) / (self._hyper['data_reader_B']*1.)))
 
     def keys(self, graph, step):
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
@@ -621,7 +626,8 @@ class VisualizeDir(object):
             for f in files_to_remove:
                 os.remove(os.path.join(self._logdir, f))
             print '%d files removed\n'%len(files_to_remove), pd.Series(files_to_remove)
-        
+
+
 class VisualizeStep():
     def __init__(self, visualizer, graph, step):
         self._step = step
@@ -650,6 +656,7 @@ class VisualizeStep():
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
                                       max_words=max_words, gamma_correction=gamma_correction,
                                       cmap=cmap)
+
 
 class DiffParams(object):
     def __init__(self, dir1, dir2):
@@ -707,4 +714,134 @@ class DiffParams(object):
 
     def get_hyper(self):
         return self.get('hyper.pkl', to_str=True)
-    
+
+
+class Table(object):
+    """
+    Represents a table. It has one index column and other non-index columns. The table is comprised of
+    rows. Empty fields in a row are set to value None. Insert fields using the append method. After
+    all fields have been inserted, call freeze. Thereafter you can get a DataFrame object by
+    via the df property. Calling df before freeze will return None. Calling freeze more than
+    once will beget an exception.
+    """
+    def __init__(self):
+        self._raw_data = dlc.Properties()
+        # self._col_names = set()
+        self._df = None
+
+    @property
+    def df(self):
+        return self._df
+
+    def append_fields(self, index, d, indices_d=None):
+        """
+        Insert a row-fragment 'd' into a row indexed by index. If the field was already inserted before, then
+        an exception is thrown. indices are additional fields that are also
+        inserted into the same row. However, they are not protected agains duplicate insertion because there can
+        be multiple index columns in a row which will be repeated with each row-fragment that is inserted (e.g.
+        both wall_time and step are index columns, but only one can be passed in as index. The other one must
+        be passed into indices_d
+        :return: Nothing
+        """
+        assert self._df is None, "You can't insert more data after calling freeze."
+
+        if index not in self._raw_data:
+            self._raw_data[index] = {}
+        d2 = self._raw_data[index]
+
+        if indices_d is not None:
+            for k,v in indices_d.iteritems():
+                d2[k] = v
+        for k, v in d.iteritems():
+            if k in d2:
+                print('WARNING: Duplicate values for tag %s at step %s\n(%s,\n%s)\n'%(k, index, d2[k], v))
+            d2[k] = v
+            # self._col_names.add(k)
+
+    def freeze(self):
+        """
+        Create a pandas DataFrame from data collected so far. The object gets frozen thereafter and no new data
+        can be inserted.
+        :return: Dataframe object that can also be accessed via. the df property.
+        """
+        assert self._df is None, "You can't call freeze more than once. Obtain DataFrame using the df property."
+        self._df = pd.DataFrame.from_dict(self._raw_data, orient='index')
+        self._raw_data.freeze()
+        return self._df
+
+
+class TBSummaryReader(object):
+    def __init__(self, dirpath, data_reader_B):
+        self._dir = dirpath
+        self._data_reader_B = data_reader_B
+        self._event_files = sorted([os.path.join(self._dir,f) for f in os.listdir(dirpath) if f.startswith('events.out.tfevents')])
+        # self._all_tags = self._get_all_summary_tags()
+        self._table = Table()
+
+    def _get_all_summary_tags(self):
+        """
+        Scan the first 20 summary events of all event files and collect the tag names from there. These are deemed
+        as the only tag names present in all events.
+        :return: A set of tag names.
+        """
+        all_tags = set()
+        for path in self._event_files:
+            n = 0
+            for e in tf.train.summary_iterator(path):
+                if e.HasField('summary'):  # if e.WhichOneof('what') == 'summary':
+                    n += 1
+                    if n > 20:
+                        break
+                    else:
+                        all_tags |= {v for v in e.summary.value}
+        return all_tags
+
+    def _unstandardize_step(self, step):
+        return int(math.ceil((step * 64.) / (self._data_reader_B * 1.)))
+
+    def read(self, rexp_):
+        """
+        Scans all event files in the specified directory and reads tags matching the given regular expression
+        and returns a dataframe of all the matched tag values against standardized as well as unstandardized steps.
+        :param rexp_: Regular expression string or object to match the event.summary.tag against. Each matched tag that
+            has a scalar value type will be represented as a column in the returned dataframe. Non-scalar tags will
+            be ignored.
+        :return: Returns a dataframe with standardized_step as the index, unstandardized_step as a column and each
+            discovered tag as a distinct column as well. The tag columns are populated with the corresponding
+            'simple_value' (i.e. a scalar value). Non-scalar tags are ignored.
+        """
+        rexp = re.compile(rexp_)
+        for f in self._event_files:
+            self._read_tags(rexp, f, self._table)
+        return self._table.freeze()
+
+    def _read_tags(self, rexp, path, table):
+        """
+        Internal helper function for read_tags. Appends rows of data to table.
+        :param rexp: See read_tags
+        :param path: Path of event file to load
+        :param table: (Table) a table to append rows to
+        :return: Nothing
+        """
+        print('processing file %s'%path)
+        for e in tf.train.summary_iterator(path):
+            # w = e.WhichOneof('what')
+            if e.HasField('summary'):
+                s = e.summary
+                row = dlc.Properties()
+                row_has_value = False
+                for v in e.summary.value:
+                    if v.HasField('simple_value') and rexp.search(v.tag):
+                        row[v.tag] = v.simple_value
+                        row_has_value = True
+                if row_has_value:
+                    table.append_fields(e.step,
+                                        row,
+                                        {'_step': self._unstandardize_step(e.step),
+                                         'wall_time': e.wall_time,
+                                         })
+
+
+class EvalRuns(object):
+    def __init__(self, *dirpaths):
+        self._paths = dirpaths

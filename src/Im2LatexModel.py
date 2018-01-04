@@ -1152,6 +1152,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
 
         return dlc.Properties({
             'train': apply_grads,  # op
+            'global_step': global_step,  # scalar
             'image_name_list': gather('image_name'),  # [(B,), ...]
             'alpha': concat('alpha', axis=1),  # (N, num_towers*B, H, W, T)
             'beta': concat('beta', axis=1),  # (N, num_towers*B, T)
@@ -1193,7 +1194,7 @@ def sync_training_towers(hyper, tower_ops, global_step, run_tag='training', opti
             'ph_bleu_scores': ph_bleu_scores,  # (num_steps*num_towers*B,)
             'ph_bleu_score2': ph_bleu_score2,  # scalar
             'tb_agg_logs': tb_agg_logs,  # summary string
-            'tb_step_logs': tb_step_logs, # summary string
+            'tb_step_logs': tb_step_logs,  # summary string
         })
 
 def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
