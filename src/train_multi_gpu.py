@@ -97,20 +97,21 @@ def printVars(logger):
         logger.info('%s %s num_params = %d'%(var.name, K.int_shape(var), n) )
 
     logger.info( 'Total number of trainable params = %d'%total_n)
-    logger.info( 'Vggnet: %d (%2.2f%%)'%(total_vggnet, total_vggnet*100./total_n))
-    logger.info( 'Convnet: %d (%2.2f%%)'%(total_convnet, total_convnet*100./total_n))
-    logger.info( 'Initializer: %d (%2.2f%%)'%(total_init, total_init*100./total_n))
-    logger.info( 'CALSTM_1: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
-    logger.info( 'LSTM1_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
-    logger.info( 'LSTM1_1: %d (%2.2f%%)'%(total_lstm_1, total_lstm_1*100./total_n))
-    logger.info( 'AttentionModel1: %d (%2.2f%%)'%(total_att1, total_att1*100./total_n))
-    if total_calstm2 > 0:
-        logger.info( 'CALSTM_2: %d (%2.2f%%)'%(total_calstm2, total_calstm2*100./total_n))
-        logger.info( 'LSTM2_0: %d (%2.2f%%)'%(total_lstm2_0, total_lstm2_0*100./total_n))
-        logger.info( 'LSTM2_1: %d (%2.2f%%)'%(total_lstm2_1, total_lstm2_1*100./total_n))
-        logger.info( 'AttentionModel2: %d (%2.2f%%)'%(total_att2, total_att2*100./total_n))
-    logger.info( 'Output Layer: %d (%2.2f%%)'%(total_output, total_output*100./total_n))
-    logger.info( 'Embedding Matrix: %d (%2.2f%%)'%(total_embedding, total_embedding*100./total_n))
+    if total_n > 0:
+        logger.info( 'Vggnet: %d (%2.2f%%)'%(total_vggnet, total_vggnet*100./total_n))
+        logger.info( 'Convnet: %d (%2.2f%%)'%(total_convnet, total_convnet*100./total_n))
+        logger.info( 'Initializer: %d (%2.2f%%)'%(total_init, total_init*100./total_n))
+        logger.info( 'CALSTM_1: %d (%2.2f%%)'%(total_calstm, total_calstm*100./total_n))
+        logger.info( 'LSTM1_0: %d (%2.2f%%)'%(total_lstm_0, total_lstm_0*100./total_n))
+        logger.info( 'LSTM1_1: %d (%2.2f%%)'%(total_lstm_1, total_lstm_1*100./total_n))
+        logger.info( 'AttentionModel1: %d (%2.2f%%)'%(total_att1, total_att1*100./total_n))
+        if total_calstm2 > 0:
+            logger.info( 'CALSTM_2: %d (%2.2f%%)'%(total_calstm2, total_calstm2*100./total_n))
+            logger.info( 'LSTM2_0: %d (%2.2f%%)'%(total_lstm2_0, total_lstm2_0*100./total_n))
+            logger.info( 'LSTM2_1: %d (%2.2f%%)'%(total_lstm2_1, total_lstm2_1*100./total_n))
+            logger.info( 'AttentionModel2: %d (%2.2f%%)'%(total_att2, total_att2*100./total_n))
+        logger.info( 'Output Layer: %d (%2.2f%%)'%(total_output, total_output*100./total_n))
+        logger.info( 'Embedding Matrix: %d (%2.2f%%)'%(total_embedding, total_embedding*100./total_n))
 
 def make_standardized_step(hyper):
     B = hyper.data_reader_B
@@ -255,7 +256,7 @@ def main(raw_data_folder,
 
         ##### Validation/Testing Graph
         eval_tower_ops = []; eval_ops = None
-        if eval_it and (args.doTrain or args.doValidate):
+        if eval_it:  # and (args.doTrain or args.doValidate):
             with tf.name_scope('Validation' if not args.doTest else 'Testing'):
                 hyper_predict = hyper_params.make_hyper(args.copy().updated({'dropout':None}))
                 with tf.variable_scope('InputQueue'):
@@ -496,7 +497,9 @@ def main(raw_data_folder,
                     logger.info('Starting %s Cycle'%('Validation' if args.doValidate else 'Testing',))
                     if hyper.build_scanning_RNN:
                         evaluate_scanning_RNN(args, hyper, session, eval_ops, ops_accum,
-                                              ops_log, step, eval_it.epoch_size, tf_sw,
+                                              ops_log, step,
+                                              eval_it.epoch_size,
+                                              tf_sw,
                                               training_logic)
                     else:
                         evaluate(session,
@@ -889,9 +892,9 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                               'top1_ids': top1_ids_list,
                               'alpha': top1_alpha_list,
                               'beta': top1_beta_list,
-                              'image_name': image_name_list,
-                              'ed': top1_ed
+                              'image_name': image_name_list
                               })
+                accum.append({'ed': top1_ed})
         else:
             l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
                                 eval_ops.top1_len_ratio,
@@ -906,7 +909,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
             y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
 
         bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
-        accum.extend({'bleus': bleu})
+        accum.append({'bleus': bleu})
         accum.extend({'sq_predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
         accum.extend({'trim_target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
         accum.append({'len_ratio': l})
@@ -935,7 +938,8 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
     eval_time_per100 = (time.time() - eval_start_time) * 100. / (num_steps * batch_size)
 
     if args.save_all_eval:
-        assert len(accum.y) == len(accum.top1_ids) == len(accum.alpha) == len(accum.beta) == len(accum.bleus) == len(accum.image_name) == len(accum.ed)
+        assert len(accum.y) == len(accum.top1_ids) == len(accum.alpha) == len(accum.beta) == len(accum.image_name)
+        assert len(accum.bleus) == len(accum.ed), 'len bleus = %d, len ed = %d' % (len(accum.bleus), len(accum.ed),)
         with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
             storer.write('predicted_ids', accum.top1_ids, np.int16)
             storer.write('y', accum.y, np.int16)
@@ -957,11 +961,11 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                                     eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
                                 })
     with dtc.Storer(args, 'test_metrics' if args.doTest else 'validation_metrics', step) as storer:
-        storer.write('edit_distance', np.mean(accum.mean_eds), np.float32)
-        storer.write('num_hits', np.sum(accum.hits), dtype=np.uint32)
-        storer.write('accuracy', np.mean(accum.accuracies), np.float32)
-        storer.write('bleu', np.mean(accum.bleus), dtype=np.float32)
-        storer.write('bleu2', agg_bleu2, dtype=np.float32)
+        storer.write('edit_distance', np.mean(accum.mean_eds, keepdims=True), np.float32)
+        storer.write('num_hits', np.sum(accum.hits, keepdims=True), dtype=np.uint32)
+        storer.write('accuracy', np.mean(accum.accuracies, keepdims=True), np.float32)
+        storer.write('bleu', np.mean(accum.bleus, keepdims=True), dtype=np.float32)
+        storer.write('bleu2', np.asarray([agg_bleu2]), dtype=np.float32)
 
     tf_sw.add_summary(logs_agg_top1, standardized_step(step))
     tf_sw.flush()

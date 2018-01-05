@@ -967,7 +967,7 @@ class Im2LatexModel(tf.nn.rnn_cell.RNNCell):
                     'top1_scores': top1_seq_scores, # (B,)
                     'top1_lens': top1_seq_lens, # (B,)
                     'top1_len_ratio': top1_len_ratio,  # (B,)
-                    'top1_alpha': alphas[:, :, 0, :, :, :], ##(N, B, BW, H, W, T) -> (N, B, H, W, T)
+                    'top1_alpha': alphas[:, :, 0, :, :, :],  # (N, B, BW, H, W, T) -> (N, B, H, W, T)
                     'top1_beta': betas[:, :, 0, :], ## (N, B, BW, T) -> (N, B, T)
                     'topK_ids': topK_ids, # (B, k, T)
                     'topK_scores': topK_seq_scores, # (B, k)
@@ -1296,13 +1296,13 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
             'image_name_list': gather('image_name'),
             'top1_lens': top1_lens, # (n*B,)
             'top1_len_ratio': top1_len_ratio, #(n*B,)
-            'top1_ed': concat('top1_ed'), # (B,)
-            'bok_ed': concat('bok_ed'), # (B,)
+            'top1_ed': concat('top1_ed'), # (n*B,)
+            'bok_ed': concat('bok_ed'), # (n*B,)
             'top1_mean_ed': top1_mean_ed, # scalar
             'top1_accuracy': top1_accuracy, # scalar
             'top1_num_hits': top1_num_hits, # scalar
             'top1_ids_list': gather('top1_ids'),# ((B,T),...)
-            'top1_alpha_list': gather('top1_alpha'), # [(N, B, H, W, T), ...]
+            'top1_alpha_list': gather('top1_alpha'),  # [(N, B, H, W, T), ...]
             'top1_beta_list': gather('top1_beta'), # [(N, B, T), ...]
             'bok_ids_list': gather('bok_ids'),# ((B,T),...)
             'y_s_list': gather('y_s'), # ((B,T),...)

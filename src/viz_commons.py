@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 from data_reader import ImagenetProcessor, ImageProcessor3_BW
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
-from IPython.display import Math, display
+from IPython.display import Math, display, Pretty
 
 
 class VGGnetProcessor(ImagenetProcessor):
@@ -167,7 +167,7 @@ class VisualizeDir(object):
         for i in range(-1,-11,-1):
             i2w[i] = '%d'%i
         self._id2word = {}
-        ## Append space after all commands beginning with a backslash (except backslash alone)
+        # Append space after all commands beginning with a backslash (except backslash alone)
         for i, w in i2w.items():
             if w[0] == '\\':
               self._id2word[i] = w + " "  
@@ -175,7 +175,7 @@ class VisualizeDir(object):
                 self._id2word[i] = w 
         self._id2word[self._word2id['\\']] = '\\'
 
-        ## Image processor to load and preprocess images
+        # Image processor to load and preprocess images
         if self._hyper.build_image_context == 0:
             self._image_processor = VGGnetProcessor(self._hyper, self._image_dir)
         elif self._hyper.build_image_context == 2:
@@ -189,7 +189,7 @@ class VisualizeDir(object):
         self._alpha_bleed = self._get_alpha_bleed()
 
 
-        ## Train/Test DataFrames
+        # Train/Test DataFrames
         self.df_train_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
         self.df_train_images.index = self.df_train_images.image
         print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
@@ -269,9 +269,8 @@ class VisualizeDir(object):
     def view_steps(self):
         all_steps, epoch_steps = self.get_steps()
         print('num epoch_steps = %d'%len(epoch_steps))
-        b = self._hyper['data_reader_B']*1.
-        print('epoch_steps = %s'%[(step, b*step / 64.) for step in epoch_steps])
-        print('all_steps = %s'%[(step, b*step / 64.) for step in all_steps])
+        print('epoch_steps = %s'%[(step, self.standardize_step(step)) for step in epoch_steps])
+        print('all_steps = %s'%[(step, self.standardize_step(step)) for step in all_steps])
 
     def standardize_step(self, step):
         return (step * self._hyper['data_reader_B']) // 64
@@ -733,14 +732,14 @@ class Table(object):
     def df(self):
         return self._df
 
-    def append_fields(self, index, d, indices_d=None):
+    def append_fields(self, index, d, index_values=None):
         """
         Insert a row-fragment 'd' into a row indexed by index. If the field was already inserted before, then
         an exception is thrown. indices are additional fields that are also
         inserted into the same row. However, they are not protected agains duplicate insertion because there can
         be multiple index columns in a row which will be repeated with each row-fragment that is inserted (e.g.
         both wall_time and step are index columns, but only one can be passed in as index. The other one must
-        be passed into indices_d
+        be passed into index_values
         :return: Nothing
         """
         assert self._df is None, "You can't insert more data after calling freeze."
@@ -748,13 +747,16 @@ class Table(object):
         if index not in self._raw_data:
             self._raw_data[index] = {}
         d2 = self._raw_data[index]
+        deduped_index = None
 
-        if indices_d is not None:
-            for k,v in indices_d.iteritems():
+        if index_values is not None:
+            for k,v in index_values.iteritems():
                 d2[k] = v
+
         for k, v in d.iteritems():
             if k in d2:
-                print('WARNING: Duplicate values for tag %s at step %s\n(%s,\n%s)\n'%(k, index, d2[k], v))
+                print('WARNING: Duplicate values for tag %s at step %s\n(%s,\n%s)\nOverwriting values' % (k, index, d2[k], v))
+
             d2[k] = v
             # self._col_names.add(k)
 
@@ -824,24 +826,186 @@ class TBSummaryReader(object):
         :return: Nothing
         """
         print('processing file %s'%path)
-        for e in tf.train.summary_iterator(path):
-            # w = e.WhichOneof('what')
-            if e.HasField('summary'):
-                s = e.summary
-                row = dlc.Properties()
-                row_has_value = False
-                for v in e.summary.value:
-                    if v.HasField('simple_value') and rexp.search(v.tag):
-                        row[v.tag] = v.simple_value
-                        row_has_value = True
-                if row_has_value:
-                    table.append_fields(e.step,
-                                        row,
-                                        {'_step': self._unstandardize_step(e.step),
-                                         'wall_time': e.wall_time,
-                                         })
+        try:
+            for e in tf.train.summary_iterator(path):
+                # w = e.WhichOneof('what')
+                if e.HasField('summary'):
+                    s = e.summary
+                    row = dlc.Properties()
+                    row_has_value = False
+                    for v in e.summary.value:
+                        if v.HasField('simple_value') and rexp.search(v.tag):
+                            row[v.tag] = v.simple_value
+                            row_has_value = True
+                    if row_has_value:
+                        table.append_fields(e.step,
+                                            row,
+                                            {'u_step': self._unstandardize_step(e.step),
+                                             'wall_time': e.wall_time,
+                                             })
+        except tf.errors.DataLossError as e:
+            print('WARNING: %s\n'%e)
 
 
-class EvalRuns(object):
-    def __init__(self, *dirpaths):
-        self._paths = dirpaths
+class EvalRuns(dlc.Properties):
+    def __init__(self, logdirs, hyper_names=[], arg_names=[], metric_names=[]):
+        dlc.Properties.__init__(self)
+        self._logdirs = logdirs
+        # self._param_names = hyper_names
+        # self._metric_names = metric_names
+        # self._arg_names = arg_names
+        self.df = None
+        self.hypers = None
+        self.args = None
+        self.metrics = None
+        self._make_df(hyper_names, arg_names, metric_names)
+        self.freeze()
+
+    def _make_df(self, hyper_names, arg_names, metric_names):
+        hypers = [self.load_hyper(logdir) for logdir in self._logdirs]
+        self.hypers = {}
+        self.hypers.update(zip(self._logdirs, hypers))
+
+        args = [self.load_args(logdir) for logdir in self._logdirs]
+        self.args = {}
+        self.args.update(zip(self._logdirs, args))
+
+        metrics_n_cols = [self.get_metrics(logdir, hypers[i], metric_names) for (i, logdir) in enumerate(self._logdirs)]
+        metric_cols = zip(*metrics_n_cols)[1]
+        metrics = zip(*metrics_n_cols)[0]
+        self.metrics = {}
+        self.metrics.update(zip(self._logdirs, metrics))
+
+        data_d = {}
+        for i, logdir in enumerate(self._logdirs):
+            data_d[logdir] = row = {}
+            for hyper_name in hyper_names:
+                row[hyper_name] = hypers[i][hyper_name] if hyper_name in hypers[i] else 'undefined'
+            for arg_name in arg_names:
+                row[arg_name] = args[i][arg_name] if arg_name in args[i] else 'undefined'
+            for tag in metrics[i].keys():
+                row[tag] = metrics[i][tag]
+        df = pd.DataFrame.from_dict(data_d, orient='index')
+        # Sort DF columns as specified in arguments
+        self.df = df[hyper_names + arg_names + self.merge_metric_cols(metric_names, metric_cols)]
+
+    @staticmethod
+    def merge_metric_cols(exps, cols_seq):
+        """
+        Merge the column-names reported by each row returned by get_metrics - using sorting order based on the original
+        metric_names supplied.
+        :param exps: Original metric_names supplied to EvalRuns.__init__
+        :type exps: list/sequence
+        :param cols_seq: sequence of sequence of column names returned by get_metrics. There are as many sequences
+            as the number of rows in the output.
+        :type cols_seq: sequence of sequence
+        :return: sequence of column names
+        """
+        merged_colnames = []
+        for exp in exps:
+            rexp = exp.split('%')[-1]
+            for cols in cols_seq:
+                for col in cols:
+                    if re.search(rexp, col):
+                        if col not in merged_colnames:
+                            merged_colnames.append(col)
+                        cols.remove(col)
+
+        for cols in cols_seq:
+            assert len(cols) == 0
+
+        return merged_colnames
+
+    def load_hyper(self, logdir):
+        return self.load_props(logdir, 'hyper.pkl')
+
+    def load_args(self, logdir):
+        return self.load_props(logdir, 'args.pkl')
+
+    def load_props(self, logdir, filename):
+        """
+        Returns unpickled Properties object from storage.
+        :param logdir: logdir of the run
+        :param filename: Name of pickled Properties file - hyper.pkl or args.pkl
+        :return: Unpickled Properties object. Treat as a dict since all nested Properties are usually converted
+            into dict during the pickling process.
+        """
+        try:
+            one = dtc.load(logdir, 'store', filename)
+            print('Loaded %s'%os.path.join(logdir, 'store', filename))
+        except:
+            one = dtc.load(logdir, filename)
+            print('Loaded %s' % os.path.join(logdir, filename))
+        return one
+
+    def get_metrics(self, logdir, hyper, metric_names):
+        """
+        metric_names is a list of metric_name.
+        metric_name format: [<operation>%]<tb_summary_tag_name>
+        <operation>: one of (min, max, num)
+        :return: dict keyed off of metric_name
+        """
+        def insert_vals(row, df, tag_exp, op, selected_id=None):
+            all_tags = set(df.columns)
+            colsort = []
+            tags = filter(lambda tag: bool(re.search(tag_exp, tag)), all_tags)
+            split_op = op.split('_')
+            if split_op[0] == 'select':
+                assert len(tags) == 1, 'tag_exp %s_%s maps to more than one tags.'%(op, tag_exp)
+                val, selected_id = get_val(df, tags[0], split_op[1], selected_id)
+                colname = '%s%%%s'%(op, tags[0])
+                assert colname not in row, 'Multiple metric tag expressions map into colname %s. Fix your tag expressions.' % colname
+                row[colname] = val
+                colsort.append(colname)
+            else:
+                for tag in tags:
+                    colname = '%s%%%s' % (op, tag)
+                    assert colname not in row, 'Multiple metric tag expressions map into colname %s. Fix your tag expressions.' % colname
+                    row[colname] = get_val(df, tag, op, selected_id)[0]
+                    colsort.append(colname)
+            return colsort, selected_id
+
+        def get_val(df, tag, op_, selected_id=None):
+            id = val = None
+            split_op = op_.split('@')
+            op = split_op[0]
+
+            if op == 'min':
+                sr = df[df[tag] == df[tag].min()][tag]
+                val = sr.values[0]
+                id = sr.index[0]
+            elif op == 'max':
+                sr = df[df[tag] == df[tag].max()][tag]
+                val = sr.values[0]
+                id = sr.index[0]
+            elif op == 'mean':
+                val = df[tag].mean()
+            elif op == 'num':
+                val = df[tag].count()
+            elif op == 'selected':
+                val = df[tag].loc[selected_id]
+                id = selected_id
+            elif op == '':
+                val = df[tag].iloc[0]
+
+            # Format the value
+            val = '%.4f'%val if isinstance(val, float) else val
+            # if id is not None:
+            if ((len(split_op) > 1) and (split_op[1] == 'id')) or (op == 'selected'):
+                val = '%s @ %s'%(val, id)
+
+            return val, id
+
+        reader = TBSummaryReader(logdir, hyper['data_reader_B'])
+        op_tags = [name.split('%') for name in metric_names]
+        tag_exps = [o_t[-1] for o_t in op_tags]
+        rexp = '|'.join(tag_exps)
+        df = reader.read(rexp)
+        ops = [(o_t[0] if len(o_t)>1 else '') for o_t in op_tags]
+        row = {}
+        selected_id = None
+        colsort = []
+        for i, metric_name in enumerate(metric_names):
+            csort, selected_id = insert_vals(row, df, tag_exps[i], ops[i], selected_id)
+            colsort.extend(csort)
+        return row, colsort

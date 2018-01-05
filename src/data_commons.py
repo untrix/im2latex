@@ -127,6 +127,16 @@ class Storer(object):
         self._h5.close()
 
     def write(self, key, ar, dtype=None, batch_axis=0, doUnwrap=True):
+        """
+        WARNING: ar must either be an numpy.ndarray (not numpy scalar) or a python list/tuple of numpy.ndarray.
+        Nothing else will work.
+        :param key:
+        :param ar:
+        :param dtype:
+        :param batch_axis:
+        :param doUnwrap:
+        :return:
+        """
         if (isinstance(ar, tuple) or isinstance(ar, list)) and doUnwrap:
             return self._write(key, ar, dtype, batch_axis)
         else:
@@ -134,6 +144,8 @@ class Storer(object):
 
     def _write(self, key, np_ar_list, dtype, batch_axis):
         """
+        WARNING: np_ar_list must be a python list/tuple of numpy.ndarray. Nothing else will work.
+
         Stacks the tensors in the list along axis=batch_axis and writes them to disk.
         Dimensions along axis=batch_axis are summed up (since we're stacking along that dimension).
         Other dimensions are padded to the maximum size

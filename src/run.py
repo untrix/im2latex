@@ -211,9 +211,10 @@ def main():
                                     'build_att_modulator': False,  # turn off beta-MLP
                                     'build_scanning_RNN': False,
                                     'init_model_input_transform': 'full',
-                                    'build_init_model': False,
-                                    'adam_beta1': 0.1,
-                                    'adam_beta2': 0.9
+                                    'build_init_model': True,
+                                    'adam_beta1': 0.5,
+                                    'adam_beta2': 0.9,
+                                    'pLambda': 0.0
                                     })
 
     if args.batch_size is not None:
