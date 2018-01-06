@@ -203,7 +203,7 @@ class VisualizeDir(object):
             self._df_valid_images.index = self._df_valid_images.image
             print('Loaded %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
         except IOError:  # df_valid.pkl is absent implies df_valid data is included within df_train
-            self._df_valid_images = self._df_train_images
+            self._df_valid_images = self.df_train_images
         # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
         self._padded_im_dim = {'height': self._hyper.image_shape_unframed[0], 'width': self._hyper.image_shape_unframed[1]}
 
@@ -664,33 +664,36 @@ class DiffParams(object):
         
     def get(self, filename, to_str):
         try:
-            one = dtc.load(self._dir1, 'store', filename)
-            print('Loaded %s'%os.path.join(self._dir1, 'store'))
+            f1 = os.path.join(self._dir1, 'store', filename)
+            one = dtc.load(f1)
         except:
-            one = dtc.load(self._dir1, filename)
-            print('Loaded %s' % self._dir1)
+            f1 = os.path.join(self._dir1, filename)
+            one = dtc.load(f1)
+        print('Loaded %s' % f1)
 
         try:
-            two = dtc.load(self._dir2, 'store', filename)
-            print('Loaded %s' % os.path.join(self._dir2, 'store'))
+            f2 = os.path.join(self._dir2, 'store', filename)
+            two = dtc.load(f2)
         except:
-            two = dtc.load(self._dir2, filename)
-            print('Loaded %s' % self._dir2)
+            f2 = os.path.join(self._dir2, filename)
+            two = dtc.load(f2)
+        print('Loaded %s' % f2)
 
         if (to_str):
             one = dlc.to_picklable_dict(one)
             two = dlc.to_picklable_dict(two)
-        return one, two
+        return one, two, f1, f2
 
     def print_dict(self, filename, to_str):
-        one, two = self.get(filename, to_str)
+        one, two = self.get(filename, to_str)[0:2]
         dtc.pprint(dlc.diff_dict(one, two))
     
     def _table(self, filename, show=True, filter_head=None, filter_tail=None):
-        one, two = self.get(filename, False)
+        one, two, f1, f2 = self.get(filename, False)
         head, tail = dlc.diff_table(one, two)
-        head = pd.DataFrame(head)
-        tail = pd.DataFrame(tail)
+
+        tail = pd.DataFrame(tail, columns=[f1, f2])
+        head = pd.DataFrame(head, columns=[f1, f2])
 
         if filter_head is not None:
             head = head[head[0].str.contains(filter_head)]
@@ -709,10 +712,10 @@ class DiffParams(object):
         return self._table('hyper.pkl', show=show, filter_head=filter_head, filter_tail=filter_tail)
     
     def get_args(self):
-        return self.get('args.pkl', to_str=True)
+        return self.get('args.pkl', to_str=True)[0:2]
 
     def get_hyper(self):
-        return self.get('hyper.pkl', to_str=True)
+        return self.get('hyper.pkl', to_str=True)[0:2]
 
 
 class Table(object):

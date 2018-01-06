@@ -1072,7 +1072,7 @@ def diff_table(dict_obj, other):
 
     s1 = to_set(dict_obj, sep)
     s2 = to_set(other, sep)
-    keys = extract_keys(s1^s2)
+    keys = extract_keys(s1 ^ s2)
 
     d1 = to_flat_dict(dict_obj)
     d2 = to_flat_dict(other)
@@ -1088,7 +1088,10 @@ def diff_table(dict_obj, other):
     head_keys = keys - tail_keys ## filter(lambda k: k not in tail_keys, keys)
     keys = sorted(list(head_keys)) + sorted(list(tail_keys))
 
-    return np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in head_keys ]), np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in tail_keys ])
+    np_head = np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in head_keys ]).reshape(-1,2)
+    np_tail = np.asarray([ ['%s%s%s'%(k, sep, d1[k] if d1.has_key(k) else 'undefined') , '%s%s%s'%(k,sep,d2[k] if d2.has_key(k) else 'undefined')] for k in tail_keys ]).reshape(-1,2)
+
+    return np_head, np_tail
 
 def pformat(v):
     if isinstance(v, Properties):

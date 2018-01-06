@@ -207,7 +207,7 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': None,  # None  # (4,2)
+                                    'REGROUP_IMAGE': (4,1),  # None  # (4,1)
                                     'build_att_modulator': False,  # turn off beta-MLP
                                     'build_scanning_RNN': False,
                                     'init_model_input_transform': 'full',
