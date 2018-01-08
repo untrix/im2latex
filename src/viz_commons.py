@@ -143,7 +143,7 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
 
 
 class VisualizeDir(object):
-    def __init__(self, storedir):
+    def __init__(self, storedir, normalized_dataset=True):
         self._storedir = storedir
         self._logdir = os.path.join(storedir, '..')
         try:
@@ -167,13 +167,16 @@ class VisualizeDir(object):
         for i in range(-1,-11,-1):
             i2w[i] = '%d'%i
         self._id2word = {}
-        # Append space after all commands beginning with a backslash (except backslash alone)
-        for i, w in i2w.items():
-            if w[0] == '\\':
-              self._id2word[i] = w + " "  
-            else:
-                self._id2word[i] = w 
-        self._id2word[self._word2id['\\']] = '\\'
+        if normalized_dataset:  # Append space after all tokens, even backslash alone
+            for i, w in i2w.items():
+                self._id2word[i] = w + " "
+        else:  # Append space after all commands beginning with a backslash (except backslash alone)
+            for i, w in i2w.items():
+                if w[0] == '\\':
+                  self._id2word[i] = w + " "
+                else:
+                    self._id2word[i] = w
+            self._id2word[self._word2id['\\']] = '\\'
 
         # Image processor to load and preprocess images
         if self._hyper.build_image_context == 0:
@@ -249,10 +252,10 @@ class VisualizeDir(object):
         return n_h, n_w
 
     def get_steps(self):
-        steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.endswith('.h5')]
-        epoch_steps = [int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if f.startswith('validation')]
-        steps = sorted(steps)
-        epoch_steps = sorted(epoch_steps)
+        steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if re.match(r'^training_[0-9]+\.h5$', f)])
+        epoch_steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if re.match(r'^(test|validation)_[0-9]+\.h5$', f)])
+        steps = sorted(list(steps))
+        epoch_steps = sorted(list(epoch_steps))
         return steps, epoch_steps
 
     def get_snapshots(self):
@@ -268,9 +271,10 @@ class VisualizeDir(object):
 
     def view_steps(self):
         all_steps, epoch_steps = self.get_steps()
-        print('num epoch_steps = %d'%len(epoch_steps))
-        print('epoch_steps = %s'%[(step, self.standardize_step(step)) for step in epoch_steps])
+        print('num eval_steps = %d'%len(epoch_steps))
+        print('eval_steps = %s'%[(step, self.standardize_step(step)) for step in epoch_steps])
         print('all_steps = %s'%[(step, self.standardize_step(step)) for step in all_steps])
+        return all_steps, epoch_steps
 
     def standardize_step(self, step):
         return (step * self._hyper['data_reader_B']) // 64
@@ -298,9 +302,27 @@ class VisualizeDir(object):
     def _assertKeyIsID(key):
         assert (key == 'predicted_ids') or (key == 'y')
 
-    def df(self, graph, step, key):
-        nd = self.nd(graph, step, key)
-        return pd.DataFrame(nd, dtype=nd.dtype)
+    def df(self, graph, step, sortkey, *keys):
+        """
+        Return optionally sorted DataFrame with *keys as columns
+        :param graph:
+        :param step:
+        :param sortkey: Can be None or a string. If non-None, the returned DF will be
+            sorted by this column and the column will appear as one of the DF columns.
+        :param keys: Keys to be read from h5 files and converted to a DF column each.
+        :return: DataFrame
+        """
+        if sortkey is not None and sortkey not in keys:
+            keys = keys + (sortkey,)
+        df_dict = {}
+        for key in keys:
+            nd = self.nd(graph, step, key)
+            # assert nd.ndim <= 2, "Sorry, this function can't handle more than 2 dims"
+            df_dict[key] = nd.tolist()
+        df = pd.DataFrame(df_dict)
+        if sortkey is not None:
+            df.sort_values(sortkey, ascending=True, inplace=True)
+        return df
 
     def df_ids(self, graph, step, key, sortkey='ed', trim=False):
         """
@@ -311,18 +333,9 @@ class VisualizeDir(object):
         key must represent an id-sequences such as 'predicted_ids' and 'y', i.e. _assertKeyIsID(key) must pass.
         """
         self._assertKeyIsID(key)
-        df_ids = self.df(graph, step, key)
+        df_ids = self.df(graph, step, sortkey, key)
 
-        ## sort
-        df_sortkey = self.df(graph, step, sortkey)
-        assert len(df_ids) == len(df_sortkey)
-        df_ids[sortkey] = df_sortkey
-        assert len(df_ids) == len(df_sortkey)
-        df_ids.sort_values(sortkey, ascending=True, inplace=True)
-        sr_sortkey = df_ids[sortkey]
-        df_ids.drop(sortkey, axis=1, inplace=True)
-
-        ## id2word and trim
+        # id2word and trim
         def accumRow(d, id):
             d['ids'].append(id)
             d['words'].append(self._id2word[id])
@@ -341,11 +354,12 @@ class VisualizeDir(object):
             d['ids'].append(d2['ids'])
             d['words'].append(d2['words'])
             return d
-
-        ids_words = reduce(accumColTrim if trim else accumCol, df_ids.values, {'ids': [], 'words': []})
-
-        ## return
-        return pd.DataFrame({sortkey: sr_sortkey, 'ids': ids_words['ids'], 'words': ids_words['words']}, index=df_ids.index)
+        ids_words = reduce(accumColTrim if trim else accumCol, df_ids[key].values, {'ids': [], 'words': []})
+        # return
+        data = {'ids': ids_words['ids'], 'words': ids_words['words']}
+        if sortkey is not None:
+            data[sortkey] = df_ids[sortkey]
+        return pd.DataFrame(data, index=df_ids.index)
 
     def _words(self, graph, step, key, _get_ids=False, _get_ed=False):
         # type: (object, object, object, object, object) -> object
@@ -370,52 +384,72 @@ class VisualizeDir(object):
     def words(self, graph, step, key):
         return self._words(graph, step, key, _get_ids=False, _get_ed=False)
 
-    def strs(self, graph, step, key, key2=None, mingle=False, trim=True, wrap_strs=False):
-        df1 = self.df_ids(graph, step, key, trim=trim)
-        df2 = self.df_ids(graph, step, key2, trim=trim) if (key2 is not None) else None
-        
+    def strs(self, graph, step, key, key2=None, mingle=False, trim=True, wrap_strs=False, sortkey='ed', keys=[]):
+        df1 = self.df_ids(graph, step, key, sortkey=sortkey, trim=trim)
+        df2 = self.df_ids(graph, step, key2, sortkey=sortkey, trim=trim) if (key2 is not None) else None
+        df3 = self.df(graph, step, sortkey, *keys) if len(keys) > 0 else None
+
         # each token's string version - excepting backslash - has a space appended to it,
         # therefore the string output should be compile if the prediction was syntactically correct
         if not wrap_strs:
             ar1 = ["".join(row) for row in df1.words.values]
         else:
             ar1 = ['$%s$'%("".join(row)) for row in df1.words.values]
+        ar1_len = [len(seq) for seq in df1.words]  # ar1_len = [len(s) for s in ar1]
+
+        data = {'%s_len' % key: ar1_len, 'iloc': range(df1.shape[0]), key: ar1}
+        if sortkey is not None:
+            data[sortkey] = df1[sortkey]
+        index = df1.index
+        colnames = ['iloc'] + [sortkey] if sortkey is not None else [] + ['%s_len' % key, key]
+
         if key2 is None:
-            # ar1_len = [len(s) for s in ar1]
-            ar1_len = [len(seq) for seq in df1.words]
-            return pd.DataFrame({'edit_distance':df1.ed, 'len': ar1_len, key: ar1, '_id': range(df1.shape[0])}, index=df1.index)
+            for k in keys:
+                data[k] = df3[k]
+                colnames.append(k)
         else:
             if not wrap_strs:
                 ar2 = ["".join(row) for row in df2.words.values]
             else:
                 ar2 = ['$%s$'%("".join(row)) for row in df2.words.values]
             if mingle:
+                assert len(keys) == 0, "keys are not allowed when mingle==True"
                 d = [e for t in zip(ar1, ar2) for e in t]
                 data = {'%s/%s'%(key, key2): d}
-                index = ['%s (%s)'%(i,l) for i in df1.index for l in ('k1', 'k2')]
+                index_tuples = [(i, l) for i in df1.index for l in (key, key2)]
+                index = pd.MultiIndex.from_tuples(index_tuples, names=['sample_id', 'key'])
             else:
-                data = {'edit_distance': df1.ed, key: ar1, key2: ar2}
-                index = df1.index
-            df = pd.DataFrame(data=data, index=index)
-            return df
-    
-    PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
+                data[key2] = ar2
+                colnames.append(key2)
+                for k in keys:
+                    data[k] = df3[k]
+                    colnames.append(k)
+        return pd.DataFrame(data=data, index=index)[colnames]
 
-    # @staticmethod
-    # def _project_alpha(alpha_t, pool_factor, pad_0, pad_1, expand_dims=True, pad_value=0.0, invert=True,
-    #                    gamma_correction=1):
-    #     pa = np.repeat(alpha_t, repeats=pool_factor.h, axis=0)
-    #     pa = np.repeat(pa, pool_factor.w, axis=1)
-    #     pa = np.pad(pa, ((0,pad_0),(0,pad_1)), mode='constant', constant_values=pad_value)
-    #     if invert:
-    #         pa = 1.0 - pa
-    #
-    #     if gamma_correction != 1:
-    #         pa = np.power(pa, gamma_correction)  # gamma correction
-    #
-    #     if expand_dims:
-    #         pa = np.expand_dims(pa, axis=2)  # (H,W,1)
-    #     return pa
+    def dump_preds(self, graph, step, clobber=False, dump=True):
+        if dump:
+            filepath = os.path.join(self._storedir, 'predictions_%s_%s.pkl' % (graph, step))
+            dirpath = os.path.dirname(filepath)
+            if not clobber:
+                assert not os.path.exists(filepath), '%s already exits' % filepath
+            if not os.path.exists(dirpath):
+                os.makedirs(dirpath)
+
+        df1 = self.strs(graph, step, 'y', 'predicted_ids', mingle=False, trim=True, wrap_strs=False, sortkey='ed')
+        df2 = self.df(graph, step, 'ed', 'image_name')
+        formula_names = df2.image_name.str.extract(r'(.+)_basic\.png', expand=False)
+        formula_names.name = 'formula_name'
+        df = pd.DataFrame({'image_name': df2.image_name,
+                           'ed': df1.ed,
+                           'target_len': df1.y_len,
+                           'target_seq': df1.y,
+                           'predicted_seq': df1.predicted_ids}, index=df1.index)
+        df.index = formula_names
+        if dump:
+            df.to_pickle(filepath)
+        return df
+
+    PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
 
     def _project_alpha(self, alpha_t, pool_factor, pad_h, pad_w, expand_dims=True, pad_value=0.0, invert=True,
                        gamma_correction=1):
@@ -505,12 +539,12 @@ class VisualizeDir(object):
 
     def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
-        sample_idx = df_all.iloc[sample_num].name  # Top index in sort order
-        nd_ids = df_all.loc[sample_idx].ids  # (B,T) --> (T,)
-        nd_words = df_all.loc[sample_idx].words  # (B,T) --> (T,)
-        # Careful with sample_idx
-        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_idx]  # (N,B,H,W,T) --> (H,W,T)
-        image_name = self.nd(graph, step, 'image_name')[sample_idx]  # (B,) --> (,)
+        sample_id = df_all.iloc[sample_num].name  # id of top row in sort order
+        nd_ids = df_all.loc[sample_id].ids  # (B,T) --> (T,)
+        nd_words = df_all.loc[sample_id].words  # (B,T) --> (T,)
+        # Careful with sample_id
+        nd_alpha = self.nd(graph, step, 'alpha')[0][sample_id]  # (N,B,H,W,T) --> (H,W,T)
+        image_name = self.nd(graph, step, 'image_name')[sample_id]  # (B,) --> (,)
         T = len(nd_words)
         if max_words is not None:
             T = min(T, max_words)
@@ -524,8 +558,8 @@ class VisualizeDir(object):
         pad_0 = self._hyper.image_shape_unframed[0] - nd_alpha.shape[0]*pool_factor.h
         pad_1 = self._hyper.image_shape_unframed[1] - nd_alpha.shape[1]*pool_factor.w
 
-        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_idx].predicted_ids
-        y = self.strs(graph, step, 'y', trim=True).loc[sample_idx].y
+        predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_id].predicted_ids
+        y = self.strs(graph, step, 'y', trim=True).loc[sample_id].y
         display(Math(predicted_ids))
         print(predicted_ids)
         display(Math(y))
@@ -639,8 +673,8 @@ class VisualizeStep():
     def nd(self, key):
         return self._visualizer.nd(self._graph, self._step, key)
     
-    def df(self, key):
-        return self._visualizer.df(self._graph, self._step, key)
+    def df(self, *keys):
+        return self._visualizer.df(self._graph, self._step, *keys)
 
     def df_ids(self, key, sortkey='ed', trim=False):
         return self._visualizer.df_ids(self._graph, self._step, key, sortkey, trim)
@@ -648,8 +682,11 @@ class VisualizeStep():
     def words(self, key):
         return self._visualizer.words(self._graph, self._step, key)
 
-    def strs(self, key, key2=None, mingle=True, trim=False, wrap_strs=False):
-        return self._visualizer.strs(self._graph, self._step, key, key2, mingle, trim, wrap_strs)
+    def strs(self, key, key2=None, mingle=False, trim=False, wrap_strs=False, sortkey='ed', keys=[]):
+        return self._visualizer.strs(self._graph, self._step, key, key2, mingle=mingle, trim=trim, wrap_strs=wrap_strs, sortkey=sortkey, keys=keys)
+
+    def dump_preds(self, clobber=False, dump=True):
+        return self._visualizer.dump_preds(self._graph, self._step, clobber=clobber, dump=dump)
 
     def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,

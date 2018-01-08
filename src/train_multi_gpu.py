@@ -960,7 +960,7 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                                     eval_ops.ph_bleu2: agg_bleu2,
                                     eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
                                 })
-    with dtc.Storer(args, 'test_metrics' if args.doTest else 'validation_metrics', step) as storer:
+    with dtc.Storer(args, 'metrics_test' if args.doTest else 'metrics_validation', step) as storer:
         storer.write('edit_distance', np.mean(accum.mean_eds, keepdims=True), np.float32)
         storer.write('num_hits', np.sum(accum.hits, keepdims=True), dtype=np.uint32)
         storer.write('accuracy', np.mean(accum.accuracies, keepdims=True), np.float32)

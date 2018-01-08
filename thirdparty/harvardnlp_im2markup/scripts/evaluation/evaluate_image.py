@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 import sys, os, argparse, logging, glob
 import numpy as np
 from PIL import Image
