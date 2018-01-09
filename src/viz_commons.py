@@ -27,6 +27,7 @@ import itertools
 import collections
 import math
 import re
+import csv
 import pandas as pd
 import numpy as np
 import data_commons as dtc
@@ -284,7 +285,7 @@ class VisualizeDir(object):
         return int(math.ceil((step * 64.) / (self._hyper['data_reader_B']*1.)))
 
     def keys(self, graph, step):
-        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step))) as h5:
+        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph,step)), mode='r') as h5:
             return h5.keys()
 
     def nd(self, graph, step, key):
@@ -295,7 +296,7 @@ class VisualizeDir(object):
             key:   key of object to fetch - e.g. 'predicted_ids'
         """
         assert graph in ['training', 'validation', 'test']
-        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph, step))) as h5:
+        with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph, step)), mode='r') as h5:
             return h5[key][...]
     
     @staticmethod
@@ -395,43 +396,54 @@ class VisualizeDir(object):
             ar1 = ["".join(row) for row in df1.words.values]
         else:
             ar1 = ['$%s$'%("".join(row)) for row in df1.words.values]
-        ar1_len = [len(seq) for seq in df1.words]  # ar1_len = [len(s) for s in ar1]
+        ar1_len = [len(seq) for seq in df1.ids]  # ar1_len = [len(s) for s in ar1]
 
         data = {'%s_len' % key: ar1_len, 'iloc': range(df1.shape[0]), key: ar1}
+
+        colnames = ['iloc']
         if sortkey is not None:
             data[sortkey] = df1[sortkey]
+            colnames.append(sortkey)
         index = df1.index
-        colnames = ['iloc'] + [sortkey] if sortkey is not None else [] + ['%s_len' % key, key]
+        colnames.extend(['%s_len' % key, key])
 
-        if key2 is None:
-            for k in keys:
-                data[k] = df3[k]
-                colnames.append(k)
-        else:
+        if key2 is not None:
             if not wrap_strs:
                 ar2 = ["".join(row) for row in df2.words.values]
             else:
                 ar2 = ['$%s$'%("".join(row)) for row in df2.words.values]
-            if mingle:
+            ar2_len = [len(seq) for seq in df2.ids]
+
+            if not mingle:
+                data[key2] = ar2
+                data['%s_len' % key2] = ar2_len
+                colnames.extend(['%s_len' % key2, key2])
+            else:
                 assert len(keys) == 0, "keys are not allowed when mingle==True"
                 d = [e for t in zip(ar1, ar2) for e in t]
                 data = {'%s/%s'%(key, key2): d}
                 index_tuples = [(i, l) for i in df1.index for l in (key, key2)]
                 index = pd.MultiIndex.from_tuples(index_tuples, names=['sample_id', 'key'])
-            else:
-                data[key2] = ar2
-                colnames.append(key2)
-                for k in keys:
-                    data[k] = df3[k]
-                    colnames.append(k)
+
+        if not mingle:
+            for k in keys:
+                data[k] = df3[k]
+                colnames.append(k)
+
         return pd.DataFrame(data=data, index=index)[colnames]
 
-    def dump_preds(self, graph, step, clobber=False, dump=True):
+    def dump_preds(self, graph, step, rel_dumpdir, clobber=False, dump=True):
         if dump:
-            filepath = os.path.join(self._storedir, 'predictions_%s_%s.pkl' % (graph, step))
+            filepath = os.path.join(self._storedir, rel_dumpdir, 'predictions_%s_%s.pkl' % (graph, step))
+            filepath_result = os.path.join(self._storedir, rel_dumpdir, 'eval_image_results.txt')
+            filepath_data = os.path.join(self._storedir, rel_dumpdir, 'eval_image_data.txt')
+            filepath_label = os.path.join(self._storedir, rel_dumpdir, 'eval_image_labels.txt')
             dirpath = os.path.dirname(filepath)
             if not clobber:
-                assert not os.path.exists(filepath), '%s already exits' % filepath
+                # assert not os.path.exists(filepath), '%s already exits' % filepath
+                assert not os.path.exists(filepath_result), '%s already exits' % filepath_result
+                assert not os.path.exists(filepath_data), '%s already exits' % filepath_data
+                assert not os.path.exists(filepath_label), '%s already exits' % filepath_label
             if not os.path.exists(dirpath):
                 os.makedirs(dirpath)
 
@@ -439,15 +451,43 @@ class VisualizeDir(object):
         df2 = self.df(graph, step, 'ed', 'image_name')
         formula_names = df2.image_name.str.extract(r'(.+)_basic\.png', expand=False)
         formula_names.name = 'formula_name'
-        df = pd.DataFrame({'image_name': df2.image_name,
+        df = pd.DataFrame({'iloc': df1['iloc'],
+                           # 'formula_name': formula_names,
                            'ed': df1.ed,
                            'target_len': df1.y_len,
                            'target_seq': df1.y,
-                           'predicted_seq': df1.predicted_ids}, index=df1.index)
-        df.index = formula_names
+                           'pred_len': df1.predicted_ids_len,
+                           'pred_seq': df1.predicted_ids}, index=df1.index)
+        df.index = df2.image_name.str.replace(r'_basic.png$', '.png')
+        # df = df.set_index(['formula_name'])
+        colsort = ['iloc', 'ed', 'target_len', 'target_seq', 'pred_len', 'pred_seq']
+        df = df[colsort]
+        df_result = df.assign(score_pred=0, score_gold=0)[['target_seq', 'pred_seq', 'score_pred', 'score_gold']]
+        df_data = df[['iloc']]
+        sr_label = df.target_seq
         if dump:
-            df.to_pickle(filepath)
-        return df
+            # df.to_pickle(filepath)
+            # parser.add_argument('--result-path', dest='result_path',
+            #                     type=str, required=True,
+            #                     help=(
+            #                     'Result file containing <img_path> <label_gold> <label_pred> <score_pred> <score_gold> per line. This should be set to the output file of the model.'
+            #                     ))
+            # parser.add_argument('--data-path', dest='data_path',
+            #                     type=str, required=True,
+            #                     help=(
+            #                     'Input file which contains the samples to be evaluated. The format is <img_path> <label_idx> per line.'
+            #                     ))
+            # parser.add_argument('--label-path', dest='label_path',
+            #                     type=str, required=True,
+            #                     help=(
+            #                     'Gold label file which contains a formula per line. Note that this does not necessarily need to be tokenized, and for comparing against the gold standard, the original (un-preprocessed) label file shall be used.'
+            #                     ))
+            df_result.to_csv(filepath_result, header=False, index=True, encoding='utf-8', quoting=csv.QUOTE_NONE,
+                             escapechar=None, sep='\t')
+            df_data.to_csv(filepath_data, header=False, index=True, encoding='utf-8', quoting=csv.QUOTE_NONE,
+                           escapechar=None, sep='\t')
+            dtc.sr_to_lines(sr_label, filepath_label)
+        return df, df_result, df_data, sr_label
 
     PoolFactor = collections.namedtuple("PoolFactor", ('h', 'w'))
 
@@ -685,8 +725,8 @@ class VisualizeStep():
     def strs(self, key, key2=None, mingle=False, trim=False, wrap_strs=False, sortkey='ed', keys=[]):
         return self._visualizer.strs(self._graph, self._step, key, key2, mingle=mingle, trim=trim, wrap_strs=wrap_strs, sortkey=sortkey, keys=keys)
 
-    def dump_preds(self, clobber=False, dump=True):
-        return self._visualizer.dump_preds(self._graph, self._step, clobber=clobber, dump=dump)
+    def dump_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
+        return self._visualizer.dump_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)
 
     def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,

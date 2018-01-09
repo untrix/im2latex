@@ -112,7 +112,7 @@ def load(*paths):
 class Storer(object):
     def __init__(self, args, prefix, step):
         self._path = os.path.join(args.storedir, '%s_%d.h5'%(prefix, step))
-        self._h5 = h5py.File(self._path, "w", swmr=False)
+        self._h5 = h5py.File(self._path, mode="w-", swmr=False)
 
     def __enter__(self):
         return self
@@ -210,3 +210,42 @@ def makeTBDir(tb_logdir, logdir_tag=None):
 
     os.makedirs(dirpath)
     return dirpath
+
+
+def readlines_to_df(path, colname):
+    #   return pd.read_csv(output_file, sep='\t', header=None, names=['formula'], index_col=False, dtype=str, skipinitialspace=True, skip_blank_lines=True)
+    rows = []
+    n = 0
+    with open(path, 'r') as f:
+        print 'opened file %s'%path
+        for line in f:
+            n += 1
+            line = line.strip()  # remove \n
+            if len(line) > 0:
+                rows.append(line.encode('utf-8'))
+    print 'processed %d lines resulting in %d rows'%(n, len(rows))
+    return pd.DataFrame({colname:rows}, dtype=np.str_)
+
+
+def readlines_to_sr(path):
+    rows = []
+    n = 0
+    with open(path, 'r') as f:
+        print 'opened file %s'%path
+        for line in f:
+            n += 1
+            line = line.strip()  # remove \n
+            if len(line) > 0:
+                rows.append(line.encode('utf-8'))
+    print 'processed %d lines resulting in %d rows'%(n, len(rows))
+    return pd.Series(rows, dtype=np.str_)
+
+
+def sr_to_lines(sr, path):
+#   df.to_csv(path, header=False, index=False, columns=['formula'], encoding='utf-8', quoting=csv.QUOTE_NONE, escapechar=None, sep='\t')
+    assert sr.dtype == np.str_ or sr.dtype == np.object_
+    with open(path, 'w') as f:
+        for s in sr:
+            assert '\n' not in s
+            f.write(s.strip())
+            f.write('\n')
