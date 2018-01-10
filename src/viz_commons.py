@@ -40,6 +40,7 @@ from data_reader import ImagenetProcessor, ImageProcessor3_BW
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib as mpl
 from IPython.display import Math, display, Pretty
+from PIL import Image
 
 
 class VGGnetProcessor(ImagenetProcessor):
@@ -432,15 +433,15 @@ class VisualizeDir(object):
 
         return pd.DataFrame(data=data, index=index)[colnames]
 
-    def dump_preds(self, graph, step, rel_dumpdir, clobber=False, dump=True):
+    def get_preds(self, graph, step, rel_dumpdir, clobber=False, dump=False):
+        filepath_preds = os.path.join(self._storedir, rel_dumpdir, 'predictions_%s_%s.pkl' % (graph, step))
+        filepath_result = os.path.join(self._storedir, rel_dumpdir, 'eval_image_results.txt')
+        filepath_data = os.path.join(self._storedir, rel_dumpdir, 'eval_image_data.txt')
+        filepath_label = os.path.join(self._storedir, rel_dumpdir, 'eval_image_labels.txt')
+        dirpath = os.path.dirname(filepath_preds)
         if dump:
-            filepath = os.path.join(self._storedir, rel_dumpdir, 'predictions_%s_%s.pkl' % (graph, step))
-            filepath_result = os.path.join(self._storedir, rel_dumpdir, 'eval_image_results.txt')
-            filepath_data = os.path.join(self._storedir, rel_dumpdir, 'eval_image_data.txt')
-            filepath_label = os.path.join(self._storedir, rel_dumpdir, 'eval_image_labels.txt')
-            dirpath = os.path.dirname(filepath)
             if not clobber:
-                # assert not os.path.exists(filepath), '%s already exits' % filepath
+                assert not os.path.exists(filepath_preds), '%s already exits' % filepath_preds
                 assert not os.path.exists(filepath_result), '%s already exits' % filepath_result
                 assert not os.path.exists(filepath_data), '%s already exits' % filepath_data
                 assert not os.path.exists(filepath_label), '%s already exits' % filepath_label
@@ -452,21 +453,21 @@ class VisualizeDir(object):
         formula_names = df2.image_name.str.extract(r'(.+)_basic\.png', expand=False)
         formula_names.name = 'formula_name'
         df = pd.DataFrame({'iloc': df1['iloc'],
-                           # 'formula_name': formula_names,
+                           'image_name': df2.image_name,
                            'ed': df1.ed,
                            'target_len': df1.y_len,
                            'target_seq': df1.y,
                            'pred_len': df1.predicted_ids_len,
                            'pred_seq': df1.predicted_ids}, index=df1.index)
         df.index = df2.image_name.str.replace(r'_basic.png$', '.png')
-        # df = df.set_index(['formula_name'])
-        colsort = ['iloc', 'ed', 'target_len', 'target_seq', 'pred_len', 'pred_seq']
+        df.index.name = 'eval_image_name'
+        colsort = ['image_name', 'iloc', 'ed', 'target_len', 'target_seq', 'pred_len', 'pred_seq']
         df = df[colsort]
         df_result = df.assign(score_pred=0, score_gold=0)[['target_seq', 'pred_seq', 'score_pred', 'score_gold']]
         df_data = df[['iloc']]
         sr_label = df.target_seq
         if dump:
-            # df.to_pickle(filepath)
+            df.to_pickle(filepath_preds)
             # parser.add_argument('--result-path', dest='result_path',
             #                     type=str, required=True,
             #                     help=(
@@ -725,8 +726,8 @@ class VisualizeStep():
     def strs(self, key, key2=None, mingle=False, trim=False, wrap_strs=False, sortkey='ed', keys=[]):
         return self._visualizer.strs(self._graph, self._step, key, key2, mingle=mingle, trim=trim, wrap_strs=wrap_strs, sortkey=sortkey, keys=keys)
 
-    def dump_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
-        return self._visualizer.dump_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)
+    def get_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
+        return self._visualizer.get_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)
 
     def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
@@ -1089,3 +1090,57 @@ class EvalRuns(dlc.Properties):
             csort, selected_id = insert_vals(row, df, tag_exps[i], ops[i], selected_id)
             colsort.extend(csort)
         return row, colsort
+
+
+def trim_image(np_ar):
+    """
+    Trims empty rows and columns of an image - i.e. those that have all pixels == 255
+    :param np_ar: numpy.ndarray of a image of shape (H,W). Each value should have value between 0 and 255.
+    :returns: numpy array of the trimmed image, shape (H', W') where H' <= H and W' <= W
+    """
+    rows = [(row == 255).all() for row in np_ar]
+    cols = [(row == 255).all() for row in np_ar.transpose()]
+    top = len([x for x in itertools.takewhile(lambda x: x, rows)])
+    bottom = len(rows) - len([x for x in itertools.takewhile(lambda x: x, rows[::-1])])
+    left = len([x for x in itertools.takewhile(lambda x: x, cols)])
+    right = len(cols) - len([x for x in itertools.takewhile(lambda x: x, cols[::-1])])
+    if (top != 0 or left != 0 or bottom != len(rows) or right != len(cols)):
+        print('Trimmed image from shape (%d, %d) to (%d, %d)' % (len(rows), len(cols), bottom-top, right-left))
+    return np_ar[top:bottom, left:right]
+
+
+def compare_images(gold_dir, pred_dir, dump=False, clobber=False):
+    """
+    Finds out how many images in gold_dir exactly match their corresponding image in pred_dir.
+    Images in the two directories should have the same name.
+    :return:
+    """
+    unmatched_files = []
+    missing_files = []
+    gold_files = os.listdir(gold_dir)
+    # n = 100
+    for i, fname in enumerate(gold_files):
+        # if i>=n:
+        #     break
+        if not os.path.exists(os.path.join(pred_dir, fname)):
+            missing_files.append(fname)
+            unmatched_files.append(fname)
+            continue
+        img_gold = trim_image(np.asarray(Image.open(os.path.join(gold_dir, fname)).convert('L')))
+        img_gold = np.asarray(img_gold < 255, dtype=np.uint)
+        img_pred = trim_image(np.asarray(Image.open(os.path.join(pred_dir, fname)).convert('L')))
+        img_pred = np.asarray(img_pred < 255, dtype=np.uint)
+        if (img_gold.shape != img_pred.shape) or ((img_gold != img_pred).sum() != 0):
+            unmatched_files.append(fname)
+
+    if dump:
+        with open(os.path.join(os.path.dirname(pred_dir), 'unmatched_files2.txt'), 'w') as f:
+            for fname in unmatched_files:
+                f.write('%s\n' % fname)
+        with open(os.path.join(os.path.dirname(pred_dir), 'missing_files2.txt'), 'w') as f:
+            for fname in missing_files:
+                f.write('%s\n' % fname)
+    total = len(gold_files)  # min(n, len(gold_files))
+    matched = total - len(unmatched_files)
+    print('%d (%.2f%%) out of %d images matched binary pixel by binary pixel' % (matched, (matched*100.0)/(total*1.0), total))
+    return total, matched, unmatched_files, missing_files

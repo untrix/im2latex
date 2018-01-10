@@ -3,6 +3,7 @@ import sys, os, argparse, logging, glob
 import numpy as np
 from PIL import Image
 import distance
+import itertools
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import difflib
@@ -37,6 +38,7 @@ def main(args):
     logging.getLogger('').addHandler(console)
 
     logging.info('Script being executed: %s'%__file__)
+    uf = open('unmatched_filenames.txt', 'w')
    
     images_dir = parameters.images_dir
     gold_dir = os.path.join(images_dir, 'images_gold')
@@ -49,6 +51,7 @@ def main(args):
     total_correct = 0
     total_correct_eliminate = 0
     filenames = glob.glob(os.path.join(gold_dir, '*'))
+    unmatched_filenames = []
     for filename in filenames:
         filename2 = os.path.join(pred_dir, os.path.basename(filename))
         edit_distance, ref, match1, match2 = img_edit_distance_file(filename, filename2)
@@ -59,6 +62,8 @@ def main(args):
             total_correct += 1
         if match2:
             total_correct_eliminate += 1
+        if not (match1 or match2):
+            unmatched_filenames.append(filename)
         if total_num % 100 == 0:
             logging.info ('Total Num: %d'%total_num)
             logging.info ('Accuracy (w spaces): %f'%(float(total_correct)/total_num))
@@ -69,6 +74,11 @@ def main(args):
             logging.info ('Total Edit Dist (w spaces): %d'%total_edit_distance)
             logging.info ('Total Ref (w spaces): %d'%total_ref)
             logging.info ('')
+            for file in unmatched_filenames:
+                uf.write('%s\n' % file)
+            unmatched_filenames = []
+            uf.flush()
+            os.fsync(uf.fileno())
 
     logging.info ('------------------------------------')
     logging.info ('Final')
@@ -80,17 +90,39 @@ def main(args):
     logging.info ('Total Correct (w/o spaces): %d'%total_correct_eliminate)
     logging.info ('Total Edit Dist (w spaces): %d'%total_edit_distance)
     logging.info ('Total Ref (w spaces): %d'%total_ref)
+    for file in unmatched_filenames:
+        uf.write('%s\n' % file)
+    uf.flush()
+    os.fsync(uf.fileno())
+
+
+def trim_image(np_ar):
+    """
+    Trims empty rows and columns of an image - i.e. those that have all pixels == 255
+    :param np_ar: numpy.ndarray of a image of shape (H,W). Each value should have value between 0 and 255.
+    :returns: numpy array of the trimmed image, shape (H', W') where H' <= H and W' <= W
+    """
+    rows = [(row == 255).all() for row in np_ar]
+    cols = [(row == 255).all() for row in np_ar.transpose()]
+    top = len([x for x in itertools.takewhile(lambda x: x, rows)])
+    bottom = len(rows) - len([x for x in itertools.takewhile(lambda x: x, rows[::-1])])
+    left = len([x for x in itertools.takewhile(lambda x: x, cols)])
+    right = len(cols) - len([x for x in itertools.takewhile(lambda x: x, cols[::-1])])
+    if (top != 0 or left != 0 or bottom != len(rows) or right != len(cols)):
+        print('Trimmed image from shape (%d, %d) to (%d, %d)' % (len(rows), len(cols), bottom-top, right-left))
+    return np_ar[top:bottom, left:right]
+
 
 # return (edit_distance, ref, match, match w/o)
 def img_edit_distance(im1, im2, out_path=None):
     img_data1 = np.asarray(im1, dtype=np.uint8) # height, width
-    img_data1 = np.transpose(img_data1)
+    img_data1 = trim_image(np.transpose(img_data1))
     h1 = img_data1.shape[1]
     w1 = img_data1.shape[0]
     img_data1 = (img_data1<=128).astype(np.uint8)
     if im2:
         img_data2 = np.asarray(im2, dtype=np.uint8) # height, width
-        img_data2 = np.transpose(img_data2)
+        img_data2 = trim_image(np.transpose(img_data2))
         h2 = img_data2.shape[1]
         w2 = img_data2.shape[0]
         img_data2 = (img_data2<=128).astype(np.uint8)
