@@ -30,11 +30,11 @@ import logging
 import numpy as np
 import os
 import tensorflow as tf
-import data_commons as dtc
-import dl_commons as dlc
-from dl_commons import (instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof, issequenceofOrNone,
+import commons.data_commons as dtc
+import commons.dl_commons as dlc
+from commons.dl_commons import (instanceof, integer, integerOrNone, decimal, boolean, equalto, issequenceof, issequenceofOrNone,
                         PD, iscallable, iscallableOrNone, LambdaVal, instanceofOrNone, Properties)
-from tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams,
+from commons.tf_commons import (ConvStackParams, ConvLayerParams, MaxpoolParams, FCLayerParams, MLPParams,
                         DropoutParams, TensorboardParams, RNNParams)
 
 def pad_image_shape(shape, padding):

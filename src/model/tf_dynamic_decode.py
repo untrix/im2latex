@@ -34,8 +34,8 @@ from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
 from tensorflow.contrib.seq2seq import Decoder
-import tf_commons as tfc
-import data_commons as dtc
+import commons.tf_commons as tfc
+import commons.data_commons as dtc
 
 __all__ = ["dynamic_decode"]
 

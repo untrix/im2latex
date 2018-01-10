@@ -27,13 +27,13 @@ Works on python 2.7
 import sys
 import argparse
 import os
-import tensorflow as tf
-import dl_commons as dlc
-import tf_commons as tfc
-import data_commons as dtc
-import train_multi_gpu
 import logging
-import hyper_params
+import tensorflow as tf
+import commons.dl_commons as dlc
+import commons.tf_commons as tfc
+import commons.data_commons as dtc
+import model.hyper_params
+import train_multi_gpu
 
 def main():
     logger = dtc.makeLogger(set_global=True)
