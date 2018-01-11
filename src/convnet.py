@@ -23,18 +23,18 @@ Created on Mon Jul 24 12:28:55 2017
 """
 
 import os
+import argparse as arg
 import time
 from six.moves import cPickle as pickle
+import pandas as pd
 import tensorflow as tf
 from tensorflow.contrib.keras import backend as K
-from Im2LatexModel import build_vgg_context
-from data_reader import BatchImageIterator2, ImagenetProcessor
-from hyper_params import make_hyper
-import tf_commons as tfc
-import argparse as arg
-import data_commons as dtc
-import dl_commons as dlc
-import pandas as pd
+from commons.hyper_params import make_hyper
+import commons.data_commons as dtc
+import commons.dl_commons as dlc
+import commons.tf_commons as tfc
+from commons.data_reader import BatchImageIterator2, ImagenetProcessor
+from model.Im2LatexModel import build_vgg_context
 
 def get_df(params):
     # image_features_folder = params.vgg16_folder
