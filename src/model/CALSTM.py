@@ -25,14 +25,12 @@ Tested on python 2.7
 
 @author: Sumeet S Singh
 """
-import itertools
 import collections
 import tensorflow as tf
 # from keras import backend as K
 from tensorflow.contrib.keras import backend as K
-import commons.dl_commons as dlc
-import commons.tf_commons as tfc
-from model.hyper_params import CALSTMParams
+import tf_commons as tfc
+from hyper_params import CALSTMParams
 
 
 CALSTMState = collections.namedtuple("CALSTMState", ('lstm_state', 'alpha', 'ztop', 'beta'))

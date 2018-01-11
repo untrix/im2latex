@@ -149,12 +149,12 @@ class VisualizeDir(object):
         self._storedir = storedir
         self._logdir = os.path.join(storedir, '..')
         try:
-            self._hyper = dtc.load(self._logdir, 'hyper.pkl')
-            self._args = dtc.load(self._logdir, 'args.pkl')
+            self._hyper = dlc.Properties.load(self._logdir, 'hyper.pkl')
+            self._args = dlc.Properties.load(self._logdir, 'args.pkl')
             print('Loaded %s and %s'%(dtc.join(self._logdir, 'hyper.pkl'), dtc.join(self._logdir, 'args.pkl')))
         except:
-            self._hyper = dtc.load(self._storedir, 'hyper.pkl')
-            self._args = dtc.load(self._storedir, 'args.pkl')
+            self._hyper = dlc.Properties.load(self._storedir, 'hyper.pkl')
+            self._args = dlc.Properties.load(self._storedir, 'args.pkl')
             print('Loaded %s and %s' % (dtc.join(self._storedir, 'hyper.pkl'), dtc.join(self._storedir, 'args.pkl')))
 
         self._image_dir = self._args['image_dir']
@@ -743,18 +743,18 @@ class DiffParams(object):
     def get(self, filename, to_str):
         try:
             f1 = os.path.join(self._dir1, 'store', filename)
-            one = dtc.load(f1)
+            one = dlc.Properties.load(f1)
         except:
             f1 = os.path.join(self._dir1, filename)
-            one = dtc.load(f1)
+            one = dlc.Properties.load(f1)
         print('Loaded %s' % f1)
 
         try:
             f2 = os.path.join(self._dir2, 'store', filename)
-            two = dtc.load(f2)
+            two = dlc.Properties.load(f2)
         except:
             f2 = os.path.join(self._dir2, filename)
-            two = dtc.load(f2)
+            two = dlc.Properties.load(f2)
         print('Loaded %s' % f2)
 
         if (to_str):
@@ -1012,10 +1012,10 @@ class EvalRuns(dlc.Properties):
             into dict during the pickling process.
         """
         try:
-            one = dtc.load(logdir, 'store', filename)
+            one = dlc.Properties.load(logdir, 'store', filename)
             print('Loaded %s'%os.path.join(logdir, 'store', filename))
         except:
-            one = dtc.load(logdir, filename)
+            one = dlc.Properties.load(logdir, filename)
             print('Loaded %s' % os.path.join(logdir, filename))
         return one
 

@@ -115,10 +115,19 @@ class Properties(dict):
         Therefore this method is mostly only useful for printing and storing values for debugging if since it can't recover the
         LambdaVals and function values.
         """
-        return self.to_picklable_dict()
+        # return self.to_picklable_dict()
+        raise NotImplementedError('Please invoke Properties.dump instead')
+
+    def dump(self, *paths):
+        dtc.dump(self.to_picklable_dict(), *paths)
 
     def __setstate__(self, d):
         return self.updated(d)
+
+    @classmethod
+    def load(cls, *paths):
+        d = dtc.load(*paths)
+        return cls(d)
 
     def __reduce__(self):
         return (Properties_Factory, tuple(), self.__getstate__())
@@ -990,7 +999,10 @@ def to_picklable_dict(props, to_str=False):
         else:
             return v
 
-    resolved = {} ## Very important to return a dict, not Properties. Otherwise pickle will go into a loop.
+    # Very important to return a dict, not Properties object because in that case unpickling of
+    # the data file would be dependent on the dl_commons module. Returning a dict instead makes
+    # the unpickling process depend on the builtin dict module only.
+    resolved = {}
     for key in props.keys():
         ## Resolve LambdaVals but do not validate them because we
         ## need this method to work for debugging purposes, therefore we need to

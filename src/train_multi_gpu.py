@@ -25,16 +25,15 @@ Created on Tue Jul 25 13:41:32 2017
 Tested on python 2.7
 """
 import time
-import pprint
 import numpy as np
 import tensorflow as tf
-import commons.tf_commons as tfc
-from model.Im2LatexModel import Im2LatexModel, sync_testing_towers, sync_training_towers
+import tf_commons as tfc
+from Im2LatexModel import Im2LatexModel, sync_testing_towers, sync_training_towers
 from keras import backend as K
-from model import hyper_params
-from commons.data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
-import commons.dl_commons as dlc
-import commons.data_commons as dtc
+import hyper_params
+from data_reader import create_context_iterators, create_imagenet_iterators, create_BW_image_iterators
+import dl_commons as dlc
+import data_commons as dtc
 import signal
 
 logger = None

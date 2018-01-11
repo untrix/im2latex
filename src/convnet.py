@@ -29,12 +29,12 @@ from six.moves import cPickle as pickle
 import pandas as pd
 import tensorflow as tf
 from tensorflow.contrib.keras import backend as K
-from commons.hyper_params import make_hyper
-import commons.data_commons as dtc
-import commons.dl_commons as dlc
-import commons.tf_commons as tfc
-from commons.data_reader import BatchImageIterator2, ImagenetProcessor
-from model.Im2LatexModel import build_vgg_context
+from hyper_params import make_hyper
+import data_commons as dtc
+import dl_commons as dlc
+import tf_commons as tfc
+from data_reader import BatchImageIterator2, ImagenetProcessor
+from Im2LatexModel import build_vgg_context
 
 def get_df(params):
     # image_features_folder = params.vgg16_folder

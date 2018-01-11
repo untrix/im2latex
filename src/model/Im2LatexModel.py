@@ -30,13 +30,13 @@ import tensorflow as tf
 from tensorflow.contrib.keras import backend as K
 from tensorflow.contrib.keras import applications as K_apps
 from tensorflow.contrib.framework import nest as tf_nest
-import commons.dl_commons as dlc
-import commons.tf_commons as tfc
-from commons.data_reader import InpTup
-from model.CALSTM import CALSTM, CALSTMState
-from model.hyper_params import Im2LatexModelParams
-from model.tf_tutorial_code import average_gradients
-from model.tf_dynamic_decode import dynamic_decode
+import dl_commons as dlc
+import tf_commons as tfc
+from data_reader import InpTup
+from CALSTM import CALSTM, CALSTMState
+from hyper_params import Im2LatexModelParams
+from tf_tutorial_code import average_gradients
+from tf_dynamic_decode import dynamic_decode
 
 def build_vgg_context(params, image_batch):
     ## Conv-net

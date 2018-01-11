@@ -29,10 +29,11 @@ import argparse
 import os
 import logging
 import tensorflow as tf
-import commons.dl_commons as dlc
-import commons.tf_commons as tfc
-import commons.data_commons as dtc
-from model import hyper_params
+sys.path.extend(['commons', 'model'])
+import dl_commons as dlc
+import tf_commons as tfc
+import data_commons as dtc
+import hyper_params
 import train_multi_gpu
 
 def main():
@@ -232,14 +233,14 @@ def main():
 
     # args
     globalParams.storedir = dtc.makeLogDir(globalParams.logdir, 'store')
-    dtc.dump(globalParams, dtc.makeLogfileName(globalParams.storedir, 'args.pkl'))
+    globalParams.dump(dtc.makeLogfileName(globalParams.storedir, 'args.pkl'))
 
     # Hyper Params
     hyper = hyper_params.make_hyper(globalParams, freeze=False)
     if args.restore_logdir is not None:
-        dtc.dump(hyper, dtc.makeLogfileName(globalParams.storedir, 'hyper.pkl'))
+        hyper.dump(dtc.makeLogfileName(globalParams.storedir, 'hyper.pkl'))
     else:
-        dtc.dump(hyper, globalParams.storedir, 'hyper.pkl')
+        hyper.dump(globalParams.storedir, 'hyper.pkl')
 
     # Logger
     fh = logging.FileHandler(dtc.makeLogfileName(globalParams.storedir, 'training.log'))
