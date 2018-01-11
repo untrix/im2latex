@@ -116,4 +116,6 @@ bin/deactivate
 .DS_Store
 ._.DS_Store
 .idea/
-zpool_3TB/
+zpool_3TB
+scratch.*
+
