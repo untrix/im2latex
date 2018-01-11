@@ -399,9 +399,9 @@ class VisualizeDir(object):
             ar1 = ['$%s$'%("".join(row)) for row in df1.words.values]
         ar1_len = [len(seq) for seq in df1.ids]  # ar1_len = [len(s) for s in ar1]
 
-        data = {'%s_len' % key: ar1_len, 'iloc': range(df1.shape[0]), key: ar1}
+        data = {'%s_len' % key: ar1_len, '_iloc': range(df1.shape[0]), key: ar1}
 
-        colnames = ['iloc']
+        colnames = ['_iloc']
         if sortkey is not None:
             data[sortkey] = df1[sortkey]
             colnames.append(sortkey)
@@ -452,7 +452,7 @@ class VisualizeDir(object):
         df2 = self.df(graph, step, 'ed', 'image_name')
         formula_names = df2.image_name.str.extract(r'(.+)_basic\.png', expand=False)
         formula_names.name = 'formula_name'
-        df = pd.DataFrame({'iloc': df1['iloc'],
+        df = pd.DataFrame({'_iloc': df1['_iloc'],
                            'image_name': df2.image_name,
                            'ed': df1.ed,
                            'target_len': df1.y_len,
@@ -461,10 +461,10 @@ class VisualizeDir(object):
                            'pred_seq': df1.predicted_ids}, index=df1.index)
         df.index = df2.image_name.str.replace(r'_basic.png$', '.png')
         df.index.name = 'eval_image_name'
-        colsort = ['image_name', 'iloc', 'ed', 'target_len', 'target_seq', 'pred_len', 'pred_seq']
+        colsort = ['image_name', '_iloc', 'ed', 'target_len', 'target_seq', 'pred_len', 'pred_seq']
         df = df[colsort]
         df_result = df.assign(score_pred=0, score_gold=0)[['target_seq', 'pred_seq', 'score_pred', 'score_gold']]
-        df_data = df[['iloc']]
+        df_data = df[['_iloc']]
         sr_label = df.target_seq
         if dump:
             df.to_pickle(filepath_preds)
