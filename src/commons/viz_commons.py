@@ -72,7 +72,6 @@ class VGGnetProcessor(ImagenetProcessor):
 
 
 class CustomConvnetImageProcessor(ImageProcessor3_BW):
-    # TODO: Deliver image_shape_unframed here instead of image_shape
     def __init__(self, params, image_dir_):
         ImageProcessor3_BW.__init__(self, params, image_dir_)
 
@@ -89,7 +88,7 @@ class CustomConvnetImageProcessor(ImageProcessor3_BW):
             image_batch: (ndarray) Batch of images.
         """
         assert image_batch.shape[1:] == tuple(self._params.image_shape_unframed), 'Got image shape %s instead of %s'%(image_batch.shape[1:], tuple(self._params.image_shape_unframed))
-        print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape_unframed = %s'%(image_batch.shape, self._params.image_shape_unframed)
+        # print 'CustomConvnetImageProcessor: image_batch_shape = %s, image_shape_unframed = %s'%(image_batch.shape, self._params.image_shape_unframed)
         image_batch /= 255.0
         num_channels = image_batch.shape[3]
         if num_channels == 1:  # Need all three RGB channels so that we can layer on alpha channel to get RGBA
@@ -135,7 +134,7 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
 
     orig_dpi = plt.rcParams['figure.dpi']
     with mpl.rc_context(rc={'figure.dpi': dpi or orig_dpi}):
-        fig = plt.figure(figsize=(10., 2.*len(image_details)))
+        fig = plt.figure(figsize=(5., 2.*len(image_details)))
         grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L",
                          aspect=True)
         for i in range(len(image_details)):
@@ -197,16 +196,16 @@ class VisualizeDir(object):
         # Train/Test DataFrames
         self.df_train_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
         self.df_train_images.index = self.df_train_images.image
-        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
+        print('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
 
         self._df_test_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))[['image', 'height', 'width']]
         self._df_test_images.index = self._df_test_images.image
-        print('Loaded %s %s'%(os.path.join(self._raw_data_dir, 'df_test.pkl'), self._df_test_images.shape))
+        print('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_test.pkl'), self._df_test_images.shape))
 
         try:
             self._df_valid_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_valid.pkl'))[['image', 'height', 'width']]
             self._df_valid_images.index = self._df_valid_images.image
-            print('Loaded %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
+            print('Loaded image dimensions from %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
         except IOError:  # df_valid.pkl is absent implies df_valid data is included within df_train
             self._df_valid_images = self.df_train_images
         # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
@@ -578,8 +577,10 @@ class VisualizeDir(object):
 
         plotImages(image_details, dpi=200)
 
-    def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma', index=None):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
+        if index is not None:
+            df_all = df_all.loc[index]
         sample_id = df_all.iloc[sample_num].name  # id of top row in sort order
         nd_ids = df_all.loc[sample_id].ids  # (B,T) --> (T,)
         nd_words = df_all.loc[sample_id].words  # (B,T) --> (T,)
@@ -601,8 +602,10 @@ class VisualizeDir(object):
 
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_id].predicted_ids
         y = self.strs(graph, step, 'y', trim=True).loc[sample_id].y
+        print('PREDICTED SEQUENCE\n')
         display(Math(predicted_ids))
         print(predicted_ids)
+        print('TARGET SEQUENCE\n')
         display(Math(y))
         print(y)
         
@@ -729,10 +732,10 @@ class VisualizeStep():
     def get_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
         return self._visualizer.get_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)
 
-    def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma'):
+    def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma', index=None):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
                                       max_words=max_words, gamma_correction=gamma_correction,
-                                      cmap=cmap)
+                                      cmap=cmap, index=index)
 
 
 class DiffParams(object):
@@ -982,20 +985,27 @@ class EvalRuns(dlc.Properties):
         :type cols_seq: sequence of sequence
         :return: sequence of column names
         """
-        merged_colnames = []
+        merged_colnames = []  # column names from reg-expressions in the right order
+        cols = []  # column names from data in the right order
+        for t in cols_seq:
+            for c in t:
+                if c not in cols:
+                    cols = cols + [c]
+        # cols = reduce(lambda l, t: l+[c for c in t if c not in l], cols_seq, [])
+        # print('cols = %s'%cols)
         for exp in exps:
             rexp = exp.split('%')[-1]
-            for cols in cols_seq:
-                for col in cols:
-                    if re.search(rexp, col):
-                        if col not in merged_colnames:
-                            merged_colnames.append(col)
-                        cols.remove(col)
+            # for cols in cols_seq:
+            for col in list(cols):
+                if re.search(rexp, col) is not None:
+                    if col not in merged_colnames:
+                        merged_colnames.append(col)
+                    cols.remove(col)
 
-        for cols in cols_seq:
-            assert len(cols) == 0
+        # for cols in cols_seq:
+        assert len(cols) == 0, 'cols = %s,\nexps=%s, \nmerged_colnames=%s'%(cols, exps, merged_colnames)
 
-        return merged_colnames
+        return list(merged_colnames)
 
     def load_hyper(self, logdir):
         return self.load_props(logdir, 'hyper.pkl')
@@ -1032,7 +1042,7 @@ class EvalRuns(dlc.Properties):
             tags = filter(lambda tag: bool(re.search(tag_exp, tag)), all_tags)
             split_op = op.split('_')
             if split_op[0] == 'select':
-                assert len(tags) == 1, 'tag_exp %s_%s maps to more than one tags.'%(op, tag_exp)
+                assert len(tags) == 1, 'tag_exp %s_%s maps to %d tags. Must map to exactly one.'%(op, tag_exp, len(tags))
                 val, selected_id = get_val(df, tags[0], split_op[1], selected_id)
                 colname = '%s%%%s'%(op, tags[0])
                 assert colname not in row, 'Multiple metric tag expressions map into colname %s. Fix your tag expressions.' % colname
