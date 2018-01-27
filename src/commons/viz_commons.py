@@ -103,15 +103,16 @@ class CustomConvnetImageProcessor(ImageProcessor3_BW):
         raise NotImplementedError()
 
 
-def plotImage(image_detail, axes, cmap=None):
+def plotImage(image_detail, axes, cmap=None, interp=None):
     path = image_detail[0]
     image_data = image_detail[1]
-    title = os.path.splitext(os.path.basename(path))[0]
+    title = os.path.basename(path)
     axes.set_title(title)
     axes.set_ylim(image_data.shape[0], 0)
     axes.set_xlim(0, image_data.shape[1])
     # print 'image %s %s'%(title, image_data.shape)
-    axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation='bilinear', cmap=cmap)
+
+    axes.imshow(image_data, aspect='equal', extent=None, resample=False, interpolation=interp, cmap=cmap)
 
     return
 
@@ -134,11 +135,11 @@ def plotImages(image_details, fig=None, dpi=None, cmap=None):
 
     orig_dpi = plt.rcParams['figure.dpi']
     with mpl.rc_context(rc={'figure.dpi': dpi or orig_dpi}):
-        fig = plt.figure(figsize=(5., 2.*len(image_details)))
+        fig = plt.figure(figsize=(5, 2*len(image_details)))
         grid = ImageGrid(fig, 111, nrows_ncols=(len(image_details),1), axes_pad=(0.1, 0.5), label_mode="L",
                          aspect=True)
         for i in range(len(image_details)):
-            plotImage(image_details[i], grid[i], cmap)
+            plotImage(image_details[i], grid[i], cmap=image_details[i].cmap or cmap, interp=image_details[i].interpolation)
 
     return
 
@@ -150,11 +151,11 @@ class VisualizeDir(object):
         try:
             self._hyper = dlc.Properties.load(self._logdir, 'hyper.pkl')
             self._args = dlc.Properties.load(self._logdir, 'args.pkl')
-            print('Loaded %s and %s'%(dtc.join(self._logdir, 'hyper.pkl'), dtc.join(self._logdir, 'args.pkl')))
+            dtc.logger.info('Loaded %s and %s'%(dtc.join(self._logdir, 'hyper.pkl'), dtc.join(self._logdir, 'args.pkl')))
         except:
             self._hyper = dlc.Properties.load(self._storedir, 'hyper.pkl')
             self._args = dlc.Properties.load(self._storedir, 'args.pkl')
-            print('Loaded %s and %s' % (dtc.join(self._storedir, 'hyper.pkl'), dtc.join(self._storedir, 'args.pkl')))
+            dtc.logger.info('Loaded %s and %s' % (dtc.join(self._storedir, 'hyper.pkl'), dtc.join(self._storedir, 'args.pkl')))
 
         self._image_dir = self._args['image_dir']
         self._data_dir = self._args['data_dir']
@@ -196,16 +197,16 @@ class VisualizeDir(object):
         # Train/Test DataFrames
         self.df_train_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_train.pkl'))[['image', 'height', 'width']]
         self.df_train_images.index = self.df_train_images.image
-        print('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
+        dtc.logger.info('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_train.pkl'), self.df_train_images.shape))
 
         self._df_test_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_test.pkl'))[['image', 'height', 'width']]
         self._df_test_images.index = self._df_test_images.image
-        print('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_test.pkl'), self._df_test_images.shape))
+        dtc.logger.info('Loaded image dimensions from %s %s'%(os.path.join(self._raw_data_dir, 'df_test.pkl'), self._df_test_images.shape))
 
         try:
             self._df_valid_images = pd.read_pickle(os.path.join(self._raw_data_dir, 'df_valid.pkl'))[['image', 'height', 'width']]
             self._df_valid_images.index = self._df_valid_images.image
-            print('Loaded image dimensions from %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
+            dtc.logger.info('Loaded image dimensions from %s %s' % (os.path.join(self._raw_data_dir, 'df_valid.pkl'), self._df_valid_images.shape))
         except IOError:  # df_valid.pkl is absent implies df_valid data is included within df_train
             self._df_valid_images = self.df_train_images
         # self._padded_im_dim = {'height': self._hyper.image_shape[0], 'width': self._hyper.image_shape[1]}
@@ -252,17 +253,25 @@ class VisualizeDir(object):
             #     print('%s is not a ConvLayer'%layer)
         return n_h, n_w
 
-    def get_steps(self):
-        steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if re.match(r'^training_[0-9]+\.h5$', f)])
-        epoch_steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(self._storedir) if re.match(r'^(test|validation)_[0-9]+\.h5$', f)])
+    @staticmethod
+    def GET_STEPS(storedir):
+        steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(storedir) if re.match(r'^training_[0-9]+\.h5$', f)])
+        epoch_steps = set([int(os.path.basename(f).split('_')[-1].split('.')[0]) for f in os.listdir(storedir) if re.match(r'^(test|validation)_[0-9]+\.h5$', f)])
         steps = sorted(list(steps))
         epoch_steps = sorted(list(epoch_steps))
         return steps, epoch_steps
 
-    def get_snapshots(self):
-        epoch_steps = [int(os.path.basename(f).split('.')[0].split('snapshot-')[1]) for f in os.listdir(self._logdir) if f.endswith('.index') and f.startswith('snapshot-')]
+    def get_steps(self):
+        return self.GET_STEPS(self._storedir)
+
+    @staticmethod
+    def GET_SNAPSHOTS(logdir):
+        epoch_steps = [int(os.path.basename(f).split('.')[0].split('snapshot-')[1]) for f in os.listdir(logdir) if f.endswith('.index') and f.startswith('snapshot-')]
         epoch_steps = sorted(epoch_steps)
         return epoch_steps
+
+    def get_snapshots(self):
+        return self.GET_SNAPSHOTS(self._logdir)
 
     def view_snapshots(self):
         snapshots = self.get_snapshots()
@@ -555,8 +564,10 @@ class VisualizeDir(object):
             image = np.mean(image_data, axis=-1)  # collapse RGB dimensions into one
         else:
             image = image_data
-        image[image < 0.5] = 0.0  # set all text values to 0. Will render text better when blended with alpha.
-        return image * alpha
+        # image[image != 1.0] = 0.0  # set all text values to 0. Will render text better when blended with alpha.
+        image_alpha = image * alpha
+        image[image == 1.0] = image_alpha[image == 1.0]
+        return image
         # return np.concatenate((image_data, self._project_alpha(alpha_t, pool_factor, pad_0, pad_1, invert=invert_alpha)), axis=2)
 
     def test_alpha_viz(self):
@@ -577,11 +588,12 @@ class VisualizeDir(object):
 
         plotImages(image_details, dpi=200)
 
+    ImgDetail = collections.namedtuple('ImgDetail', ('name', 'array', 'cmap', 'interpolation'))
     def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma', index=None):
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         if index is not None:
             df_all = df_all.loc[index]
-        sample_id = df_all.iloc[sample_num].name  # id of top row in sort order
+        sample_id = df_all.iloc[sample_num].name  # position of row in nd-array
         nd_ids = df_all.loc[sample_id].ids  # (B,T) --> (T,)
         nd_words = df_all.loc[sample_id].words  # (B,T) --> (T,)
         # Careful with sample_id
@@ -602,24 +614,27 @@ class VisualizeDir(object):
 
         predicted_ids = self.strs(graph, step, 'predicted_ids', trim=True).loc[sample_id].predicted_ids
         y = self.strs(graph, step, 'y', trim=True).loc[sample_id].y
-        print('PREDICTED SEQUENCE\n')
-        display(Math(predicted_ids))
-        print(predicted_ids)
-        print('TARGET SEQUENCE\n')
-        display(Math(y))
-        print(y)
-        
-        image_details =[(image_name, image_data),
-                        ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1,
-                                                        invert=invert_alpha,
-                                                        expand_dims=False,
-                                                        gamma_correction=gamma_correction))]
+
+
+        dtc.logger.info('PREDICTED SEQUENCE\n')
+        # display(Math(predicted_ids))
+        dtc.logger.info(predicted_ids)
+        dtc.logger.info('TARGET SEQUENCE\n')
+        # display(Math(y))
+        dtc.logger.info(y)
+
+        image_details =[self.ImgDetail(image_name, image_data, 'gist_gray', 'bilinear'),
+                        # ('alpha_0', self._project_alpha(nd_alpha[:,:,0], pool_factor, pad_0, pad_1,
+                        #                                 invert=invert_alpha,
+                        #                                 expand_dims=False,
+                        #                                 gamma_correction=gamma_correction))
+                        ]
         # image_details = [(image_name, image_data),]
         for t in xrange(T):
             # Blend alpha and image
             composit = self._blend_image(image_data, nd_alpha[:, :, t], pool_factor, pad_0, pad_1,
                                          invert_alpha=invert_alpha, gamma_correction=gamma_correction)
-            image_details.append((nd_words[t], composit))
+            image_details.append(self.ImgDetail(nd_words[t], composit, cmap, 'bilinear'))
             if nd_ids[t] == 0:
                 break
 
