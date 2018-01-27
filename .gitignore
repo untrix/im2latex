@@ -118,5 +118,6 @@ bin/deactivate
 .idea/
 zpool_3TB
 scratch.*
+gallery/
 
 
