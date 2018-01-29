@@ -119,5 +119,4 @@ bin/deactivate
 zpool_3TB
 scratch.*
 gallery/
-
-
+gallery
