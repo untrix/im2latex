@@ -2,7 +2,7 @@
 Published material from im2latex project  
 Two models variations are presented:  
 ### I2L-NOPOOL
-  1. [Random Sample of Predictions](http://www.singhonline.info/i2l/I2L-NOPOOL/rand_sample_100.html )
+  1. [Random Sample of Predictions](./I2L-NOPOOL/rand_sample_100.html )
   2. [Correct Predictions](http://www.singhonline.info/i2l/I2L-NOPOOL/matched_strs_100.html)
   3. [Incorrect Predictions (Mistakes)](http://www.singhonline.info/i2l/I2L-NOPOOL/unmatched_rand_sample.html)
   
