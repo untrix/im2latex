@@ -1,1 +1,13 @@
 theme: jekyll-theme-slate
+title: I2L
+description: Published material from im2latex project
+show_downloads: false
+defaults:
+  -
+    scope:
+      path: ""
+    values:
+      title: I2L
+      description: Published material from im2latex project
+github:
+  owner_name: Sumeet Singh
