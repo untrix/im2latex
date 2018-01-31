@@ -147,7 +147,9 @@ def gen_model_index(modelname):
 
 def gen_main_index():
     lines = []
-    lines.append('---\ntitle: Attentive Scan\n---\n### Examples of Attentive Scan\n')
+    lines.append('---\ntitle: Attentive Scan\n---\n')
+    lines.append('### Examples of Attentive Scan  \n')
+    lines.append('(Click on the model name of the sample you want to see)  \n')
     lines.append('\n')
     lines.append('|Model|Sample|\n')
     lines.append('|:----|:---:|\n')

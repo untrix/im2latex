@@ -1,9 +1,10 @@
 ---
 title: Attentive Scan
 ---
-### Examples of Attentive Scan
+### Examples of Attentive Scan  
+(Click on the model name of the sample you want to see)  
 
-|Model|Image|
+|Model|Sample|
 |:----|:---:|
 |<span style="white-space: nowrap"><a href="https://storage.googleapis.com/i2l/I2L-NOPOOL/alpha/alpha_b727765af13988d_gray.html">I2L-NOPOOL</a><span/><br><span style="white-space: nowrap"><a href="https://storage.googleapis.com/i2l/I2L-STRIPS/alpha/alpha_b727765af13988d_gray.html">I2L-STRIPS</a><span/>|![](https://storage.googleapis.com/i2l/data/dataset5/formula_images/b727765af13988d_basic.png)|
 |<span style="white-space: nowrap"><a href="https://storage.googleapis.com/i2l/I2L-NOPOOL/alpha/alpha_be5020af1c11fb0_gray.html">I2L-NOPOOL</a><span/><br><span style="white-space: nowrap"><a href="https://storage.googleapis.com/i2l/I2L-STRIPS/alpha/alpha_be5020af1c11fb0_gray.html">I2L-STRIPS</a><span/>|![](https://storage.googleapis.com/i2l/data/dataset5/formula_images/be5020af1c11fb0_basic.png)|
