@@ -7,6 +7,9 @@ import sys, os
 from multiprocessing import Pool
 
 def do(image_name):
+    def rmtail(s, t):
+        return s.rsplit(t, 1)[0]
+
     # import nbformat
     # from nbconvert.preprocessors import ExecutePreprocessor
 
@@ -18,7 +21,7 @@ def do(image_name):
     # ep = ExecutePreprocessor(timeout=600)  # kernel_name='python2')
     # ep.preprocess(nb)
 
-    command = 'jupyter nbconvert --to HTML --output alpha_%s_gray --execute --ExecutePreprocessor.timeout=300 disp_alpha.ipynb'%image_name.strip('.png')
+    command = 'jupyter nbconvert --to HTML --output alpha_%s_gray --execute --ExecutePreprocessor.timeout=300 disp_alpha.ipynb'%rmtail(image_name, '.png')
     print('Executing command: %s'%command)
     os.system(command)
 

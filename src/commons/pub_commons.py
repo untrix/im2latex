@@ -67,6 +67,24 @@ def DISP_ALPHA(storedir, graph, step, normalized_dataset=True,
     display(df_[['value', 'length']])
 
 
+def rmtails(s, *tails):
+    for t in tails:
+        s = s.rsplit(t, 1)[0]
+    return s
+
+
+rmtail = rmtails
+
+
+def rmheads(s, *heads):
+    for h in heads:
+        s = s.split(h, 1)[1]
+    return s
+
+
+rmhead = rmheads
+
+
 def get_unmatched_images(rendered_dir, strip=False):
     with open(os.path.join(rendered_dir, 'unmatched_filenames.txt'), 'r') as f:
         unmatched = [];
@@ -76,12 +94,12 @@ def get_unmatched_images(rendered_dir, strip=False):
             path = os.path.join(rendered_dir, 'images_pred', fname)
             if not os.path.exists(path):
                 if strip:
-                    missing.append(fname.strip('.png'))
+                    missing.append(fname.rsplit('.png', 1)[0])
                 else:
                     missing.append(fname)
             else:
                 if strip:
-                    unmatched.append(fname.strip('.png'))
+                    unmatched.append(fname.rsplit('.png', 1)[0])
                 else:
                     unmatched.append(fname)
 

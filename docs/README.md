@@ -12,3 +12,5 @@ Two models variations are presented:
   2. [Correct Predictions](./I2L-STRIPS/matched_strs_100.html)
   3. [Incorrect Predictions (Mistakes)](./I2L-STRIPS/unmatched_rand_sample.html)
   4. [Attentive Scan](./I2L-STRIPS/alpha)
+
+### [Attentive Scan Visualization](./alpha_index.html)
