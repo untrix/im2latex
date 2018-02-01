@@ -416,7 +416,7 @@ class CALSTMParams(dlc.HyperParams):
         elif self.att_model == 'MLP_shared':
             self.att_layers = MLPParams(self).updated({
                 'op_name': 'MLP_shared',
-                # Number of units in all layers of the attention model = D in the paper"s source-code.
+                # Number of units in all layers of the attention model = D in the Show and Tell paper"s source-code.
                 'layers': (
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
                     FCLayerParams(self).updated({'num_units': self.D, 'activation_fn': tf.nn.tanh, 'dropout': self.dropout}).freeze(),
@@ -777,7 +777,7 @@ class Im2LatexModelParams(dlc.HyperParams):
             assert not self.build_scanning_RNN, 'Scanning RNN cannot reuse-embeddings because there are no embeddings'
             self.output_first_layer = FCLayerParams(self).updated({
                 'num_units': self.m,
-                'activation_fn': tf.nn.tanh,
+                'activation_fn': tf.nn.tanh,  # Shouldn't this be None?
                 # dropout imported from outer scope
                 }).freeze()
 
@@ -817,8 +817,8 @@ class Im2LatexModelParams(dlc.HyperParams):
             # Note: There are no hidden init layers by default in the Show&Tell paper
             self.init_model_hidden = MLPParams(self).updated({
                 'layers': (
-                    # paper sets hidden activations=relu
-                    # The paper's source sets all hidden units to D
+                    # Show&Tell paper sets hidden activations=relu
+                    # The Show&Tell paper's source sets all hidden units to D
                     FCLayerParams(self).updated({'num_units': min(self.D, 100), 'activation_fn': tf.nn.tanh}).freeze(),
                 )
                 }).freeze()
