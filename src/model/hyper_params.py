@@ -768,7 +768,7 @@ class Im2LatexModelParams(dlc.HyperParams):
 
     def _trickledown(self):
         """
-        Trickle changes down to depending parameters in sub-tree(s).
+        Trickle changes down to dependant parameters in sub-tree(s).
         (For same level dependencies use LambdaFunctions instead.)
         Call at the end of __init__ and end of update.
         """
