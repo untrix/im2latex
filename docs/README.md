@@ -29,8 +29,8 @@ Download these files if you want to generate your own dataset starting from norm
 1. [I2L-140K Normalized Formula List (7MB Download)](https://storage.googleapis.com/i2l/data/dataset5/formulas.norm.filtered.txt.gz)
 2. [Im2latex-90K Normalized Formula List (4MB Download)](https://storage.googleapis.com/i2l/data/dataset3/dataset3_step0.gz)
 
-#### Full Dataset (Huge!)
-All data starting with step0 through step5. Includes all images as well as all the DataFrames and numpy arrays produced at the end of the [data processing pipeline](https://github.com/untrix/im2latex/tree/master/src/preprocessing).
+#### Full Dataset
+Download all preprocessed data: i.e. all images as well as DataFrames and numpy arrays produced at the end of the [data processing pipeline](https://github.com/untrix/im2latex/tree/master/src/preprocessing).
 
     WARNING: This is a HUGE download!
 
