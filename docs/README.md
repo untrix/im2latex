@@ -33,6 +33,7 @@ Download these files if you want to generate your own dataset starting from norm
 All data starting with step0 through step5. Includes all images as well as all the DataFrames and numpy arrays produced at the end of the [data processing pipeline](https://github.com/untrix/im2latex/tree/master/src/preprocessing).
 
     WARNING: This is a HUGE download!
+
 We recommend downloading the I2L-140K dataset since being larger of the two (and a superset of Im2latex-90K), it yields better generalization.
 1. [I2L-140K (822MB Download)](https://storage.googleapis.com/i2l/data/dataset5.tgz)
 2. [Im2latex-90K (542MB Download)](https://storage.googleapis.com/i2l/data/dataset3.tgz)
