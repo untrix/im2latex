@@ -1,13 +1,13 @@
 theme: jekyll-theme-slate
-title: I2L
-description: Published material from im2latex project
+title: Teaching Machines to Code
+description: Neural Markup Generation with Visual Attention
 show_downloads: false
 defaults:
   -
     scope:
       path: ""
     values:
-      title: I2L
-      description: Published material from im2latex project
+      title: Teaching Machines to Code
+      description: Neural Markup Generation with Visual Attention
 github:
   owner_name: Sumeet Singh

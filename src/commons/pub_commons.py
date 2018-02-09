@@ -31,7 +31,7 @@ def get_strs(dir):
 
 
 def DISP_ALPHA(storedir, graph, step, normalized_dataset=True,
-               sample_num=0, invert_alpha=True, max_words=None, gamma=1, cmap='gist_gray', image=None):
+               sample_num=0, invert_alpha=True, words=None, gamma=1, cmap='gist_gray', image=None, show_image=True):
     dtc.makeLogger(3, set_global=True)
     # Note: Good cmap values are: gist_gray, gist_yarg, gist_heat
     # Good values of gamma_correction are 1 and 2.2/2.3
@@ -45,8 +45,8 @@ def DISP_ALPHA(storedir, graph, step, normalized_dataset=True,
     else:
         df_strs = df_strs.iloc[sample_num:sample_num+1]
 
-    vs.alpha(sample_num, invert_alpha=invert_alpha, max_words=max_words, gamma_correction=gamma,
-                    cmap=cmap, index=df_strs.index)
+    vs.alpha(sample_num, invert_alpha=invert_alpha, words=words, gamma_correction=gamma,
+                    cmap=cmap, index=df_strs.index, show_image=show_image)
 
     # df_ = pd.DataFrame(data={
     #     '$\mathbf{\hat{y}}$': [df_strs.predicted_ids.iloc[0], df_strs.predicted_ids.iloc[0].strip('$')],

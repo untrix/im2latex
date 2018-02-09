@@ -589,7 +589,20 @@ class VisualizeDir(object):
         plotImages(image_details, dpi=200)
 
     ImgDetail = collections.namedtuple('ImgDetail', ('name', 'array', 'cmap', 'interpolation'))
-    def alpha(self, graph, step, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma', index=None):
+    def alpha(self, graph, step, sample_num=0, invert_alpha=False, words=None, gamma_correction=1,
+              cmap='magma', index=None, show_image=True):
+        """
+        Display Alpha Scan Through the Sequence.
+        :param graph:
+        :param step:
+        :param sample_num:
+        :param invert_alpha:
+        :param words: Either the max number of steps/words to display or a tuple/array/sequence of steps starting with 0.
+        :param gamma_correction:
+        :param cmap:
+        :param index:
+        :return:
+        """
         df_all = self.df_ids(graph, step, 'predicted_ids', trim=False)
         if index is not None:
             df_all = df_all.loc[index]
@@ -600,8 +613,16 @@ class VisualizeDir(object):
         nd_alpha = self.nd(graph, step, 'alpha')[0][sample_id]  # (N,B,H,W,T) --> (H,W,T)
         image_name = self.nd(graph, step, 'image_name')[sample_id]  # (B,) --> (,)
         T = len(nd_words)
-        if max_words is not None:
-            T = min(T, max_words)
+        Ts = None
+        if words is not None:
+            if dlc.issequence(nd_words):
+                T = max(words)
+                Ts = words
+            else:
+                T = min(T, words)
+        if Ts is None:
+            Ts = xrange(T)
+
         assert nd_alpha.shape[2] >= T, 'nd_alpha.shape == %s, T == %d'%(nd_alpha.shape, T)
         df = self.df_train_images if graph == 'training' else self._df_valid_images if graph == 'validation' else self._df_test_images
         image_data = self._image_processor.get_one(image_name,
@@ -628,9 +649,9 @@ class VisualizeDir(object):
                         #                                 invert=invert_alpha,
                         #                                 expand_dims=False,
                         #                                 gamma_correction=gamma_correction))
-                        ]
+                        ] if show_image else []
         # image_details = [(image_name, image_data),]
-        for t in xrange(T):
+        for t in Ts:
             # Blend alpha and image
             composit = self._blend_image(image_data, nd_alpha[:, :, t], pool_factor, pad_0, pad_1,
                                          invert_alpha=invert_alpha, gamma_correction=gamma_correction)
@@ -747,10 +768,11 @@ class VisualizeStep():
     def get_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
         return self._visualizer.get_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)
 
-    def alpha(self, sample_num=0, invert_alpha=False, max_words=None, gamma_correction=1, cmap='magma', index=None):
+    def alpha(self, sample_num=0, invert_alpha=False, words=None, gamma_correction=1, cmap='magma', index=None,
+              show_image=True):
         return self._visualizer.alpha(self._graph, self._step, sample_num, invert_alpha=invert_alpha,
-                                      max_words=max_words, gamma_correction=gamma_correction,
-                                      cmap=cmap, index=index)
+                                      words=words, gamma_correction=gamma_correction,
+                                      cmap=cmap, index=index, show_image=show_image)
 
 
 class DiffParams(object):
