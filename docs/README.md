@@ -1,7 +1,6 @@
 _________________
 ### Abstract
-We present a deep recurrent neural network model with `soft visual attention' that learns to generate LaTeX markup of real-world math formulas from their images. Applying neural sequence generation techniques that have been very successful in the fields of machine translation and image/handwriting/speech recognition, captioning, transcription and synthesis, we present a image-to-sequence model that learns to produce syntactically and semantically correct \LaTeX ~markup code of over 150 words long and achieves a BLEU score of 89\%; the best reported score so far for the [Im2Latex](https://openai.com/requests-for-research/\#im2latex) problem.
-We also visually demonstrate that the model learns to scan the image left-right / up-down much as a human would read text.  
+We present a deep recurrent neural network model with 'soft visual attention' that learns to generate LATEX markup of real-world math formulas from their images. Applying neural sequence generation techniques that have been very successful in the fields of machine translation and image/hand- writing/speech captioning, recognition, transcription and synthesis; we create an image-to-markup model that learns to produce syntactically and semantically correct LATEX markup code of over 150 words long and achieves a BLEU score of 89%; the best reported so far for the [Im2Latex problem](https://openai.com/requests-for-research/\#im2latex). We also visually demonstrate that the model learns to scan the image left-right / up-down much as a human reads text.  
 
 [The Paper](I2LPaper.pdf)   
 
