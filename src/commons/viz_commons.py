@@ -107,7 +107,8 @@ def plotImage(image_detail, axes, cmap=None, interp=None):
     path = image_detail[0]
     image_data = image_detail[1]
     title = os.path.basename(path)
-    axes.set_title(title)
+    # Valid font size are large, medium, smaller, small, x-large, xx-small, larger, None, x-small, xx-large
+    axes.set_title(title, fontdict={'fontsize': 'small'})
     axes.set_ylim(image_data.shape[0], 0)
     axes.set_xlim(0, image_data.shape[1])
     # print 'image %s %s'%(title, image_data.shape)
@@ -615,8 +616,9 @@ class VisualizeDir(object):
         T = len(nd_words)
         Ts = None
         if words is not None:
-            if dlc.issequence(nd_words):
-                T = max(words)
+            if dlc.issequence(words):
+                T = max(words)+1
+                assert len(nd_words) >= T, 'word %d is out of range'%(T-1,)
                 Ts = words
             else:
                 T = min(T, words)

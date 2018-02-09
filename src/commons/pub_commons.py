@@ -9,7 +9,7 @@ pd.options.display.max_colwidth = -1
 pd.options.display.width = None
 pd.options.display.max_seq_items = None
 pd.options.display.expand_frame_repr = True
-pd.options.display.colheader_justify = 'left'
+# pd.options.display.colheader_justify = 'right'
 # display.pprint_nest_depth = 1
 
 
