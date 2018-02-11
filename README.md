@@ -4,12 +4,12 @@ This project holds source code of a neural network model sovling the [im2latex r
 
 ## Platform
 
-1. This souce code is written in python 2.7 eco-system and uses Tensorflow 1.3, Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
-1. All the experiments were run on Linux (Ubuntu 16.04). It should work on the Mac as well but I haven't tested it.
+1. This souce code is written in python 2.7 eco-system and uses Tensorflow 1.3 (the GPU version), Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
+1. All the experiments were run on Linux (Ubuntu 16.04). All the preprocessing and postprocessing code should work on a Mac as well, but training requires GPUs.
 
 ## Hardware
 
-Training was carried out on two Nvidia 1080Ti cards in parallel and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. That said, this is a research project, not a finished product; therefore be prepared to poke at the code should you run into issues. BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
+Training was carried out on two Nvidia 1080Ti cards in [parallel](https://github.com/petewarden/tensorflow_makefile/blob/master/tensorflow/models/image/cifar10/cifar10_multi_gpu_train.py) and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. That said, this is a research project, not a finished product; therefore be prepared to poke at the code should you run into issues. BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
 
 Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://untrix.github.io/im2latex/I2LPaper.pdf).
 
