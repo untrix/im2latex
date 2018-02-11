@@ -19,7 +19,7 @@ Fork and clone this repo. In the instructions that follow, we will assume that y
 
 ## Dataset Processing
 
-You can either download all the normalized and tokenized data (800+ MB) from our [website](https://untrix.github.io/im2latex/) or create it yourself. If you want to create the data yourself - for e.g. you may want to tokenize it in your own way to create your own vocabulary, or you may have your own formula list - then go through the five preprocessing steps under src/preprocessing. There are five jupyter notebooks with inbuilt instructions that normalize, render, tokenize, filter and format the dataset. Run those notebooks and produce the data-files that the pipeline produces. By default the pipeline produces data-bins of size 56 and stores them in a sub-    directory `training_56`.
+LaTeX formulas need to be normalized, tokenized, vocabulary extracted and everything placed in a format that the code expects. You can either download all the processed data (800+ MB) from our [website](https://untrix.github.io/im2latex/) or process it yourself. If you want to process the data yourself - for e.g. you may want to tokenize it in your own way to create your own vocabulary, or you may want to use your own formula list - then go through the five preprocessing steps under src/preprocessing. There are five jupyter notebooks with inbuilt instructions that normalize, render, tokenize, filter and format the dataset. Run those notebooks and produce the data-files that the pipeline produces. By default the pipeline produces data-bins of size 56 and stores them in a sub-directory `training_56`.
 
 Ensure that all data produced or downloaded above is placed under $REPO_DIR/data. So, for e.g. if your data is in $DATA_DIR you could just create a link: `ln -s $DATA_DIR $REPO_DIR/data`.
 
@@ -35,7 +35,7 @@ Ensure that all data produced or downloaded above is placed under $REPO_DIR/data
     # Open run.py in an editor and change the parameter REGROUP_IMAGE to `(4,1)`
     `./run.py -a 0.0001 -e -1 -b 28 -p -v -1 -i 2 --r-lambda 0.00005 --raw-data-folder ../data/training_56 --logdir-tag STRIPS`
 
-This will run indefinitely, creating data and printing logs inside a newly created "logdir" (named as the timestamp + logdir-tag) created under ./tb_metrics - e.g. `logdir=./tb_metrics/2017-12-21 02-20-10 PST STRIPS/`. Run logs will be written to file called training.log - for e.g. `./tb_metrics/2017-12-21 02-20-10 PST STRIPS/store/training.log`. 
+This will run indefinitely, creating data and printing logs inside a newly created "logdir" (timestamp + logdir-tag) created under ./tb_metrics - e.g. `logdir=./tb_metrics/2017-12-21 02-20-10 PST STRIPS/`. Run logs will be written to file called training.log - for e.g. `./tb_metrics/2017-12-21 02-20-10 PST STRIPS/store/training.log`. 
 
 Tensorboard event files are created under the logdir, and Tensorboard charts are the way to view training progress. A helpful script for running tensorboard is `$REPO_DIR/bin/runTensorboard.bash`.
 
