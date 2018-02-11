@@ -1,16 +1,17 @@
 # im2latex
 
-This project holds source code of a neural network model sovling the [im2latex request for research of openai](https://openai.com/requests-for-research/#im2latex). Please visit the associated [website](https://untrix.github.io/im2latex/) for all details about the project including <a href="https://untrix.github.io/im2latex/I2LPaper.pdf">the paper</a> describing the model. This is a big project with a very extensive code-base, therefore if you run into any trouble don't hesitate to contact me.
+This project holds source code of a neural network model sovling the [im2latex request for research of openai](https://openai.com/requests-for-research/#im2latex). Befor you start with the code, be sure to visit the associated [website](https://untrix.github.io/im2latex/) for all details about the project including <a href="https://untrix.github.io/im2latex/I2LPaper.pdf">the paper</a> describing the model as well as visualizations of results. This is a big project with a very extensive code-base, therefore if you run into any trouble don't hesitate to contact me.
 
 ## Platform
 
-This souce code is written in python 2.7 eco-system and uses Tensorflow 1.3, Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import other python packages as you work with this code. Also, I ran all the experiments on Linux (Ubuntu 16.04). It should work on the Mac as well but I haven't tested it.
+1. This souce code is written in python 2.7 eco-system and uses Tensorflow 1.3, Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
+1. All the experiments were run on Linux (Ubuntu 16.04). It should work on the Mac as well but I haven't tested it.
 
 ## Hardware
 
-Training was carried out on two Nvidia 1080Ti cards in parallel and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. However this is not a finished product, so be prepared to poke at the code should you run into issues.
+Training was carried out on two Nvidia 1080Ti cards in parallel and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. That said, this is a research project, not a finished product; therefore be prepared to poke at the code should you run into issues. BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
 
-Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the paper.
+Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://untrix.github.io/im2latex/I2LPaper.pdf).
 
 ## Clone this repo
 
@@ -59,7 +60,7 @@ Lots of other files are created under logdir or under "storedir", storedir=logdi
 
     # Open run.py in an editor and change the parameter REGROUP_IMAGE to 'None'
     `cd $REPO_DIR`
-    `./run.py -a 0.0001 -e -1 -b 28 -v -1 -i 2 --r-lambda 0.00005 --raw-data-folder ../data/training_56 --logdir-tag 140K_noRegroup`
+    `./run.py -a 0.0001 -e -1 -b 28 -v -1 -i 2 --r-lambda 0.00005 --raw-data-folder ../data/training_56 --logdir-tag NOPOOL`
 
 ## Evaluate Model
 
