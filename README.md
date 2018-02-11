@@ -1,10 +1,10 @@
-# im2latex
+# [im2latex](https://untrix.github.io/im2latex/)
 
-This project holds source code of a neural network model sovling the [im2latex request for research of openai](https://openai.com/requests-for-research/#im2latex). Befor you start with the code, be sure to visit the associated [website](https://untrix.github.io/im2latex/) for all details about the project including <a href="https://untrix.github.io/im2latex/I2LPaper.pdf">the paper</a> describing the model as well as visualizations of results. This is a big project with a very extensive code-base, therefore if you run into any trouble don't hesitate to contact me.
+This project holds source code of a neural network model sovling the im2latex request for research of [OpenAI](https://openai.com/). Before you start with the code, be sure to visit the [project website](https://untrix.github.io/im2latex/) for all details, including <a href="https://untrix.github.io/im2latex/I2LPaper.pdf">a paper</a> describing the model as well as visualizations of results. If you run into any trouble, please don't hesitate to contact me.
 
 ## Platform
 
-1. This souce code is written in python 2.7 eco-system and uses Tensorflow 1.3 (the GPU version), Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
+1. This souce code is written in the python 2.7 eco-system and uses Tensorflow 1.3 (the GPU version), Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
 1. All the experiments were run on Linux (Ubuntu 16.04). All the preprocessing and postprocessing code should work on a Mac as well, but training requires GPUs.
 
 ## Hardware
