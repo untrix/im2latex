@@ -44,10 +44,10 @@ def main():
                         help="Number of training steps to run. Defaults to -1 if unspecified, i.e. run to completion",
                         default=-1)
     parser.add_argument("--num-epochs", "-e", dest="num_epochs", type=int,
-                        help="Number of training steps to run. Defaults to 10 if unspecified.",
+                        help="Number of training epochs to run. Defaults to 10 if unspecified.",
                         default=10)
     parser.add_argument("--batch-size", "-b", dest="batch_size", type=int,
-                        help="Batchsize. If unspecified, defaults to the default value in hyper_params",
+                        help="Batchsize per gpu. If unspecified, defaults to the default value in hyper_params",
                         default=None)
     parser.add_argument("--seq2seq-beam-width", "-w", dest="seq2seq_beam_width", type=int,
                         help="seq2seq Beamwidth. If unspecified, defaults to 10",
