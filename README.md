@@ -15,17 +15,17 @@ Below are instructions on how to train and evaluate this model. If you train it 
 
 ## Clone this repo
 
-Fork and clone this repo. In the instructions that follow, we will assume that you've cloned this repo into `$REPO_DIR=~/im2latex`.
+Fork and clone this repo. The instructions that follow assume that you've cloned this repo into `$REPO_DIR=~/im2latex`.
 
 ## Dataset Processing
 
-LaTeX formulas need to be normalized, tokenized, vocabulary extracted and everything placed in a format that the code expects. You can either download all the processed data (800+ MB) from our [website](https://untrix.github.io/i2l/) or process it yourself. If you want to process the data yourself - for e.g. you may want to tokenize it in your own way to create your own vocabulary, or you may want to use your own formula list - then go through the five preprocessing steps under src/preprocessing. There are five jupyter notebooks with inbuilt instructions that normalize, render, tokenize, filter and format the dataset. Run those notebooks and produce the data-files that the pipeline produces. By default the pipeline produces data-bins of size 56 and stores them in a sub-directory `training_56`.
+LaTeX formulas need to be normalized, tokenized, vocabulary extracted and everything placed in a format that the code expects. You can either download all the processed data (800+ MB) from our [website](https://untrix.github.io/i2l/) or process it yourself. If you want to process the data yourself (why? maybe because you want to tokenize it in your own way and create your own vocabulary, or perhaps you want to use your own formula list) then go through the five preprocessing steps under src/preprocessing. There are five jupyter notebooks with inbuilt instructions that normalize, render, tokenize, filter and format the dataset. Run those notebooks and produce the data-files that the pipeline produces. By default the pipeline produces data-bins of size 56 and stores them in a sub-directory `training_56`.
 
 Ensure that all data produced or downloaded above is placed under $REPO_DIR/data. So, for e.g. if your data is in $DATA_DIR you could just create a link: `ln -s $DATA_DIR $REPO_DIR/data`.
 
 ## Hyperparams
 
-`$REPO_DIR/src/run.py` is the main script, which defines values for the most changed hyperparameters. The values can either be hard-coded within the script or taken from the commandline (but not both). Execute `cd $REPO_DIR/src; run.py --help` to see execution details (and/or look at the code). `$REPO_DIR/src/model/hyper_params.py` has a description / declaration of all parameters and you can provide values there for the parameters whose values weren't provided in `run.py`. You can only set hyperparameter values exactly one time, otherwise you will get an error. Since there are 10s of parameters, this feature helps you avoid situations like where you set a value somewhere and then forgot about it and set it somewhere else.
+The code is flexible and you can create model variants out of it by merely changing (hyper)parameters. Since there are many parameters (about 86 top-level ones and more if you count the nested ones) they need to be managed. Most of the commonly changed ones have been extracted into `$REPO_DIR/src/run.py` which is the main script. Many of these params can be supplied on the command line (execute `cd $REPO_DIR/src; run.py --help` to see execution details and look at the code) while the rest are set within the script. `$REPO_DIR/src/model/hyper_params.py` has a declaration of all parameters used throughout the project and you can also set values there. That said, there is a safegaurd in place that allows you to set a hyperparameter at only one place. This feature helps you avoid/manage parameter hell.
 
 ## Train the Model
 
