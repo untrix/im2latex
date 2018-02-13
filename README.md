@@ -25,7 +25,7 @@ Ensure that all data produced or downloaded above is placed under $REPO_DIR/data
 
 ## Hyperparams
 
-The code is very flexible and you can create all several model variants by simply changing the configuration params/hyperparams. That's why there are many params (about 86 top-level ones and more if you count the nested ones). For convenience, most of the commonly changed params have been extracted into the main script `$REPO_DIR/src/run.py`. `$REPO_DIR/src/model/hyper_params.py` declares all parameters used throughout the project (even those that are set in `run.py`) and you can also set values there (but as a safeguard, the code won't allow you to set different values in two places).
+The code is very flexible in that it one can create several model variants by simply changing the configuration params/hyperparams. That's why there are many params (about 86 top-level ones and more if you count the nested ones) and they need to be managed. All the commonly changed params are either set in the main script `$REPO_DIR/src/run.py`, or supplied to it from the command-line. `$REPO_DIR/src/model/hyper_params.py` declares all parameters used throughout the project (including those in `run.py`) and you can also set param values there. However, as a safeguard the code won't allow you to set different values in two places; therefore it is most convenient to set a param in only one location in the code.
 
 ## Train the Model
 
