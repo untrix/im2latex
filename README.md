@@ -1,6 +1,6 @@
 # [im2latex](https://untrix.github.io/i2l/)
 
-This project holds source code of a neural network model sovling the im2latex request for research of [OpenAI](https://openai.com/). Before you start with the code, be sure to visit the [project website](https://untrix.github.io/i2l/) for all details, including <a href="https://untrix.github.io/i2l/I2LPaper.pdf">a paper</a> describing the model as well as visualizations of results. If you run into any trouble, please don't hesitate to contact me.
+This project holds source code of a neural network model sovling the im2latex request for research of [OpenAI](https://openai.com/). Before you start with the code, be sure to visit the [project website](https://untrix.github.io/i2l/) for all details, including <a href="https://arxiv.org/abs/1802.05415">a paper</a> describing the model as well as visualizations of results. If you run into any trouble, please don't hesitate to contact me.
 
 ## Platform
 
@@ -11,7 +11,7 @@ This project holds source code of a neural network model sovling the im2latex re
 
 Training was carried out on two Nvidia 1080Ti cards in [parallel](https://github.com/petewarden/tensorflow_makefile/blob/master/tensorflow/models/image/cifar10/cifar10_multi_gpu_train.py) and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. That said, this is a research project, not a finished product; therefore be prepared to poke at the code should you run into issues. BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
 
-Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://untrix.github.io/i2l/I2LPaper.pdf).
+Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://arxiv.org/abs/1802.05415).
 
 ## Clone this repo
 
