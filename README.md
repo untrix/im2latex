@@ -13,7 +13,7 @@ Training was carried out on two Nvidia 1080Ti cards in [parallel](https://github
 
 Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://arxiv.org/abs/1802.05415).
 
-## Clone this repo
+## Fork this repo
 
 Fork and clone this repo. The instructions that follow assume that you've cloned this repo into `$REPO_DIR=~/im2latex`.
 
@@ -39,19 +39,19 @@ This will run indefinitely, creating data and printing logs inside a newly creat
 
 Tensorboard event files are created under the logdir, and Tensorboard charts are the way to view training progress. A helpful script for running tensorboard is `$REPO_DIR/bin/runTensorboard.bash`.
 
-Lots of other files are created under logdir or under "storedir", storedir=logdir/store:
+Lots of other files are created under logdir or under "storedir" (=logdir/store or logdir/store_2 or logdir/store_3 etc.):
 
 1. Training and validation predictions and some other data is dumped into `storedir/training_*.h5` and `storedir/training_*.h5`files. These can be visualized and processed using notebooks under $REPO_DIR/tools.
 2. All hyperparams and arguments are dumped into `storedir/*.pkl` files.
-3. Model snapshots are dumped under logdir. You can resume your model from a snapshot/checkpoint. If you stop training and resume from a snapshot, then a new storedir is created under logdir - e.g. `logdir/store_2`, then `logdir_store3` and so on. You can resume as many times as you'd like.
+3. Model snapshots are dumped under logdir. You can resume your model from a snapshot/checkpoint. If you stop training and resume from a snapshot, then a new storedir is created under logdir - e.g. `logdir/store_2`, then `logdir_store_3` and so on. You can resume as many times as you'd like.
 4. Validation cycle is run periodically based on an algorithm inside `$REPO_DIR/src/train_multi_gpu.py`. But you can also manually run it by hitting control-C (i.e. sending SIGINT to run.py). A snapshot is first created, then the validation cycle starts running and tensorboard events are emitted for it. After a validation epoch is completed, the training cycle resumes.
 4. The training runs indefinitely and can be stopped or influenced by sending the following signals to run.py:
-    * SIGTERM: Dump snapshot, tun on validation cycle (epoch) and then stop.
+    * SIGTERM: Dump snapshot, run one validation cycle (epoch) and then stop.
     * SIGINT (control-C): Dump snapshot, run a validation cycle, then resume training.
     * SIGUSR1: Stop training.
     * The signal's action is performed at the next opportunity - usually after the current training step is completed. If you send the same signal again before its action is taken, then the signal simply gets "undone". You can use this feature to recover if you sent the signal accidentally. For e.g. if you hit control-C by mistake, you can undo that action by immediately hitting control-C again.
 5. Tensorboard metrics and top-level hyperparms across various runs can be compared using: [$REPO_DIR/src/tools/eval_runs.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/eval_runs.ipynb).
-6. Attention scan visualization is available via the notebooks: [$REPO_DIR/src/tools/visualize.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/visualize.ipynb) and [$REPO_DIR/src/tools/disp_alpha.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/disp_alpha.ipynb). Be sure to checkout more functionality available in `$REPO_DIR/src/commons/viz_commons.py`.
+6. Attention scan visualization is available via the notebooks: [$REPO_DIR/src/tools/visualize.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/visualize.ipynb) and [$REPO_DIR/src/tools/disp_alpha.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/disp_alpha.ipynb). Also, be sure to checkout more functionality available in `$REPO_DIR/src/commons/viz_commons.py`.
 7. You can diff hyperparams and args of various runs via the notebook: [$REPO_DIR/src/tools/diff_params.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/diff_params.ipynb).
 8. More visualization is available using the notebook [$REPO_DIR/src/tools/disp.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/disp.ipynb) and functions in `$REPO_DIR/src/commons/pub_commons.py`.
 9. Data extraction examples are available in [$REPO_DIR/src/tools/publishing.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/publishing.ipynb), [$REPO_DIR/src/tools/sample_preds.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/sample_preds.ipynb) and [$REPO_DIR/src/tools/sample_strs.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/sample_strs.ipynb)
