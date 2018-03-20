@@ -2,7 +2,10 @@
 
 This project holds source code of a neural network model sovling the im2latex request for research of [OpenAI](https://openai.com/).
 
-**Before you start with the code, be sure to [**read the paper**](https://arxiv.org/abs/1802.05415) first**. The code implements the paper, not the other way around! Also, be sure to visit the [project website](https://untrix.github.io/i2l/) which has all ancillary information including dataset and visuals.
+## Introduction
+Please visit the [project website](https://untrix.github.io/i2l/) for a full description of what this research project is all about. It includes links to the [research paper](https://arxiv.org/abs/1802.05415) that this code implements, as well as the dataset, visuals etc.
+
+>**Before you start with the code, be sure to [read the paper](https://arxiv.org/abs/1802.05415)** first. This code implements the paper, not the other way around!
 
 ## Platform
 
