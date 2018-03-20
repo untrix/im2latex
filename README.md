@@ -11,7 +11,7 @@ This project holds source code of a neural network model sovling the im2latex re
 
 Training was carried out on two Nvidia GeForce 1080Ti cards in [parallel](https://github.com/petewarden/tensorflow_makefile/blob/master/tensorflow/models/image/cifar10/cifar10_multi_gpu_train.py) and all commandline options here assume that. However the code is written to work on any number of cards in parallel, so you should be able to use just 1 or more cards. That said, this is a research project, not a finished product; therefore be prepared to poke at the code should you run into issues. 
 
-You should ideally use two or more GeForce 1080Ti type cards (3584 CUDA cores and 11GB memory) to fully train the model in 1-2 days or less. One 1080Ti will take more than 2 days to reach the accuracy specified in the paper. BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
+You should ideally use two or more GeForce 1080Ti type cards (3584 CUDA cores and 11GB memory) to fully train the model in 2-2.5 days. One 1080Ti will take about 4-5 days to reach the accuracy specified in the paper. If you want to do serious research on a model of this size, I'd recommend 4 GPUs if you can afford it, because research requires 100s of runs (even 1000s). BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
 
 Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://arxiv.org/abs/1802.05415).
 
