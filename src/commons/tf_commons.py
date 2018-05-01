@@ -939,7 +939,7 @@ def edit_distance2D(B, predicted_ids, predicted_lens, target_ids, target_lens, b
     Compute edit distance of predicted_ids (optionally ignoring blank_tokens, space_tokens and eos_tokens) with target_ids
     which are assumed to have no blank tokens but may have space tokens and eos_tokens.
     The result is equivalent to computing edit_distance after squashing predicted_lens - but is more efficient since it doesn't
-    actually do that.
+    actually do the squashing.
     Args:
         B: batch-size
         predicted_ids: shape (B, T)
@@ -1081,7 +1081,7 @@ def squash_2d(B, m, lens, blank_token, padding_token=0):
         seq_mask = tf.sequence_mask(lens, maxlen=T)
         for i in range(B):
             m_i = m[i]
-            mask_i = tf.logical_and( seq_mask[i], tf.not_equal(m_i, blank_token)) #(T,)
+            mask_i = tf.logical_and(seq_mask[i], tf.not_equal(m_i, blank_token)) #(T,)
             idx_i = tf.where(mask_i) # (N, 1)
             vals_i = tf.gather_nd(m_i, idx_i) # (N, )
             len_i = tf.shape(vals_i)[0]

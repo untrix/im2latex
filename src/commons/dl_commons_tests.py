@@ -97,7 +97,6 @@ class Props3(dlc.Params):
 
 
 class TestCaseBase(unittest.TestCase):
-
     @staticmethod
     def dictSet(d, name, val):
         d[name] = val

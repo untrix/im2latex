@@ -165,8 +165,8 @@ class TFOpNames(dlc.Properties):
             l.append(op_dict[name])
         return tuple(l)
 
-    def run_ops(self, session, op_dict):
-        self._set_vals(session.run(self._op_tuple(op_dict)))
+    def run_ops(self, session, op_dict, feed_dict={}):
+        self._set_vals(session.run(self._op_tuple(op_dict), feed_dict=feed_dict))
 
 
 class TFRun(TFOpNames):
@@ -866,55 +866,85 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
     accum = Accumulator()
     n = 0
     hyper.logger.info('evaluation cycle starting at step %d for %d steps', step, num_steps)
+    ops_base = ('top1_len_ratio',
+                'top1_mean_ed',
+                'top1_accuracy',
+                'top1_num_hits',
+                'top1_ids_list',
+                'top1_lens',
+                'y_ctc_list',
+                'ctc_len'
+                ) + (('bok_ids_list', 'bok_seq_lens', 'bok_accuracy', 'bok_mean_ed') if args.log_bok else tuple())
+    ops_addl = ('y_s_list',
+                'top1_alpha_list',
+                'top1_beta_list',
+                'image_name_list',
+                'top1_ed') + (('bok_ed',) if args.log_bok else tuple())
+
     while n < num_steps:
         n += 1
         if (n == print_batch_num) or args.save_all_eval:
-            (l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list,
-             top1_beta_list, image_name_list, top1_ed) = session.run(
-                (
-                    eval_ops.top1_len_ratio,
-                    eval_ops.top1_mean_ed,
-                    eval_ops.top1_accuracy,
-                    eval_ops.top1_num_hits,
-                    eval_ops.top1_ids_list,
-                    eval_ops.top1_lens,
-                    eval_ops.y_ctc_list,
-                    eval_ops.ctc_len,
-                    eval_ops.y_s_list,
-                    eval_ops.top1_alpha_list,
-                    eval_ops.top1_beta_list,
-                    eval_ops.image_name_list,
-                    eval_ops.top1_ed
-                ))
-            if args.save_all_eval:
-                accum.extend({'y': y_s_list,
-                              'top1_ids': top1_ids_list,
-                              'alpha': top1_alpha_list,
-                              'beta': top1_beta_list,
-                              'image_name': image_name_list
-                              })
-                accum.append({'ed': top1_ed})
+            batch_ops = TFRun(session, ops.eval_ops, ops_base + ops_addl, None)
+            # (l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, y_s_list, top1_alpha_list,
+            #  top1_beta_list, image_name_list, top1_ed) = session.run(
+            #     (
+            #         eval_ops.top1_len_ratio,
+            #         eval_ops.top1_mean_ed,
+            #         eval_ops.top1_accuracy,
+            #         eval_ops.top1_num_hits,
+            #         eval_ops.top1_ids_list,
+            #         eval_ops.top1_lens,
+            #         eval_ops.y_ctc_list,
+            #         eval_ops.ctc_len,
+            #         eval_ops.y_s_list,
+            #         eval_ops.top1_alpha_list,
+            #         eval_ops.top1_beta_list,
+            #         eval_ops.image_name_list,
+            #         eval_ops.top1_ed
+            #     ))
         else:
-            l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len = session.run((
-                                eval_ops.top1_len_ratio,
-                                eval_ops.top1_mean_ed,
-                                eval_ops.top1_accuracy,
-                                eval_ops.top1_num_hits,
-                                eval_ops.top1_ids_list,
-                                eval_ops.top1_lens,
-                                eval_ops.y_ctc_list,
-                                eval_ops.ctc_len
-                                ))
-            y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
+            batch_ops = TFRun(session, ops.eval_ops, ops_base, None)
+            # l, mean_ed, accuracy, num_hits, top1_ids_list, top1_lens, y_ctc_list, ctc_len, bok_ids_list, bok_seq_lens = session.run((
+            #                     eval_ops.top1_len_ratio,
+            #                     eval_ops.top1_mean_ed,
+            #                     eval_ops.top1_accuracy,
+            #                     eval_ops.top1_num_hits,
+            #                     eval_ops.top1_ids_list,
+            #                     eval_ops.top1_lens,
+            #                     eval_ops.y_ctc_list,
+            #                     eval_ops.ctc_len,
+            #                     eval_ops.bok_ids_list,
+            #                     eval_ops.bok_seq_lens
+            #                     ))
+            # y_s_list = top1_alpha_list = top1_beta_list = image_name_list = top1_ed = None
 
-        bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
+        batch_ops.run_ops()
+        if args.save_all_eval:
+            accum.extend({'y': batch_ops.y_s_list,
+                          'top1_ids': batch_ops.top1_ids_list,
+                          'alpha': batch_ops.top1_alpha_list,
+                          'beta': batch_ops.top1_beta_list,
+                          'image_name': batch_ops.image_name_list
+                          })
+            accum.append({'ed': batch_ops.top1_ed})
+            if args.log_bok:
+                accum.extend({'bok_ids': batch_ops.bok_ids_list})
+                accum.append({'bok_ed': batch_ops.bok_ed})
+
+        bleu = sentence_bleu_scores(hyper, batch_ops.top1_ids_list, batch_ops.top1_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
         accum.append({'bleus': bleu})
-        accum.extend({'sq_predicted_ids': squashed_seq_list(hyper, top1_ids_list, top1_lens)})
-        accum.extend({'trim_target_ids': trimmed_seq_list(hyper, y_ctc_list, ctc_len)})
-        accum.append({'len_ratio': l})
-        accum.append({'mean_eds': mean_ed})
-        accum.append({'accuracies': accuracy})
-        accum.append({'hits': num_hits})
+        accum.extend({'sq_predicted_ids': squashed_seq_list(hyper, batch_ops.top1_ids_list, batch_ops.top1_lens)})
+        accum.extend({'trim_target_ids': trimmed_seq_list(hyper, batch_ops.y_ctc_list, batch_ops.ctc_len)})
+        accum.append({'len_ratio': batch_ops.top1_len_ratio})
+        accum.append({'mean_eds': batch_ops.top1_mean_ed})
+        accum.append({'accuracies': batch_ops.top1_accuracy})
+        accum.append({'hits': batch_ops.top1_num_hits})
+        if args.log_bok:
+            bok_bleu = sentence_bleu_scores(hyper, batch_ops.bok_ids_list, batch_ops.bok_seq_lens, batch_ops.y_ctc_list, batch_ops.ctc_len)
+            accum.extend({'sq_bok_ids': squashed_seq_list(hyper, batch_ops.bok_ids_list, batch_ops.bok_seq_lens)})
+            accum.append({'bok_bleus': bok_bleu})
+            accum.append({'bok_mean_eds': batch_ops.bok_mean_ed})
+            accum.append({'bok_accuracies': batch_ops.bok_accuracy})
 
         if n == print_batch_num:
             # logger.info('############ RANDOM VALIDATION BATCH %d ############', n)
@@ -924,16 +954,22 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
             # bleu = sentence_bleu_scores(hyper, top1_ids_list, top1_lens, y_ctc_list, ctc_len)
 
             with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
-                storer.write('predicted_ids', top1_ids_list, np.int16)
-                storer.write('y', y_s_list, np.int16)
-                storer.write('alpha', top1_alpha_list, dtype=np.float32, batch_axis=1)
-                storer.write('beta', top1_beta_list, dtype=np.float32, batch_axis=1)
-                storer.write('image_name', image_name_list, dtype=np.unicode_)
-                storer.write('ed', top1_ed, dtype=np.float32)
+                storer.write('predicted_ids', batch_ops.top1_ids_list, np.int16)
+                if args.log_bok:
+                    storer.write('bok_ids', batch_ops.bok_ids_list, np.int16)
+                    storer.write('bok_bleu', bok_bleu, dtype=np.float32)
+                    storer.write('bok_ed', batch_ops.bok_ed, dtype=np.float32)
+                storer.write('y', batch_ops.y_s_list, np.int16)
+                storer.write('alpha', batch_ops.top1_alpha_list, dtype=np.float32, batch_axis=1)
+                storer.write('beta', batch_ops.top1_beta_list, dtype=np.float32, batch_axis=1)
+                storer.write('image_name', batch_ops.image_name_list, dtype=np.unicode_)
+                storer.write('ed', batch_ops.top1_ed, dtype=np.float32)
                 storer.write('bleu', bleu, dtype=np.float32)
-            # logger.info( '############ END OF RANDOM VALIDATION BATCH ############')
+            # logger.info('############ END OF RANDOM VALIDATION BATCH ############')
 
     agg_bleu2 = dlc.corpus_bleu_score(accum.sq_predicted_ids, accum.trim_target_ids)
+    if args.log_bok:
+        agg_bok_bleu2 = dlc.corpus_bleu_score(accum.sq_bok_ids, accum.trim_target_ids)
     eval_time_per100 = (time.time() - eval_start_time) * 100. / (num_steps * batch_size)
 
     if args.save_all_eval:
@@ -947,26 +983,59 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
             storer.write('image_name', accum.image_name, dtype=np.unicode_)
             storer.write('ed', accum.ed, dtype=np.float32)
             storer.write('bleu', accum.bleus, dtype=np.float32)
+            if args.log_bok:
+                storer.write('bok_ids', accum.bok_ids, np.int16)
+                storer.write('bok_bleu', accum.bok_bleus, dtype=np.float32)
+                storer.write('bok_ed', accum.bok_ed, dtype=np.float32)
 
-    logs_agg_top1 = session.run(eval_ops.logs_agg_top1,
-                                feed_dict={
-                                    eval_ops.ph_top1_len_ratio: accum.len_ratio,
-                                    eval_ops.ph_edit_distance: accum.mean_eds,
-                                    eval_ops.ph_num_hits: accum.hits,
-                                    eval_ops.ph_accuracy: accum.accuracies,
-                                    eval_ops.ph_valid_time: eval_time_per100,
-                                    eval_ops.ph_bleus: accum.bleus,
-                                    eval_ops.ph_bleu2: agg_bleu2,
-                                    eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
-                                })
+    summary_ops = TFOpNames(('logs_agg_top1', 'logs_agg_bok') if args.log_bok else ('logs_agg_top1',), None)
+    feed_dict = {
+        eval_ops.ph_top1_len_ratio: accum.len_ratio,
+        eval_ops.ph_edit_distance: accum.mean_eds,
+        eval_ops.ph_num_hits: accum.hits,
+        eval_ops.ph_accuracy: accum.accuracies,
+        eval_ops.ph_valid_time: eval_time_per100,
+        eval_ops.ph_bleus: accum.bleus,
+        eval_ops.ph_bleu2: agg_bleu2,
+        eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
+    }
+    if args.log_bok:
+        feed_dict.update({
+            eval_ops.ph_BoK_distance: accum.bok_mean_eds,
+            eval_ops.ph_BoK_accuracy: accum.bok_accuracies,
+            eval_ops.ph_BoK_bleu2: agg_bok_bleu2,
+            eval_ops.ph_BoK_bleus: accum.bok_bleus
+        })
+    summary_ops.run_ops(session, eval_ops, feed_dict)
+    # logs_agg_top1 = session.run((eval_ops.logs_agg_top1, ) + ((eval_ops.logs_agg_bok,) if args.log_bok else tuple()),
+    #                             feed_dict={
+    #                                 eval_ops.ph_top1_len_ratio: accum.len_ratio,
+    #                                 eval_ops.ph_edit_distance: accum.mean_eds,
+    #                                 eval_ops.ph_num_hits: accum.hits,
+    #                                 eval_ops.ph_accuracy: accum.accuracies,
+    #                                 eval_ops.ph_valid_time: eval_time_per100,
+    #                                 eval_ops.ph_bleus: accum.bleus,
+    #                                 eval_ops.ph_bleu2: agg_bleu2,
+    #                                 eval_ops.ph_BoK_bleu2: agg_bok_bleu2 if args.log_bok else [],
+    #                                 eval_ops.ph_BoK_bleus: accum.bok_bleus if args.log_bok else [],
+    #                                 eval_ops.ph_full_validation: 1 if (num_steps == batch_it.epoch_size) else 0
+    #                             })
     with dtc.Storer(args, 'metrics_test' if args.doTest else 'metrics_validation', step) as storer:
         storer.write('edit_distance', np.mean(accum.mean_eds, keepdims=True), np.float32)
         storer.write('num_hits', np.sum(accum.hits, keepdims=True), dtype=np.uint32)
         storer.write('accuracy', np.mean(accum.accuracies, keepdims=True), np.float32)
         storer.write('bleu', np.mean(accum.bleus, keepdims=True), dtype=np.float32)
         storer.write('bleu2', np.asarray([agg_bleu2]), dtype=np.float32)
+        if args.log_bok:
+            storer.write('bok_bleu', np.mean(accum.bok_bleus, keepdims=True), dtype=np.float32)
+            storer.write('bok_bleu2', np.asarray([agg_bok_bleu2]), dtype=np.float32)
+            storer.write('bok_edit_distance', np.mean(accum.bok_mean_eds, keepdims=True), np.float32)
+            storer.write('bok_accuracy', np.mean(accum.bok_accuracies, keepdims=True), np.float32)
 
-    tf_sw.add_summary(logs_agg_top1, standardized_step(step))
+    tf_sw.add_summary(summary_ops.logs_agg_top1, standardized_step(step))
+    if args.log_bok:
+        tf_sw.add_summary(summary_ops.logs_agg_bok, standardized_step(step))
+
     tf_sw.flush()
     hyper.logger.info('validation cycle finished. bleu2 = %f', agg_bleu2)
     return dlc.Properties({'eval_time_per100': eval_time_per100})

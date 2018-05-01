@@ -89,6 +89,9 @@ def main():
     parser.add_argument("--logging-level", "-l", dest="logging_level", type=int, choices=range(1,6),
                         help="Logging verbosity level from 1 to 5 in increasing order of verbosity.",
                         default=4)
+    parser.add_argument("--log-bok", dest="log_bok", action='store_true',
+                        help="Whether to log best-of-k results",
+                        default=False)
     parser.add_argument("--valid-frac", "-f", dest="valid_frac", type=float,
                         help="Fraction of samples to use for validation. Defaults to 0.05",
                         default=0.05)
@@ -183,6 +186,7 @@ def main():
                                     'image_dir': image_folder,
                                     'ctc_beam_width': args.ctc_beam_width,
                                     'seq2seq_beam_width': args.seq2seq_beam_width,
+                                    'k': 5,
                                     'valid_frac': args.valid_frac,
                                     'valid_epochs': args.valid_epochs,
                                     'save_all_eval': args.save_all_eval,
@@ -208,14 +212,15 @@ def main():
                                     # 'embeddings_regularizer': None,
                                     # 'outputMLP_skip_connections': False,
                                     'output_reuse_embeddings': False,
-                                    'REGROUP_IMAGE': (4,1),  # None  # (4,1)
+                                    'REGROUP_IMAGE': None,  # None or (4,1)
                                     'build_att_modulator': False,  # turn off beta-MLP
                                     'build_scanning_RNN': False,
                                     'init_model_input_transform': 'full',
                                     'build_init_model': True,
                                     'adam_beta1': 0.5,
                                     'adam_beta2': 0.9,
-                                    'pLambda': 0.0
+                                    'pLambda': 0.0,
+                                    'log_bok': args.log_bok
                                     })
 
     if args.batch_size is not None:

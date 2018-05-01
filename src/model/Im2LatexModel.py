@@ -1235,8 +1235,8 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
 
         tf.summary.scalar( 'edit_distances/top_%d'%k, bok_mean_ed, collections=['top_k'])
         tf.summary.scalar( 'accuracy/top_%d'%k, bok_accuracy, collections=['top_k'])
-        tf.summary.histogram( 'seq_lens/top_%d'%k, bok_seq_lens, collections=['top_k'])
-        tf.summary.histogram( 'scores/top_%d'%k, bok_seq_scores, collections=['top_k'])
+        tf.summary.histogram('seq_lens/top_%d'%k, bok_seq_lens, collections=['top_k'])
+        tf.summary.histogram('scores/top_%d'%k, bok_seq_scores, collections=['top_k'])
 
         logs_top1 = tf.summary.merge(tf.get_collection('top1'))
         logs_topK = tf.summary.merge(tf.get_collection('top_k'))
@@ -1261,8 +1261,10 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
             ph_valid_time =  tf.placeholder(hyper.dtype) # scalar
             ph_full_validation = tf.placeholder(dtype=tf.uint8)
 
-            ph_BoK_distance =  tf.placeholder(hyper.int_type) # (num_batches,)
+            ph_BoK_distance =  tf.placeholder(hyper.dtype) # (num_batches,)
             ph_BoK_accuracy =  tf.placeholder(hyper.dtype) # (num_batches,)
+            ph_BoK_bleus = tf.placeholder(hyper.dtype) # (num_gpus*B,)
+            ph_BoK_bleu2 = tf.placeholder(hyper.dtype) # scalar
 
             agg_num_hits = tf.reduce_sum(ph_num_hits)
             agg_accuracy = tf.reduce_mean(ph_accuracy)
@@ -1284,9 +1286,11 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
             top1.append(tf.summary.scalar('%s/top_1/bleu2/'%run_tag, ph_bleu2))
 
             bok  = []
-            bok.append( tf.summary.histogram('%s/bestof_%d/edit_distances/'%(run_tag, k), ph_BoK_distance))
-            bok.append( tf.summary.scalar('%s/bestof_%d/accuracy/'%(run_tag, k), agg_bok_accuracy))
-            bok.append( tf.summary.scalar('%s/bestof_%d/edit_distance/'%(run_tag, k), agg_bok_ed))
+            # bok.append( tf.summary.histogram('%s/bestof_%d/edit_distances/'%(run_tag, k), ph_BoK_distance))
+            bok.append(tf.summary.scalar('%s/bestof_%d/accuracy/'%(run_tag, k), agg_bok_accuracy))
+            bok.append(tf.summary.scalar('%s/bestof_%d/edit_distance/'%(run_tag, k), agg_bok_ed))
+            bok.append(tf.summary.scalar('%s/bestof_%d/bleu/' % (run_tag, k), tf.reduce_mean(ph_BoK_bleus)))
+            bok.append(tf.summary.scalar('%s/bestof_%d/bleu2/' % (run_tag, k), ph_BoK_bleu2))
 
             logs_agg_top1 = tf.summary.merge(top1)
             logs_agg_bok = tf.summary.merge(bok)
@@ -1294,21 +1298,24 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
 
         return dlc.Properties({
             'image_name_list': gather('image_name'),
-            'top1_lens': top1_lens, # (n*B,)
-            'top1_len_ratio': top1_len_ratio, #(n*B,)
-            'top1_ed': concat('top1_ed'), # (n*B,)
-            'bok_ed': concat('bok_ed'), # (n*B,)
-            'top1_mean_ed': top1_mean_ed, # scalar
-            'top1_accuracy': top1_accuracy, # scalar
-            'top1_num_hits': top1_num_hits, # scalar
-            'top1_ids_list': gather('top1_ids'),# ((B,T),...)
+            'top1_lens': top1_lens,  # (n*B,)
+            'top1_len_ratio': top1_len_ratio,  #(n*B,)
+            'top1_ed': concat('top1_ed'),  # (n*B,)
+            'top1_mean_ed': top1_mean_ed,  # scalar
+            'top1_accuracy': top1_accuracy,  # scalar
+            'top1_num_hits': top1_num_hits,  # scalar
+            'top1_ids_list': gather('top1_ids'),  # ((B,T),...)
             'top1_alpha_list': gather('top1_alpha'),  # [(N, B, H, W, T), ...]
-            'top1_beta_list': gather('top1_beta'), # [(N, B, T), ...]
-            'bok_ids_list': gather('bok_ids'),# ((B,T),...)
-            'y_s_list': gather('y_s'), # ((B,T),...)
-            'y_ctc_list': gather('y_ctc'), # [(B,T),...]
-            'ctc_len': concat('ctc_len'), # (num_gpus*B,)
-            'all_ids_list': gather('all_ids'), # ((B, BW, T), ...)
+            'top1_beta_list': gather('top1_beta'),  # [(N, B, T), ...]
+            'bok_ed': concat('bok_ed'),  # (n*B,)
+            'bok_mean_ed': bok_mean_ed,  # scalar
+            'bok_accuracy': bok_accuracy,  # scalar
+            'bok_seq_lens': bok_seq_lens,  # (n*B,)
+            'bok_ids_list': gather('bok_ids'),  # ((B,T),...)
+            'y_s_list': gather('y_s'),  # ((B,T),...)
+            'y_ctc_list': gather('y_ctc'),  # [(B,T),...]
+            'ctc_len': concat('ctc_len'),  # (num_gpus*B,)
+            'all_ids_list': gather('all_ids'),  # ((B, BW, T), ...)
             'output_ids_list': gather('output_ids'),
             'logs_top1': logs_top1,
             'logs_topK': logs_topK,
@@ -1316,7 +1323,9 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
             'ph_top1_len_ratio': ph_top1_len_ratio,
             'ph_edit_distance': ph_edit_distance,
             'ph_bleus': ph_bleus,
+            'ph_BoK_bleus': ph_BoK_bleus,
             'ph_bleu2': ph_bleu2,
+            'ph_BoK_bleu2': ph_BoK_bleu2,
             'ph_num_hits': ph_num_hits,
             'ph_accuracy': ph_accuracy,
             'ph_valid_time': ph_valid_time,

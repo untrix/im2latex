@@ -758,7 +758,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         PD(
             'k', 'Number of top-scoring beams to consider for best-of-k metrics.',
             integer(1),
-            5
+            # Value specified in run.py
         )
     )
 

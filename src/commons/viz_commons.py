@@ -305,7 +305,7 @@ class VisualizeDir(object):
             step:  step who's output is to be fetched
             key:   key of object to fetch - e.g. 'predicted_ids'
         """
-        assert graph in ['training', 'validation', 'test']
+        assert graph in ['training', 'validation', 'test', 'metrics_validation', 'metrics_test'], 'graph = %s'%graph
         with h5py.File(os.path.join(self._storedir, '%s_%d.h5'%(graph, step)), mode='r') as h5:
             return h5[key][...]
     
