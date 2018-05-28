@@ -546,7 +546,7 @@ class VisualizeDir(object):
 
         # gamma correction
         if gamma_correction != 1:
-            alpha = np.power(alpha, gamma_correction)  # gamma correction
+            pa = np.power(pa, gamma_correction)  # gamma correction
 
         # expand dims
         if expand_dims:
