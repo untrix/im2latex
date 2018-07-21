@@ -18,14 +18,14 @@ Training was carried out on two Nvidia GeForce 1080Ti cards in [parallel](https:
 
 You should ideally use two or more GeForce 1080Ti type cards (3584 CUDA cores and 11GB memory) to fully train the model in 2-2.5 days. One 1080Ti will take about 4-5 days to reach the accuracy specified in the paper. If you want to do serious research on a model of this size, I'd recommend 4 GPUs if you can afford it, because research requires 100s of runs (even 1000s). BTW, here's the [parts-list](https://pcpartpicker.com/user/Sumeet0/saved/#view=gFbvVn) of the hardware that I created for this project.
 
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0008%20(cropped).JPG" width="100"/></a>
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0007%20(cropped).JPG" width="100"/></a>
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0006%20(cropped).JPG" width="100"/></a>
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0004.JPG" width="100"/></a>
-<!-- <a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0005%20(cropped).JPG" width="100"/></a> -->
-<!-- <a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0003%20(cropped).JPG" width="100"/></a>
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0002%20(cropped).JPG" width="100"/></a>
-<a href="https://untrix.github.io/i2l/#hardware"><img src="https://untrix.github.io/i2l/images/IMG_0001%20(cropped).JPG" width="100"/></a> -->
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0008%20(cropped).JPG" width="100"/></a>
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0007%20(cropped).JPG" width="100"/></a>
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0006%20(cropped).JPG" width="100"/></a>
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0004.JPG" width="100"/></a>
+<!-- <a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0005%20(cropped).JPG" width="100"/></a> -->
+<!-- <a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0003%20(cropped).JPG" width="100"/></a>
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0002%20(cropped).JPG" width="100"/></a>
+<a href="https://untrix.github.io/i2l/hardware.html"><img src="https://untrix.github.io/i2l/images/IMG_0001%20(cropped).JPG" width="100"/></a> -->
 
 Below are instructions on how to train and evaluate this model. If you train it on my preprocessed dataset (see below), then you should expect to get results very similar to the ones in the [paper](https://arxiv.org/abs/1802.05415).
 
