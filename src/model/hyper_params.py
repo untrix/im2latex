@@ -70,7 +70,7 @@ class GlobalParams(dlc.HyperParams):
             'MaxSeqLen',
             "Max sequence length including the end-of-sequence marker token. Is used to "
             "limit the number of decoding steps. Value is loaded from the dataset and is not configurable.",
-            integer(151, 200),
+            integer(151),
             # Set dynamically based on dataset.
         ),
         PD(
@@ -483,7 +483,7 @@ class Im2LatexModelParams(dlc.HyperParams):
         PD(
             'input_queue_capacity', 'Capacity of input queue.',
             integer(1),
-            LambdaVal(lambda _, d: d.num_towers * 3)
+            LambdaVal(lambda _, d: d.num_towers * 1)
         ),
         PD(
             'DecodingSlack',

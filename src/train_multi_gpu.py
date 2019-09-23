@@ -879,7 +879,10 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                 'top1_alpha_list',
                 'top1_beta_list',
                 'image_name_list',
-                'top1_ed') + (('bok_ed',) if args.log_bok else tuple())
+                'top1_ed',
+                'top1_prob',
+                'top1_log_prob'
+                ) + (('bok_ed',) if args.log_bok else tuple())
 
     while n < num_steps:
         n += 1
@@ -927,6 +930,8 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
                           'image_name': batch_ops.image_name_list
                           })
             accum.append({'ed': batch_ops.top1_ed})
+            accum.append({'top1_prob': batch_ops.top1_prob})
+            accum.append({'top1_log_prob': batch_ops.top1_log_prob})
             if args.log_bok:
                 accum.extend({'bok_ids': batch_ops.bok_ids_list})
                 accum.append({'bok_ed': batch_ops.bok_ed})
@@ -955,6 +960,8 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
 
             with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
                 storer.write('predicted_ids', batch_ops.top1_ids_list, np.int16)
+                storer.write('prediction_prob', batch_ops.top1_prob, np.float64)
+                storer.write('prediction_log_prob', batch_ops.top1_log_prob, np.float64)
                 if args.log_bok:
                     storer.write('bok_ids', batch_ops.bok_ids_list, np.int16)
                     storer.write('bok_bleu', bok_bleu, dtype=np.float32)
@@ -977,6 +984,8 @@ def evaluate(session, ops, batch_its, hyper, args, step, num_steps, tf_sw, train
         assert len(accum.bleus) == len(accum.ed), 'len bleus = %d, len ed = %d' % (len(accum.bleus), len(accum.ed),)
         with dtc.Storer(args, 'test' if args.doTest else 'validation', step) as storer:
             storer.write('predicted_ids', accum.top1_ids, np.int16)
+            storer.write('prediction_prob', accum.top1_prob, np.float64)
+            storer.write('prediction_log_prob', accum.top1_log_prob, np.float64)
             storer.write('y', accum.y, np.int16)
             storer.write('alpha', accum.alpha, dtype=np.float32, batch_axis=1)
             storer.write('beta', accum.beta, dtype=np.float32, batch_axis=1)
