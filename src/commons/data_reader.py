@@ -110,6 +110,8 @@ class ImageProcessor3(object):
         assert height == height_, 'image height = %d instead of %d'%(height_, height)
         assert width == width_, 'image width = %d instead of %d'%(width_, width)
         assert channels == self._channels, 'image channels = %d instead of %d'%(self._channels, channels)
+        assert height < padded_height and width < padded_width, \
+            'Image is too large, shape = {shape}, max={max}'.format(shape=im_ar.shape, max=padded_dim_)
         if (height < padded_height) or (width < padded_width):
             ar = np.full((padded_height, padded_width, channels), 255.0, dtype=self._params.dtype_np)
             h = (padded_height - height) // 2
@@ -442,12 +444,13 @@ class BatchImageIterator3(ShuffleIterator):
         def func(x=None):
             d = self.next()
             # Note: tf.FIFOQueue.enqueue_many will separate the splits into multiple tuples.
-            return InpTup(split(d.y_s,      num_splits,split_size), 
+            tup =  InpTup(split(d.y_s,      num_splits,split_size),
                           split(d.seq_len,  num_splits,split_size), 
                           split(d.y_ctc,    num_splits,split_size), 
                           split(d.ctc_len,  num_splits,split_size), 
                           split(d.im,       num_splits,split_size),
                           split(d.image_name,  num_splits,split_size))
+            return tup
 
         split_size = self._batch_size // num_splits
         assert (self._batch_size / num_splits) == split_size, 'Batchsize:%d is not divisible by num_splits: %d'%(self._batch_size, num_splits)

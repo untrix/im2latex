@@ -313,7 +313,7 @@ class VisualizeDir(object):
     def _assertKeyIsID(key):
         assert (key == 'predicted_ids') or (key == 'y')
 
-    def df(self, graph, step, sortkey, *keys):
+    def df(self, graph, step, sortkey, sort_ascending=True, *keys):
         """
         Return optionally sorted DataFrame with *keys as columns
         :param graph:
@@ -332,10 +332,10 @@ class VisualizeDir(object):
             df_dict[key] = nd.tolist()
         df = pd.DataFrame(df_dict)
         if sortkey is not None:
-            df.sort_values(sortkey, ascending=True, inplace=True)
+            df.sort_values(sortkey, ascending=sort_ascending, inplace=True)
         return df
 
-    def df_ids(self, graph, step, key, sortkey='ed', trim=False):
+    def df_ids(self, graph, step, key, sortkey='ed', trim=False, sort_ascending=True):
         """
         Returns
             1) a list of 'B' word-lists optionally trimmed,
@@ -344,7 +344,7 @@ class VisualizeDir(object):
         key must represent an id-sequences such as 'predicted_ids' and 'y', i.e. _assertKeyIsID(key) must pass.
         """
         self._assertKeyIsID(key)
-        df_ids = self.df(graph, step, sortkey, key)
+        df_ids = self.df(graph, step, sortkey, sort_ascending, key)
 
         # id2word and trim
         def accumRow(d, id):
@@ -395,10 +395,11 @@ class VisualizeDir(object):
     def words(self, graph, step, key):
         return self._words(graph, step, key, _get_ids=False, _get_ed=False)
 
-    def strs(self, graph, step, key, key2=None, mingle=False, trim=True, wrap_strs=False, sortkey='ed', keys=[]):
-        df1 = self.df_ids(graph, step, key, sortkey=sortkey, trim=trim)
-        df2 = self.df_ids(graph, step, key2, sortkey=sortkey, trim=trim) if (key2 is not None) else None
-        df3 = self.df(graph, step, sortkey, *keys) if len(keys) > 0 else None
+    def strs(self, graph, step, key, key2=None, mingle=False, trim=True, wrap_strs=False, sortkey='ed', keys=[],
+             sort_ascending=True):
+        df1 = self.df_ids(graph, step, key, sortkey=sortkey, trim=trim, sort_ascending=sort_ascending)
+        df2 = self.df_ids(graph, step, key2, sortkey=sortkey, trim=trim, sort_ascending=sort_ascending) if (key2 is not None) else None
+        df3 = self.df(graph, step, sortkey, sort_ascending, *keys) if len(keys) > 0 else None
 
         # each token's string version - excepting backslash - has a space appended to it,
         # therefore the string output should be compile if the prediction was syntactically correct
@@ -764,8 +765,9 @@ class VisualizeStep():
     def words(self, key):
         return self._visualizer.words(self._graph, self._step, key)
 
-    def strs(self, key, key2=None, mingle=False, trim=False, wrap_strs=False, sortkey='ed', keys=[]):
-        return self._visualizer.strs(self._graph, self._step, key, key2, mingle=mingle, trim=trim, wrap_strs=wrap_strs, sortkey=sortkey, keys=keys)
+    def strs(self, key, key2=None, mingle=False, trim=False, wrap_strs=False, sortkey='ed', keys=[], sort_ascending=True):
+        return self._visualizer.strs(self._graph, self._step, key, key2, mingle=mingle, trim=trim, wrap_strs=wrap_strs,
+                                     sortkey=sortkey, keys=keys, sort_ascending=sort_ascending)
 
     def get_preds(self, rel_dumpdir='eval_images', clobber=False, dump=True):
         return self._visualizer.get_preds(self._graph, self._step, rel_dumpdir, clobber=clobber, dump=dump)

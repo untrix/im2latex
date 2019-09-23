@@ -1300,6 +1300,8 @@ def sync_testing_towers(hyper, tower_ops, run_tag='validation'):
             'image_name_list': gather('image_name'),
             'top1_lens': top1_lens,  # (n*B,)
             'top1_len_ratio': top1_len_ratio,  #(n*B,)
+            'top1_log_prob': top1_scores, # (n*B,)
+            'top1_prob': tf.exp(top1_scores), # (n*B,)
             'top1_ed': concat('top1_ed'),  # (n*B,)
             'top1_mean_ed': top1_mean_ed,  # scalar
             'top1_accuracy': top1_accuracy,  # scalar
