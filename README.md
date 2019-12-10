@@ -116,4 +116,4 @@ The model is evaluated by running an evaluation cycle on a snapshot. Evaluation 
 The above steps will give you corpus BLEU score (testing/bleu2) and edit distance among other metrics. If you also want the visual match metric, then execute instructions in the notebook [$REPO_DIR/src/postprocessing/evaluate_images.ipynb](https://github.com/untrix/im2latex/blob/master/src/postprocessing/evaluate_images.ipynb).
 
 ### Running a Trained Model
-We do not provide a graph/code to deploy a model. However, we have cobbled together a notebook ([predict.ipynb] (https://github.com/untrix/im2latex/blob/master/src/tools/predict.ipynb)) to run a model snapshot against a set of images and output results to a csv file.
+We do not provide a graph/code to deploy a model. However, we have cobbled together a notebook ([predict.ipynb](https://github.com/untrix/im2latex/blob/master/src/tools/predict.ipynb)) to run a model snapshot against a set of images and output results to a csv file.
