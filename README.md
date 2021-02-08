@@ -3,9 +3,9 @@
 This project holds source code of a neural network model (an encoder-decoder style neural sequence generator with soft visual attention) solving the im2latex request for research of [OpenAI](https://openai.com/) with the best BLEU score (89%) reported at the time of this writing.
 
 ## Introduction
-Please visit the [project website](https://untrix.github.io/i2l/) for a full description of what this research work is all about. The website includes links to the [research paper](https://arxiv.org/abs/1802.05415) that this code implements, as well as the dataset, visuals etc.
+Please visit the [project website](https://untrix.github.io/i2l/) for a full description of what this research work is all about. The website includes links to the [research paper](https://arxiv.org/abs/1802.05415) that this code implements, as well as the dataset, visuals, pretrained model weights etc.
 
->**Before you start with the code, be sure to [read the paper](https://arxiv.org/abs/1802.05415)** first. This code supports the paper, not the other way around! The main objective for providing this code is to enable AI researchers to iterate atop this work.
+>**Before you start with the code, be sure to [read the paper](https://arxiv.org/abs/1802.05415)** first. This code supports the paper, not the other way around! The main objective for providing this code is to enable AI researchers to iterate on top this work.
 
 ## Platform
 
