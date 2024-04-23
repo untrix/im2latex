@@ -7,6 +7,27 @@ Please visit the [project website](https://untrix.github.io/i2l/) for a full des
 
 >**Before you start with the code, be sure to [read the paper](https://arxiv.org/abs/1802.05415)** first. This code supports the paper, not the other way around! The main objective for providing this code is to enable AI researchers to iterate on top this work.
 
+## Citing the Work
+If you use any part of this work or the dataset, then please do cite the paper. For e.g., you could insert this in your .bib file.
+```
+@article{DBLP:journals/corr/abs-1802-05415,
+  author    = {Sumeet S. Singh},
+  title     = {Teaching Machines to Code: Neural Markup Generation with Visual Attention},
+  journal   = {CoRR},
+  volume    = {abs/1802.05415},
+  year      = {2018}
+}
+```
+Or, if citing directly in a word-editor, then you can use any of the following formats.
+
+MLA: `Singh, Sumeet S.. “Teaching Machines to Code: Neural Markup Generation with Visual Attention.” (2018).`
+
+APA: `Singh, S.S. (2018). Teaching Machines to Code: Neural Markup Generation with Visual Attention.`
+
+Chicago: `Singh, Sumeet S.. “Teaching Machines to Code: Neural Markup Generation with Visual Attention.” (2018).`
+
+Thank you!
+
 ## Platform
 
 1. This souce code is written in the python 2.7 eco-system and uses Tensorflow 1.3 (the GPU version), Keras, Pandas, Jupyter Notebook, scipy, h5py and nltk to name a few. This list is not complete, so you'll probably need to import additional python packages as you work with this code. I used [anaconda](https://www.anaconda.com/) to setup a virtual python environment for this project and highly recommend it.
